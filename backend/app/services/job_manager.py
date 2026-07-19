@@ -65,10 +65,11 @@ class JobManager:
     def update_progress(self, job_id: UUID, progress: int) -> DownloadJob:
         job = self._get_required_job(job_id)
         self._assert_active(job)
+        bounded_progress = max(0, min(99, progress))
         updated_job = job.model_copy(
             update={
                 "status": JobStatus.processing,
-                "progress": max(0, min(100, progress)),
+                "progress": max(job.progress, bounded_progress),
                 "updated_at": _utcnow(),
             }
         )

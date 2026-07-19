@@ -5,7 +5,7 @@ import threading
 from typing import Any
 
 from yt_dlp import YoutubeDL
-from yt_dlp.utils import DownloadError, ExtractorError
+from yt_dlp.utils import DownloadError, ExtractorError, YoutubeDLError
 
 from app.core.config import get_settings
 from app.core.exceptions import APIError
@@ -90,6 +90,7 @@ class MediaService:
         job_manager = get_job_manager()
 
         try:
+            job_manager.update_progress(job_id, 0)
             initial_platform = detect_platform_from_url(url)
             if initial_platform != "youtube":
                 job_manager.mark_failed(
@@ -103,7 +104,6 @@ class MediaService:
                 )
                 return
 
-            job_manager.update_progress(job_id, 0)
             extracted_info = self._extract_info(url)
             detected_platform = self._detect_platform(extracted_info)
             if detected_platform != "youtube":
@@ -123,7 +123,7 @@ class MediaService:
             logger.info("Download started job_id=%s url=%s format_id=%s", job_id, url, format_id)
 
             temp_dir = get_temp_storage_dir()
-            output_template = build_download_outtmpl(job_id)
+            output_template = build_download_outtmpl(job_id, temp_dir=temp_dir)
 
             ydl_options = {
                 "quiet": True,
@@ -151,7 +151,7 @@ class MediaService:
 
             job_manager.mark_completed(job_id, download_url=download_url)
             logger.info("Download completed job_id=%s download_url=%s", job_id, download_url)
-        except (DownloadError, ExtractorError) as exc:
+        except YoutubeDLError as exc:
             error_message = self._describe_download_error(exc)
             job_manager.mark_failed(job_id, error_message=error_message)
             logger.warning("Download failed job_id=%s error=%s", job_id, error_message)
@@ -182,7 +182,7 @@ class MediaService:
             if total:
                 progress = int(min(99, max(0, (downloaded / total) * 100)))
             else:
-                progress = self._parse_percent(payload.get("_percent_str", "0"))
+                progress = min(99, self._parse_percent(payload.get("_percent_str", "0")))
 
             if progress != last_progress["value"]:
                 last_progress["value"] = progress
