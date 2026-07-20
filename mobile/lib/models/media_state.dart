@@ -10,7 +10,10 @@ class MediaState with _$MediaState {
 
   const factory MediaState.loading() = MediaLoading;
 
-  const factory MediaState.success(MediaMetadata metadata) = MediaSuccess;
+  const factory MediaState.success({
+    required MediaMetadata metadata,
+    MediaFormat? selectedFormat,
+  }) = MediaSuccess;
 
   const factory MediaState.error(String message) = MediaError;
 }

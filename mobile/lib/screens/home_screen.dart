@@ -137,13 +137,13 @@ class _HealthStatus extends StatelessWidget {
   }
 }
 
-class _MediaStatus extends StatelessWidget {
+class _MediaStatus extends ConsumerWidget {
   const _MediaStatus({required this.mediaState});
 
   final MediaState mediaState;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return mediaState.when(
       idle: () => const SizedBox.shrink(),
       loading: () {
@@ -155,7 +155,13 @@ class _MediaStatus extends StatelessWidget {
           ),
         );
       },
-      success: (metadata) => _MetadataSummary(metadata: metadata),
+      success: (metadata, selectedFormat) {
+        return _MetadataSummary(
+          metadata: metadata,
+          selectedFormat: selectedFormat,
+          onFormatSelected: ref.read(mediaProvider.notifier).selectFormat,
+        );
+      },
       error: (message) {
         return _StatusMessage(
           title: '\u274C Metadata Error',
@@ -167,9 +173,15 @@ class _MediaStatus extends StatelessWidget {
 }
 
 class _MetadataSummary extends StatelessWidget {
-  const _MetadataSummary({required this.metadata});
+  const _MetadataSummary({
+    required this.metadata,
+    required this.selectedFormat,
+    required this.onFormatSelected,
+  });
 
   final MediaMetadata metadata;
+  final MediaFormat? selectedFormat;
+  final ValueChanged<MediaFormat> onFormatSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -212,6 +224,17 @@ class _MetadataSummary extends StatelessWidget {
           label: 'Available formats',
           value: metadata.formats.length.toString(),
         ),
+        const SizedBox(height: 16),
+        _FormatSelectionList(
+          formats: metadata.formats,
+          selectedFormat: selectedFormat,
+          onFormatSelected: onFormatSelected,
+        ),
+        const SizedBox(height: 16),
+        FilledButton(
+          onPressed: selectedFormat == null ? null : () {},
+          child: const Text('Continue'),
+        ),
       ],
     );
   }
@@ -239,6 +262,123 @@ class _MetadataSummary extends StatelessWidget {
     }
 
     return '${duration.inMinutes}:$remainingSeconds';
+  }
+}
+
+class _FormatSelectionList extends StatelessWidget {
+  const _FormatSelectionList({
+    required this.formats,
+    required this.selectedFormat,
+    required this.onFormatSelected,
+  });
+
+  final List<MediaFormat> formats;
+  final MediaFormat? selectedFormat;
+  final ValueChanged<MediaFormat> onFormatSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
+    if (formats.isEmpty) {
+      return const Text('No formats were returned.');
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Available Formats',
+          style: textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        for (final format in formats)
+          _FormatCard(
+            format: format,
+            selectedFormatId: selectedFormat?.formatId,
+            onSelected: () => onFormatSelected(format),
+          ),
+      ],
+    );
+  }
+}
+
+class _FormatCard extends StatelessWidget {
+  const _FormatCard({
+    required this.format,
+    required this.selectedFormatId,
+    required this.onSelected,
+  });
+
+  final MediaFormat format;
+  final String? selectedFormatId;
+  final VoidCallback onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isSelected = selectedFormatId == format.formatId;
+
+    return Card(
+      color: isSelected ? colorScheme.secondaryContainer : null,
+      child: RadioListTile<String>(
+        value: format.formatId,
+        groupValue: selectedFormatId,
+        onChanged: (_) => onSelected(),
+        selected: isSelected,
+        title: Text(_formatTitle(format)),
+        subtitle: Text(_formatSubtitle(format)),
+      ),
+    );
+  }
+
+  String _formatTitle(MediaFormat format) {
+    final resolution = _fallback(format.resolution);
+    final extension = format.extension.toUpperCase();
+    return '$resolution - $extension';
+  }
+
+  String _formatSubtitle(MediaFormat format) {
+    final parts = <String>[
+      'Estimated filesize: ${_formatFileSize(format.filesize)}',
+      if (format.fps != null) 'FPS: ${format.fps}',
+      'Video codec: ${_fallback(format.videoCodec)}',
+      'Audio codec: ${_fallback(format.audioCodec)}',
+    ];
+
+    return parts.join('\n');
+  }
+
+  String _formatFileSize(int? bytes) {
+    if (bytes == null || bytes <= 0) {
+      return 'Unknown';
+    }
+
+    const kib = 1024;
+    const mib = kib * 1024;
+    const gib = mib * 1024;
+
+    if (bytes >= gib) {
+      return '${(bytes / gib).toStringAsFixed(1)} GB';
+    }
+
+    if (bytes >= mib) {
+      return '${(bytes / mib).toStringAsFixed(1)} MB';
+    }
+
+    if (bytes >= kib) {
+      return '${(bytes / kib).toStringAsFixed(1)} KB';
+    }
+
+    return '$bytes B';
+  }
+
+  String _fallback(String? value) {
+    final trimmedValue = value?.trim();
+    if (trimmedValue == null || trimmedValue.isEmpty) {
+      return 'Unknown';
+    }
+    return trimmedValue;
   }
 }
 

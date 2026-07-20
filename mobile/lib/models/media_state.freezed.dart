@@ -20,7 +20,9 @@ mixin _$MediaState {
   TResult when<TResult extends Object?>({
     required TResult Function() idle,
     required TResult Function() loading,
-    required TResult Function(MediaMetadata metadata) success,
+    required TResult Function(
+            MediaMetadata metadata, MediaFormat? selectedFormat)
+        success,
     required TResult Function(String message) error,
   }) =>
       throw _privateConstructorUsedError;
@@ -28,7 +30,8 @@ mixin _$MediaState {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function()? idle,
     TResult? Function()? loading,
-    TResult? Function(MediaMetadata metadata)? success,
+    TResult? Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+        success,
     TResult? Function(String message)? error,
   }) =>
       throw _privateConstructorUsedError;
@@ -36,7 +39,8 @@ mixin _$MediaState {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function()? idle,
     TResult Function()? loading,
-    TResult Function(MediaMetadata metadata)? success,
+    TResult Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+        success,
     TResult Function(String message)? error,
     required TResult orElse(),
   }) =>
@@ -132,7 +136,9 @@ class _$MediaIdleImpl implements MediaIdle {
   TResult when<TResult extends Object?>({
     required TResult Function() idle,
     required TResult Function() loading,
-    required TResult Function(MediaMetadata metadata) success,
+    required TResult Function(
+            MediaMetadata metadata, MediaFormat? selectedFormat)
+        success,
     required TResult Function(String message) error,
   }) {
     return idle();
@@ -143,7 +149,8 @@ class _$MediaIdleImpl implements MediaIdle {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function()? idle,
     TResult? Function()? loading,
-    TResult? Function(MediaMetadata metadata)? success,
+    TResult? Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+        success,
     TResult? Function(String message)? error,
   }) {
     return idle?.call();
@@ -154,7 +161,8 @@ class _$MediaIdleImpl implements MediaIdle {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function()? idle,
     TResult Function()? loading,
-    TResult Function(MediaMetadata metadata)? success,
+    TResult Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+        success,
     TResult Function(String message)? error,
     required TResult orElse(),
   }) {
@@ -249,7 +257,9 @@ class _$MediaLoadingImpl implements MediaLoading {
   TResult when<TResult extends Object?>({
     required TResult Function() idle,
     required TResult Function() loading,
-    required TResult Function(MediaMetadata metadata) success,
+    required TResult Function(
+            MediaMetadata metadata, MediaFormat? selectedFormat)
+        success,
     required TResult Function(String message) error,
   }) {
     return loading();
@@ -260,7 +270,8 @@ class _$MediaLoadingImpl implements MediaLoading {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function()? idle,
     TResult? Function()? loading,
-    TResult? Function(MediaMetadata metadata)? success,
+    TResult? Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+        success,
     TResult? Function(String message)? error,
   }) {
     return loading?.call();
@@ -271,7 +282,8 @@ class _$MediaLoadingImpl implements MediaLoading {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function()? idle,
     TResult Function()? loading,
-    TResult Function(MediaMetadata metadata)? success,
+    TResult Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+        success,
     TResult Function(String message)? error,
     required TResult orElse(),
   }) {
@@ -329,9 +341,10 @@ abstract class _$$MediaSuccessImplCopyWith<$Res> {
           _$MediaSuccessImpl value, $Res Function(_$MediaSuccessImpl) then) =
       __$$MediaSuccessImplCopyWithImpl<$Res>;
   @useResult
-  $Res call({MediaMetadata metadata});
+  $Res call({MediaMetadata metadata, MediaFormat? selectedFormat});
 
   $MediaMetadataCopyWith<$Res> get metadata;
+  $MediaFormatCopyWith<$Res>? get selectedFormat;
 }
 
 /// @nodoc
@@ -348,12 +361,17 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
   @override
   $Res call({
     Object? metadata = null,
+    Object? selectedFormat = freezed,
   }) {
     return _then(_$MediaSuccessImpl(
-      null == metadata
+      metadata: null == metadata
           ? _value.metadata
           : metadata // ignore: cast_nullable_to_non_nullable
               as MediaMetadata,
+      selectedFormat: freezed == selectedFormat
+          ? _value.selectedFormat
+          : selectedFormat // ignore: cast_nullable_to_non_nullable
+              as MediaFormat?,
     ));
   }
 
@@ -366,19 +384,35 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
       return _then(_value.copyWith(metadata: value));
     });
   }
+
+  /// Create a copy of MediaState
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $MediaFormatCopyWith<$Res>? get selectedFormat {
+    if (_value.selectedFormat == null) {
+      return null;
+    }
+
+    return $MediaFormatCopyWith<$Res>(_value.selectedFormat!, (value) {
+      return _then(_value.copyWith(selectedFormat: value));
+    });
+  }
 }
 
 /// @nodoc
 
 class _$MediaSuccessImpl implements MediaSuccess {
-  const _$MediaSuccessImpl(this.metadata);
+  const _$MediaSuccessImpl({required this.metadata, this.selectedFormat});
 
   @override
   final MediaMetadata metadata;
+  @override
+  final MediaFormat? selectedFormat;
 
   @override
   String toString() {
-    return 'MediaState.success(metadata: $metadata)';
+    return 'MediaState.success(metadata: $metadata, selectedFormat: $selectedFormat)';
   }
 
   @override
@@ -387,11 +421,13 @@ class _$MediaSuccessImpl implements MediaSuccess {
         (other.runtimeType == runtimeType &&
             other is _$MediaSuccessImpl &&
             (identical(other.metadata, metadata) ||
-                other.metadata == metadata));
+                other.metadata == metadata) &&
+            (identical(other.selectedFormat, selectedFormat) ||
+                other.selectedFormat == selectedFormat));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, metadata);
+  int get hashCode => Object.hash(runtimeType, metadata, selectedFormat);
 
   /// Create a copy of MediaState
   /// with the given fields replaced by the non-null parameter values.
@@ -406,10 +442,12 @@ class _$MediaSuccessImpl implements MediaSuccess {
   TResult when<TResult extends Object?>({
     required TResult Function() idle,
     required TResult Function() loading,
-    required TResult Function(MediaMetadata metadata) success,
+    required TResult Function(
+            MediaMetadata metadata, MediaFormat? selectedFormat)
+        success,
     required TResult Function(String message) error,
   }) {
-    return success(metadata);
+    return success(metadata, selectedFormat);
   }
 
   @override
@@ -417,10 +455,11 @@ class _$MediaSuccessImpl implements MediaSuccess {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function()? idle,
     TResult? Function()? loading,
-    TResult? Function(MediaMetadata metadata)? success,
+    TResult? Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+        success,
     TResult? Function(String message)? error,
   }) {
-    return success?.call(metadata);
+    return success?.call(metadata, selectedFormat);
   }
 
   @override
@@ -428,12 +467,13 @@ class _$MediaSuccessImpl implements MediaSuccess {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function()? idle,
     TResult Function()? loading,
-    TResult Function(MediaMetadata metadata)? success,
+    TResult Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+        success,
     TResult Function(String message)? error,
     required TResult orElse(),
   }) {
     if (success != null) {
-      return success(metadata);
+      return success(metadata, selectedFormat);
     }
     return orElse();
   }
@@ -477,9 +517,12 @@ class _$MediaSuccessImpl implements MediaSuccess {
 }
 
 abstract class MediaSuccess implements MediaState {
-  const factory MediaSuccess(final MediaMetadata metadata) = _$MediaSuccessImpl;
+  const factory MediaSuccess(
+      {required final MediaMetadata metadata,
+      final MediaFormat? selectedFormat}) = _$MediaSuccessImpl;
 
   MediaMetadata get metadata;
+  MediaFormat? get selectedFormat;
 
   /// Create a copy of MediaState
   /// with the given fields replaced by the non-null parameter values.
@@ -558,7 +601,9 @@ class _$MediaErrorImpl implements MediaError {
   TResult when<TResult extends Object?>({
     required TResult Function() idle,
     required TResult Function() loading,
-    required TResult Function(MediaMetadata metadata) success,
+    required TResult Function(
+            MediaMetadata metadata, MediaFormat? selectedFormat)
+        success,
     required TResult Function(String message) error,
   }) {
     return error(message);
@@ -569,7 +614,8 @@ class _$MediaErrorImpl implements MediaError {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function()? idle,
     TResult? Function()? loading,
-    TResult? Function(MediaMetadata metadata)? success,
+    TResult? Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+        success,
     TResult? Function(String message)? error,
   }) {
     return error?.call(message);
@@ -580,7 +626,8 @@ class _$MediaErrorImpl implements MediaError {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function()? idle,
     TResult Function()? loading,
-    TResult Function(MediaMetadata metadata)? success,
+    TResult Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+        success,
     TResult Function(String message)? error,
     required TResult orElse(),
   }) {

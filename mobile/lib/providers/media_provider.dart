@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_exception.dart';
+import '../models/media_metadata.dart';
 import '../models/media_state.dart';
 import '../repositories/media_repository.dart';
 
@@ -26,12 +27,24 @@ class MediaController extends Notifier<MediaState> {
 
     try {
       final metadata = await ref.read(mediaRepositoryProvider).getMediaInfo(trimmedUrl);
-      state = MediaState.success(metadata);
+      state = MediaState.success(metadata: metadata);
     } on ApiException catch (error) {
       state = MediaState.error(error.message);
     } catch (_) {
       state = const MediaState.error('Unable to retrieve media metadata.');
     }
+  }
+
+  void selectFormat(MediaFormat format) {
+    state.maybeWhen(
+      success: (metadata, _) {
+        state = MediaState.success(
+          metadata: metadata,
+          selectedFormat: format,
+        );
+      },
+      orElse: () {},
+    );
   }
 
   String? _validateUrl(String value) {
