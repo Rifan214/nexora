@@ -33,15 +33,21 @@
 
 ## Mobile Structure
 
+- `mobile/pubspec.yaml` - Flutter application metadata and package configuration.
+- `mobile/analysis_options.yaml` - Dart analyzer and lint configuration.
 - `mobile/lib/` - Flutter source root.
-- `mobile/lib/features/` - UI organized by feature instead of by technical layer.
-- `mobile/lib/features/home/` - URL input, metadata display, and primary actions.
-- `mobile/lib/features/download/` - Progress, job state, and file download handling.
-- `mobile/lib/features/settings/` - App preferences and backend configuration if needed later.
-- `mobile/lib/services/` - API client and download orchestration from the app side.
-- `mobile/lib/models/` - Shared data models for the app.
-- `mobile/lib/routing/` - Navigation definitions and route wiring.
-- `mobile/lib/theme/` - Colors, typography, and design tokens.
+- `mobile/lib/core/` - Application-wide foundations such as config, networking, routing, and theme.
+- `mobile/lib/core/config/` - Centralized runtime configuration.
+- `mobile/lib/core/network/` - Reusable HTTP client setup.
+- `mobile/lib/core/router/` - GoRouter configuration.
+- `mobile/lib/core/theme/` - Material 3 light and dark themes.
+- `mobile/lib/models/` - Data models for backend and app state.
+- `mobile/lib/services/` - Low-level external integrations.
+- `mobile/lib/repositories/` - Data access abstractions above services.
+- `mobile/lib/providers/` - Riverpod providers.
+- `mobile/lib/screens/` - Top-level app screens.
+- `mobile/lib/widgets/` - Shared reusable widgets.
+- `mobile/lib/utils/` - General-purpose helpers.
 - `mobile/assets/images/` - Image assets such as placeholders and app visuals.
 - `mobile/assets/icons/` - Icon assets.
 - `mobile/test/` - Flutter tests.
@@ -54,7 +60,7 @@
 - Use `camelCase` for Dart variables, methods, and parameters.
 - Use versioned backend routes such as `v1` to keep future API changes isolated.
 - Keep platform-specific code inside platform folders, not in shared services.
-- Keep feature-related Flutter code grouped by user-facing feature.
+- Keep Flutter code in the foundation folders until feature modules are needed.
 
 ## Why This Structure Works
 

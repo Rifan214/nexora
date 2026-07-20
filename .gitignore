@@ -4,3 +4,7 @@ __pycache__/
 pytest-cache-files*/
 .ruff_cache/
 .mypy_cache/
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/build/
