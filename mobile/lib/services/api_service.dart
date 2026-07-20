@@ -14,8 +14,21 @@ class ApiService {
   final Dio _dio;
 
   Future<Map<String, dynamic>> getJson(String path) async {
+    return _sendJson(() => _dio.get<Object?>(path));
+  }
+
+  Future<Map<String, dynamic>> postJson(
+    String path, {
+    Map<String, dynamic>? data,
+  }) async {
+    return _sendJson(() => _dio.post<Object?>(path, data: data));
+  }
+
+  Future<Map<String, dynamic>> _sendJson(
+    Future<Response<Object?>> Function() request,
+  ) async {
     try {
-      final response = await _dio.get<Object?>(path);
+      final response = await request();
       final data = response.data;
 
       if (data is Map<String, dynamic>) {
