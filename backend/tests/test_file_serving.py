@@ -92,6 +92,18 @@ def test_completed_job_never_exposes_internal_download_url() -> None:
     assert completed_job.download_url == f"/files/{job.job_id}"
 
 
+def test_completed_job_gets_expiration_time() -> None:
+    manager = JobManager(download_expiration=timedelta(minutes=45))
+    before_completion = datetime.now(timezone.utc)
+    job = manager.create_job(media_url="https://www.youtube.com/watch?v=expires-at", platform="youtube")
+
+    completed_job = manager.mark_completed(job.job_id)
+
+    assert completed_job.expires_at is not None
+    assert completed_job.expires_at > before_completion
+    assert completed_job.expires_at <= datetime.now(timezone.utc) + timedelta(minutes=45, seconds=1)
+
+
 def test_not_completed_job_returns_standardized_error() -> None:
     manager = JobManager()
     job = manager.create_job(media_url="https://www.youtube.com/watch?v=pending", platform="youtube")
@@ -104,12 +116,9 @@ def test_not_completed_job_returns_standardized_error() -> None:
 
 
 def test_expired_job_returns_standardized_error() -> None:
-    manager = JobManager()
-    job = manager.create_job(
-        media_url="https://www.youtube.com/watch?v=expired",
-        platform="youtube",
-        expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
-    )
+    manager = JobManager(download_expiration=timedelta(minutes=-1))
+    job = manager.create_job(media_url="https://www.youtube.com/watch?v=expired", platform="youtube")
+    manager.mark_completed(job.job_id)
 
     with pytest.raises(APIError) as error:
         DownloadFileService().create_file_response(job.job_id, job_manager=manager)

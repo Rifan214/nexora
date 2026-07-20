@@ -100,6 +100,7 @@ def test_background_download_completes_for_youtube_videos_and_shorts(
         assert completed_job.status is JobStatus.completed
         assert completed_job.progress == 100
         assert completed_job.download_url == f"/files/{job.job_id}"
+        assert completed_job.expires_at is not None
         assert completed_job.title == "A title that must not become a filename"
         assert downloaded_file.read_bytes() == b"downloaded-media"
         assert not list(downloaded_file.parent.glob("*A title that must not become a filename*"))

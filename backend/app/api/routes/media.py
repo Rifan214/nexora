@@ -3,6 +3,7 @@ from functools import lru_cache
 
 from fastapi import APIRouter, Depends
 
+from app.api.dependencies import run_lazy_cleanup
 from app.models.job import JobCreateResponse
 from app.models.media import MediaMetadata
 from app.models.requests import MediaDownloadRequest, MediaInfoRequest
@@ -38,6 +39,7 @@ def media_info(
     response_model=APIResponse[JobCreateResponse],
     summary="Create download job",
     response_model_exclude_none=True,
+    dependencies=[Depends(run_lazy_cleanup)],
 )
 def media_download(
     request: MediaDownloadRequest,

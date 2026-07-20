@@ -4,11 +4,14 @@ import logging
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from threading import RLock
+from typing import Callable
 from uuid import UUID
 
+from app.core.config import get_settings
 from app.models.job import DownloadJob, JobStatus
 
 logger = logging.getLogger(__name__)
+JobUpdateListener = Callable[[DownloadJob], None]
 
 
 def _utcnow() -> datetime:
@@ -20,10 +23,15 @@ def build_job_download_url(job_id: UUID) -> str:
 
 
 class JobManager:
-    def __init__(self) -> None:
+    def __init__(self, *, download_expiration: timedelta | None = None) -> None:
         self._jobs: dict[UUID, DownloadJob] = {}
+        self._update_listeners: list[JobUpdateListener] = []
         self._lock = RLock()
-        self._default_ttl = timedelta(hours=24)
+        self._download_expiration = (
+            download_expiration
+            if download_expiration is not None
+            else timedelta(minutes=get_settings().download_expiration_minutes)
+        )
 
     def create_job(
         self,
@@ -42,7 +50,7 @@ class JobManager:
             title=title,
             format_id=format_id,
             output_type=output_type,
-            expires_at=expires_at or (now + self._default_ttl),
+            expires_at=expires_at,
             created_at=now,
             updated_at=now,
         )
@@ -65,6 +73,15 @@ class JobManager:
                 return expired_job
 
             return job
+
+    def list_jobs(self) -> list[DownloadJob]:
+        with self._lock:
+            return list(self._jobs.values())
+
+    def add_update_listener(self, listener: JobUpdateListener) -> None:
+        with self._lock:
+            if listener not in self._update_listeners:
+                self._update_listeners.append(listener)
 
     def update_progress(self, job_id: UUID, progress: int) -> DownloadJob:
         job = self._get_required_job(job_id)
@@ -109,13 +126,15 @@ class JobManager:
             logger.warning("Rejected unsafe completion download URL job_id=%s", job_id)
             logger.debug("Rejected completion download URL job_id=%s download_url=%s", job_id, download_url)
 
+        now = _utcnow()
         updated_job = job.model_copy(
             update={
                 "status": JobStatus.completed,
                 "progress": 100,
                 "download_url": completed_download_url,
+                "expires_at": now + self._download_expiration,
                 "error_message": None,
-                "updated_at": _utcnow(),
+                "updated_at": now,
             }
         )
         return self._store_updated_job(updated_job)
@@ -151,14 +170,29 @@ class JobManager:
             self._jobs[job.job_id] = job
 
         logger.info("Job updated job_id=%s status=%s progress=%s", job.job_id, job.status, job.progress)
+        self._notify_update_listeners(job)
         return job
+
+    def _notify_update_listeners(self, job: DownloadJob) -> None:
+        with self._lock:
+            listeners = tuple(self._update_listeners)
+
+        for listener in listeners:
+            try:
+                listener(job)
+            except Exception:
+                logger.exception("Job update listener failed job_id=%s", job.job_id)
 
     def _assert_active(self, job: DownloadJob) -> None:
         if job.status in {JobStatus.completed, JobStatus.failed, JobStatus.expired}:
             raise ValueError(f"Job '{job.job_id}' is not active")
 
     def _expire_if_needed(self, job: DownloadJob) -> DownloadJob:
-        if job.expires_at is None or job.expires_at > _utcnow() or job.status == JobStatus.expired:
+        if (
+            job.status is not JobStatus.completed
+            or job.expires_at is None
+            or job.expires_at > _utcnow()
+        ):
             return job
 
         expired_job = job.model_copy(
@@ -174,4 +208,8 @@ class JobManager:
 
 @lru_cache
 def get_job_manager() -> JobManager:
-    return JobManager()
+    manager = JobManager()
+    from app.services.websocket_manager import get_websocket_manager
+
+    manager.add_update_listener(get_websocket_manager().broadcast_job_update)
+    return manager

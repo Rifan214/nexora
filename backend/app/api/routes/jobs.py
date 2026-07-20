@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
+from app.api.dependencies import run_lazy_cleanup
 from app.core.exceptions import APIError
 from app.models.job import DownloadJob, JobDeleteResponse
 from app.models.response import APIResponse
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
     response_model=APIResponse[DownloadJob],
     summary="Get job status",
     response_model_exclude_none=True,
+    dependencies=[Depends(run_lazy_cleanup)],
 )
 def get_job(job_id: UUID, job_manager: JobManager = Depends(get_job_manager)) -> APIResponse[DownloadJob]:
     job = job_manager.get_job(job_id)

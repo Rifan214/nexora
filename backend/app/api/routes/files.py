@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 
+from app.api.dependencies import run_lazy_cleanup
 from app.services.download_file_service import DownloadFileService
 from app.services.job_manager import JobManager, get_job_manager
 
@@ -22,6 +23,7 @@ def get_download_file_service() -> DownloadFileService:
     response_class=FileResponse,
     summary="Download a completed media file",
     description="Returns the completed media file as a binary attachment when the download job is complete.",
+    dependencies=[Depends(run_lazy_cleanup)],
     responses={
         200: {
             "description": "Binary media file attachment",

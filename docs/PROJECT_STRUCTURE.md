@@ -15,10 +15,15 @@
 - `backend/app/api/routes/health.py` - Root health and version endpoints.
 - `backend/app/api/routes/media.py` - Media metadata and download-job creation endpoints.
 - `backend/app/api/routes/jobs.py` - In-memory job lookup and deletion endpoints.
+- `backend/app/api/routes/files.py` - Completed download file serving endpoint.
+- `backend/app/api/routes/websockets.py` - WebSocket endpoint for real-time job progress.
 - `backend/app/core/` - Shared configuration, constants, and low-level helpers.
 - `backend/app/services/` - Download jobs, metadata flow, progress logic, and orchestration.
 - `backend/app/services/job_manager.py` - In-memory job registry and lifecycle control.
 - `backend/app/services/media_service.py` - yt-dlp metadata extraction and job creation orchestration.
+- `backend/app/services/cleanup_service.py` - Lazy cleanup of expired jobs and temporary files.
+- `backend/app/services/download_file_service.py` - Safe completed-file response creation.
+- `backend/app/services/websocket_manager.py` - WebSocket connection registry and job update broadcaster.
 - `backend/app/platforms/` - Platform abstraction layer for media sources.
 - `backend/app/platforms/youtube/` - YouTube-specific implementation for V1.
 - `backend/app/storage/` - Temporary files, cleanup, and file delivery helpers.

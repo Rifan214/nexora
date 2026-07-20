@@ -29,8 +29,25 @@ def build_download_outtmpl(job_id: UUID, *, temp_dir: Path | None = None) -> str
 
 
 def find_downloaded_file(job_id: UUID, *, temp_dir: Path | None = None) -> Path | None:
-    destination_dir = (temp_dir or get_temp_storage_dir()).resolve()
     candidates: list[Path] = []
+    for candidate in find_job_storage_files(job_id, temp_dir=temp_dir):
+        if (
+            candidate.suffix.casefold() in _INCOMPLETE_DOWNLOAD_SUFFIXES
+            or candidate.name.casefold().endswith(".info.json")
+        ):
+            continue
+
+        candidates.append(candidate)
+
+    if not candidates:
+        return None
+
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def find_job_storage_files(job_id: UUID, *, temp_dir: Path | None = None) -> list[Path]:
+    destination_dir = (temp_dir or get_temp_storage_dir()).resolve()
+    files: list[Path] = []
 
     for candidate in destination_dir.glob(f"{job_id}.*"):
         resolved_candidate = candidate.resolve()
@@ -39,19 +56,10 @@ def find_downloaded_file(job_id: UUID, *, temp_dir: Path | None = None) -> Path 
             logger.debug("Unsafe file candidate path=%s", resolved_candidate)
             continue
 
-        if (
-            not resolved_candidate.is_file()
-            or candidate.suffix.casefold() in _INCOMPLETE_DOWNLOAD_SUFFIXES
-            or candidate.name.casefold().endswith(".info.json")
-        ):
-            continue
+        if resolved_candidate.is_file():
+            files.append(resolved_candidate)
 
-        candidates.append(resolved_candidate)
-
-    if not candidates:
-        return None
-
-    return max(candidates, key=lambda path: path.stat().st_mtime)
+    return files
 
 
 def build_download_filename(*, title: str | None, file_path: Path) -> str:

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     env: str = Field(default="development", alias="NEXORA_ENV")
     debug: bool = Field(default=False, alias="NEXORA_DEBUG")
     cors_origins: str = Field(default="", alias="NEXORA_CORS_ORIGINS")
+    download_expiration_minutes: int = Field(default=30, ge=1, alias="DOWNLOAD_EXPIRATION_MINUTES")
 
     @property
     def cors_origin_list(self) -> list[str]:
