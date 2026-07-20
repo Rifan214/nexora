@@ -12,9 +12,9 @@ from app.core.exceptions import APIError
 from app.models.job import DownloadJob
 from app.models.media import MediaFormat, MediaMetadata
 from app.models.requests import MediaDownloadRequest
-from app.services.job_manager import get_job_manager
+from app.services.job_manager import build_job_download_url, get_job_manager
 from app.utils.platforms import detect_platform_from_url
-from app.utils.storage import build_download_outtmpl, get_temp_storage_dir
+from app.utils.storage import build_download_outtmpl, find_downloaded_file, get_temp_storage_dir
 from app.utils.validators import validate_http_url
 
 logger = logging.getLogger(__name__)
@@ -143,11 +143,11 @@ class MediaService:
             if not downloaded_info:
                 raise FileNotFoundError("yt-dlp did not return download metadata")
 
-            downloaded_file = next(temp_dir.glob(f"{job_id}.*"), None)
+            downloaded_file = find_downloaded_file(job_id, temp_dir=temp_dir)
             if downloaded_file is None or not downloaded_file.is_file():
                 raise FileNotFoundError("Downloaded file was not found in storage/temp")
 
-            download_url = f"/files/{job_id}"
+            download_url = build_job_download_url(job_id)
 
             job_manager.mark_completed(job_id, download_url=download_url)
             logger.info("Download completed job_id=%s download_url=%s", job_id, download_url)

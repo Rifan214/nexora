@@ -15,6 +15,10 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def build_job_download_url(job_id: UUID) -> str:
+    return f"/files/{job_id}"
+
+
 class JobManager:
     def __init__(self) -> None:
         self._jobs: dict[UUID, DownloadJob] = {}
@@ -100,11 +104,16 @@ class JobManager:
     def mark_completed(self, job_id: UUID, *, download_url: str | None = None) -> DownloadJob:
         job = self._get_required_job(job_id)
         self._assert_active(job)
+        completed_download_url = build_job_download_url(job_id)
+        if download_url is not None and download_url != completed_download_url:
+            logger.warning("Rejected unsafe completion download URL job_id=%s", job_id)
+            logger.debug("Rejected completion download URL job_id=%s download_url=%s", job_id, download_url)
+
         updated_job = job.model_copy(
             update={
                 "status": JobStatus.completed,
                 "progress": 100,
-                "download_url": download_url,
+                "download_url": completed_download_url,
                 "error_message": None,
                 "updated_at": _utcnow(),
             }
