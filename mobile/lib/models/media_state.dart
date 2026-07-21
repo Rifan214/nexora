@@ -17,6 +17,9 @@ class MediaState with _$MediaState {
     @Default(false) bool downloadSuccess,
     String? downloadError,
     String? currentJobId,
+    String? currentStatus,
+    @Default(0) int currentProgress,
+    String? downloadUrl,
   }) = MediaSuccess;
 
   const factory MediaState.error(String message) = MediaError;

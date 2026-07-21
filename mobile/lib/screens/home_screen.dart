@@ -162,6 +162,9 @@ class _MediaStatus extends ConsumerWidget {
         downloadSuccess,
         downloadError,
         currentJobId,
+        currentStatus,
+        currentProgress,
+        _,
       ) {
         return _MetadataSummary(
           metadata: metadata,
@@ -170,6 +173,8 @@ class _MediaStatus extends ConsumerWidget {
           downloadSuccess: downloadSuccess,
           downloadError: downloadError,
           currentJobId: currentJobId,
+          currentStatus: currentStatus,
+          currentProgress: currentProgress,
           onFormatSelected: ref.read(mediaProvider.notifier).selectFormat,
           onDownloadPressed: ref.read(mediaProvider.notifier).createDownloadJob,
         );
@@ -192,6 +197,8 @@ class _MetadataSummary extends StatelessWidget {
     required this.downloadSuccess,
     required this.downloadError,
     required this.currentJobId,
+    required this.currentStatus,
+    required this.currentProgress,
     required this.onFormatSelected,
     required this.onDownloadPressed,
   });
@@ -202,12 +209,19 @@ class _MetadataSummary extends StatelessWidget {
   final bool downloadSuccess;
   final String? downloadError;
   final String? currentJobId;
+  final String? currentStatus;
+  final int currentProgress;
   final ValueChanged<MediaFormat> onFormatSelected;
   final VoidCallback onDownloadPressed;
 
   @override
   Widget build(BuildContext context) {
     final thumbnailUrl = metadata.thumbnailUrl;
+    final hasCreatedJob = downloadSuccess && currentJobId != null;
+    final isDownloadDisabled = selectedFormat == null ||
+        downloadLoading ||
+        _isActiveStatus(currentStatus) ||
+        _isCompletedStatus(currentStatus);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -254,8 +268,7 @@ class _MetadataSummary extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         FilledButton(
-          onPressed:
-              selectedFormat == null || downloadLoading ? null : onDownloadPressed,
+          onPressed: isDownloadDisabled ? null : onDownloadPressed,
           child: downloadLoading
               ? const Row(
                   mainAxisSize: MainAxisSize.min,
@@ -271,14 +284,14 @@ class _MetadataSummary extends StatelessWidget {
                 )
               : const Text('Download'),
         ),
-        if (downloadSuccess && currentJobId != null) ...[
+        if (hasCreatedJob) ...[
           const SizedBox(height: 16),
-          _StatusMessage(
-            title: 'Download Job Created',
-            message: 'Job ID:\n$currentJobId',
+          _DownloadProgressStatus(
+            status: currentStatus,
+            progress: currentProgress,
+            error: downloadError,
           ),
-        ],
-        if (downloadError != null && downloadError!.isNotEmpty) ...[
+        ] else if (downloadError != null && downloadError!.isNotEmpty) ...[
           const SizedBox(height: 16),
           _StatusMessage(
             title: '\u274C Download Error',
@@ -312,6 +325,104 @@ class _MetadataSummary extends StatelessWidget {
     }
 
     return '${duration.inMinutes}:$remainingSeconds';
+  }
+
+  bool _isActiveStatus(String? status) {
+    final normalizedStatus = status?.toLowerCase();
+    return normalizedStatus == 'pending' || normalizedStatus == 'processing';
+  }
+
+  bool _isCompletedStatus(String? status) {
+    return status?.toLowerCase() == 'completed';
+  }
+}
+
+class _DownloadProgressStatus extends StatelessWidget {
+  const _DownloadProgressStatus({
+    required this.status,
+    required this.progress,
+    required this.error,
+  });
+
+  final String? status;
+  final int progress;
+  final String? error;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedStatus = status?.toLowerCase() ?? 'pending';
+    final clampedProgress = _clampProgress(progress);
+
+    if (normalizedStatus == 'completed') {
+      return const _StatusMessage(
+        title: '\u2705 Download Complete',
+        message: 'Ready to download.',
+      );
+    }
+
+    if (normalizedStatus == 'failed') {
+      return _StatusMessage(
+        title: '\u274C Download Failed',
+        message: _fallback(error, 'Download failed.'),
+      );
+    }
+
+    if (error != null && error!.isNotEmpty) {
+      return _StatusMessage(
+        title: '\u274C Progress Error',
+        message: error!,
+      );
+    }
+
+    final textTheme = Theme.of(context).textTheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Status: ${_formatStatus(normalizedStatus)}',
+          style: textTheme.bodyMedium,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '$clampedProgress%',
+          style: textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        LinearProgressIndicator(value: clampedProgress / 100),
+      ],
+    );
+  }
+
+  int _clampProgress(int value) {
+    if (value < 0) {
+      return 0;
+    }
+
+    if (value > 100) {
+      return 100;
+    }
+
+    return value;
+  }
+
+  String _formatStatus(String value) {
+    final words = value.replaceAll('_', ' ').split(' ');
+    return words.map((word) {
+      if (word.isEmpty) {
+        return word;
+      }
+
+      return '${word[0].toUpperCase()}${word.substring(1)}';
+    }).join(' ');
+  }
+
+  static String _fallback(String? value, String fallback) {
+    final trimmedValue = value?.trim();
+    if (trimmedValue == null || trimmedValue.isEmpty) {
+      return fallback;
+    }
+    return trimmedValue;
   }
 }
 

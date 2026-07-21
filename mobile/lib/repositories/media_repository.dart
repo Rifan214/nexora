@@ -3,17 +3,23 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/network/api_exception.dart';
 import '../core/network/api_paths.dart';
 import '../models/download_job.dart';
+import '../models/job_update.dart';
 import '../models/media_metadata.dart';
 import '../services/api_service.dart';
+import '../services/web_socket_service.dart';
 
 final mediaRepositoryProvider = Provider<MediaRepository>((ref) {
-  return MediaRepository(ref.watch(apiServiceProvider));
+  return MediaRepository(
+    ref.watch(apiServiceProvider),
+    ref.watch(webSocketServiceProvider),
+  );
 });
 
 class MediaRepository {
-  const MediaRepository(this._apiService);
+  const MediaRepository(this._apiService, this._webSocketService);
 
   final ApiService _apiService;
+  final WebSocketService _webSocketService;
 
   Future<MediaMetadata> getMediaInfo(String url) async {
     final response = await _apiService.postJson(
@@ -67,6 +73,17 @@ class MediaRepository {
     }
 
     return job;
+  }
+
+  Stream<JobUpdate> listenToJob(String jobId) {
+    final trimmedJobId = jobId.trim();
+    if (trimmedJobId.isEmpty) {
+      return Stream<JobUpdate>.error(const ApiException('Invalid job id.'));
+    }
+
+    return _webSocketService
+        .connectJson(ApiPaths.jobWebSocket(trimmedJobId))
+        .map(JobUpdate.fromJson);
   }
 
   String _downloadTypeFor(MediaFormat format) {

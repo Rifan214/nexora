@@ -26,7 +26,10 @@ mixin _$MediaState {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)
         success,
     required TResult Function(String message) error,
   }) =>
@@ -41,7 +44,10 @@ mixin _$MediaState {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)?
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)?
         success,
     TResult? Function(String message)? error,
   }) =>
@@ -56,7 +62,10 @@ mixin _$MediaState {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)?
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
@@ -159,7 +168,10 @@ class _$MediaIdleImpl implements MediaIdle {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)
         success,
     required TResult Function(String message) error,
   }) {
@@ -177,7 +189,10 @@ class _$MediaIdleImpl implements MediaIdle {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)?
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)?
         success,
     TResult? Function(String message)? error,
   }) {
@@ -195,7 +210,10 @@ class _$MediaIdleImpl implements MediaIdle {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)?
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
@@ -297,7 +315,10 @@ class _$MediaLoadingImpl implements MediaLoading {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)
         success,
     required TResult Function(String message) error,
   }) {
@@ -315,7 +336,10 @@ class _$MediaLoadingImpl implements MediaLoading {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)?
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)?
         success,
     TResult? Function(String message)? error,
   }) {
@@ -333,7 +357,10 @@ class _$MediaLoadingImpl implements MediaLoading {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)?
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
@@ -398,7 +425,10 @@ abstract class _$$MediaSuccessImplCopyWith<$Res> {
       bool downloadLoading,
       bool downloadSuccess,
       String? downloadError,
-      String? currentJobId});
+      String? currentJobId,
+      String? currentStatus,
+      int currentProgress,
+      String? downloadUrl});
 
   $MediaMetadataCopyWith<$Res> get metadata;
   $MediaFormatCopyWith<$Res>? get selectedFormat;
@@ -423,6 +453,9 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
     Object? downloadSuccess = null,
     Object? downloadError = freezed,
     Object? currentJobId = freezed,
+    Object? currentStatus = freezed,
+    Object? currentProgress = null,
+    Object? downloadUrl = freezed,
   }) {
     return _then(_$MediaSuccessImpl(
       metadata: null == metadata
@@ -448,6 +481,18 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
       currentJobId: freezed == currentJobId
           ? _value.currentJobId
           : currentJobId // ignore: cast_nullable_to_non_nullable
+              as String?,
+      currentStatus: freezed == currentStatus
+          ? _value.currentStatus
+          : currentStatus // ignore: cast_nullable_to_non_nullable
+              as String?,
+      currentProgress: null == currentProgress
+          ? _value.currentProgress
+          : currentProgress // ignore: cast_nullable_to_non_nullable
+              as int,
+      downloadUrl: freezed == downloadUrl
+          ? _value.downloadUrl
+          : downloadUrl // ignore: cast_nullable_to_non_nullable
               as String?,
     ));
   }
@@ -486,7 +531,10 @@ class _$MediaSuccessImpl implements MediaSuccess {
       this.downloadLoading = false,
       this.downloadSuccess = false,
       this.downloadError,
-      this.currentJobId});
+      this.currentJobId,
+      this.currentStatus,
+      this.currentProgress = 0,
+      this.downloadUrl});
 
   @override
   final MediaMetadata metadata;
@@ -502,10 +550,17 @@ class _$MediaSuccessImpl implements MediaSuccess {
   final String? downloadError;
   @override
   final String? currentJobId;
+  @override
+  final String? currentStatus;
+  @override
+  @JsonKey()
+  final int currentProgress;
+  @override
+  final String? downloadUrl;
 
   @override
   String toString() {
-    return 'MediaState.success(metadata: $metadata, selectedFormat: $selectedFormat, downloadLoading: $downloadLoading, downloadSuccess: $downloadSuccess, downloadError: $downloadError, currentJobId: $currentJobId)';
+    return 'MediaState.success(metadata: $metadata, selectedFormat: $selectedFormat, downloadLoading: $downloadLoading, downloadSuccess: $downloadSuccess, downloadError: $downloadError, currentJobId: $currentJobId, currentStatus: $currentStatus, currentProgress: $currentProgress, downloadUrl: $downloadUrl)';
   }
 
   @override
@@ -524,12 +579,27 @@ class _$MediaSuccessImpl implements MediaSuccess {
             (identical(other.downloadError, downloadError) ||
                 other.downloadError == downloadError) &&
             (identical(other.currentJobId, currentJobId) ||
-                other.currentJobId == currentJobId));
+                other.currentJobId == currentJobId) &&
+            (identical(other.currentStatus, currentStatus) ||
+                other.currentStatus == currentStatus) &&
+            (identical(other.currentProgress, currentProgress) ||
+                other.currentProgress == currentProgress) &&
+            (identical(other.downloadUrl, downloadUrl) ||
+                other.downloadUrl == downloadUrl));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, metadata, selectedFormat,
-      downloadLoading, downloadSuccess, downloadError, currentJobId);
+  int get hashCode => Object.hash(
+      runtimeType,
+      metadata,
+      selectedFormat,
+      downloadLoading,
+      downloadSuccess,
+      downloadError,
+      currentJobId,
+      currentStatus,
+      currentProgress,
+      downloadUrl);
 
   /// Create a copy of MediaState
   /// with the given fields replaced by the non-null parameter values.
@@ -550,12 +620,23 @@ class _$MediaSuccessImpl implements MediaSuccess {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)
         success,
     required TResult Function(String message) error,
   }) {
-    return success(metadata, selectedFormat, downloadLoading, downloadSuccess,
-        downloadError, currentJobId);
+    return success(
+        metadata,
+        selectedFormat,
+        downloadLoading,
+        downloadSuccess,
+        downloadError,
+        currentJobId,
+        currentStatus,
+        currentProgress,
+        downloadUrl);
   }
 
   @override
@@ -569,12 +650,23 @@ class _$MediaSuccessImpl implements MediaSuccess {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)?
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)?
         success,
     TResult? Function(String message)? error,
   }) {
-    return success?.call(metadata, selectedFormat, downloadLoading,
-        downloadSuccess, downloadError, currentJobId);
+    return success?.call(
+        metadata,
+        selectedFormat,
+        downloadLoading,
+        downloadSuccess,
+        downloadError,
+        currentJobId,
+        currentStatus,
+        currentProgress,
+        downloadUrl);
   }
 
   @override
@@ -588,14 +680,25 @@ class _$MediaSuccessImpl implements MediaSuccess {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)?
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
   }) {
     if (success != null) {
-      return success(metadata, selectedFormat, downloadLoading, downloadSuccess,
-          downloadError, currentJobId);
+      return success(
+          metadata,
+          selectedFormat,
+          downloadLoading,
+          downloadSuccess,
+          downloadError,
+          currentJobId,
+          currentStatus,
+          currentProgress,
+          downloadUrl);
     }
     return orElse();
   }
@@ -645,7 +748,10 @@ abstract class MediaSuccess implements MediaState {
       final bool downloadLoading,
       final bool downloadSuccess,
       final String? downloadError,
-      final String? currentJobId}) = _$MediaSuccessImpl;
+      final String? currentJobId,
+      final String? currentStatus,
+      final int currentProgress,
+      final String? downloadUrl}) = _$MediaSuccessImpl;
 
   MediaMetadata get metadata;
   MediaFormat? get selectedFormat;
@@ -653,6 +759,9 @@ abstract class MediaSuccess implements MediaState {
   bool get downloadSuccess;
   String? get downloadError;
   String? get currentJobId;
+  String? get currentStatus;
+  int get currentProgress;
+  String? get downloadUrl;
 
   /// Create a copy of MediaState
   /// with the given fields replaced by the non-null parameter values.
@@ -737,7 +846,10 @@ class _$MediaErrorImpl implements MediaError {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)
         success,
     required TResult Function(String message) error,
   }) {
@@ -755,7 +867,10 @@ class _$MediaErrorImpl implements MediaError {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)?
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)?
         success,
     TResult? Function(String message)? error,
   }) {
@@ -773,7 +888,10 @@ class _$MediaErrorImpl implements MediaError {
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
-            String? currentJobId)?
+            String? currentJobId,
+            String? currentStatus,
+            int currentProgress,
+            String? downloadUrl)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
