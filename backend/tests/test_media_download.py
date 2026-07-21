@@ -115,8 +115,9 @@ def test_background_download_completes_for_youtube_videos_and_shorts(
 @pytest.mark.parametrize(
     ("download_error", "expected_message"),
     [
-        (DownloadError("Requested format is not available"), "Requested format is not available"),
+        (DownloadError("Requested format is not available"), "Requested quality is no longer available"),
         (DownloadCancelled("Download cancelled"), "Download cancelled"),
+        (DownloadError("unable to download video data: HTTP Error 403: Forbidden"), "The media source rejected the download request"),
         (DownloadError("Unable to download webpage: timed out"), "Network interruption while downloading"),
     ],
 )
@@ -190,6 +191,11 @@ def test_create_download_job_returns_before_the_worker_finishes(monkeypatch: pyt
 
     monkeypatch.setattr(MediaService, "_download_job_background", blocked_download)
     service = MediaService()
+    monkeypatch.setattr(
+        service,
+        "_extract_info",
+        lambda _: {"title": "Background Worker", "extractor_key": "Youtube"},
+    )
     request = MediaDownloadRequest(
         url="https://www.youtube.com/watch?v=background-worker",
         format_id="18",

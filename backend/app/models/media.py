@@ -1,14 +1,17 @@
 from pydantic import BaseModel, Field
 
 
-class MediaFormat(BaseModel):
-    format_id: str = Field(..., min_length=1, description="yt-dlp format identifier")
-    extension: str = Field(..., min_length=1, description="Container or file extension")
-    resolution: str | None = Field(default=None, description="Video resolution or quality label")
-    fps: int | None = Field(default=None, ge=0, description="Frame rate if available")
-    filesize: int | None = Field(default=None, ge=0, description="File size in bytes if available")
-    video_codec: str | None = Field(default=None, description="Video codec if available")
-    audio_codec: str | None = Field(default=None, description="Audio codec if available")
+class AvailableQuality(BaseModel):
+    """A playable quality option intended for display in the client UI."""
+
+    label: str = Field(..., min_length=1, description="User-friendly quality label")
+    height: int = Field(..., gt=0, description="Video height in pixels")
+    extension: str = Field(..., min_length=1, description="Selected video container or extension")
+    estimated_filesize: int | None = Field(
+        default=None,
+        ge=0,
+        description="Estimated completed file size in bytes when yt-dlp provides enough data",
+    )
 
 
 class MediaMetadata(BaseModel):
@@ -25,12 +28,7 @@ class MediaMetadata(BaseModel):
     view_count: int | None = Field(default=None, ge=0, description="View count if available")
     like_count: int | None = Field(default=None, ge=0, description="Like count if available")
     description: str | None = Field(default=None, description="Media description if available")
-    formats: list[MediaFormat] = Field(default_factory=list, description="Available downloadable formats")
-
-
-class DownloadJobSummary(BaseModel):
-    job_id: str = Field(..., min_length=1, description="Download job identifier")
-    media_url: str = Field(..., min_length=1, description="Source media URL")
-    format_id: str = Field(..., min_length=1, description="yt-dlp format identifier")
-    type: str = Field(..., min_length=1, description="Requested output type")
-    status: str = Field(..., min_length=1, description="Current job status")
+    qualities: list[AvailableQuality] = Field(
+        default_factory=list,
+        description="Playable quality options selected by the backend",
+    )

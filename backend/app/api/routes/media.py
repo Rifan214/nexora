@@ -22,7 +22,8 @@ def get_media_service() -> MediaService:
 @router.post(
     "/info",
     response_model=APIResponse[MediaMetadata],
-    summary="Prepare media metadata lookup",
+    summary="Get media metadata and playable quality options",
+    description="Returns UI-friendly quality options. Raw yt-dlp stream identifiers are never included in the response.",
     response_model_exclude_none=True,
 )
 def media_info(
@@ -37,7 +38,12 @@ def media_info(
 @router.post(
     "/download",
     response_model=APIResponse[JobCreateResponse],
-    summary="Create download job",
+    summary="Create a quality-based download job",
+    description=(
+        "Send a quality_height returned by POST /media/info. The backend resolves it to a playable "
+        "yt-dlp selector and pairs adaptive video with audio when needed. The deprecated format_id "
+        "field is accepted only for temporary legacy-client compatibility."
+    ),
     response_model_exclude_none=True,
     dependencies=[Depends(run_lazy_cleanup)],
 )
@@ -46,9 +52,10 @@ def media_download(
     media_service: MediaService = Depends(get_media_service),
 ) -> APIResponse[JobCreateResponse]:
     logger.info(
-        "Incoming media download request url=%s format_id=%s type=%s",
+        "Incoming media download request url=%s quality_height=%s legacy_format_request=%s type=%s",
         request.url,
-        request.format_id,
+        request.quality_height,
+        request.format_id is not None,
         request.type,
     )
     job = media_service.create_download_job(request)

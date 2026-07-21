@@ -47,7 +47,7 @@ class MediaMetadata with _$MediaMetadata {
   }) = _MediaMetadata;
 
   factory MediaMetadata.fromJson(Map<String, dynamic> json) =>
-      _$MediaMetadataFromJson(json);
+      _$MediaMetadataFromJson(_normalizeQualityPayload(json));
 }
 
 @freezed
@@ -64,4 +64,66 @@ class MediaFormat with _$MediaFormat {
 
   factory MediaFormat.fromJson(Map<String, dynamic> json) =>
       _$MediaFormatFromJson(json);
+}
+
+extension MediaMetadataQualityExtension on MediaMetadata {
+  /// Compatibility view for the V1.1 quality-based metadata response.
+  List<MediaFormat> get qualities => formats;
+}
+
+extension MediaFormatQualityExtension on MediaFormat {
+  int get qualityHeight => int.tryParse(formatId) ?? 0;
+
+  String get qualityLabel {
+    final label = resolution?.trim();
+    if (label != null && label.isNotEmpty) {
+      return label;
+    }
+
+    return qualityHeight > 0 ? '${qualityHeight}p' : 'Unknown quality';
+  }
+
+  int? get estimatedFilesize => filesize;
+}
+
+Map<String, dynamic> _normalizeQualityPayload(Map<String, dynamic> json) {
+  final normalized = Map<String, dynamic>.from(json);
+  final rawQualities = normalized['qualities'];
+  if (rawQualities is! List) {
+    return normalized;
+  }
+
+  final formats = <Map<String, dynamic>>[];
+  for (final rawQuality in rawQualities) {
+    if (rawQuality is! Map) {
+      continue;
+    }
+
+    final quality = Map<String, dynamic>.from(rawQuality);
+    final height = quality['height'];
+    final extension = quality['extension'];
+    if (height is! num || extension is! String || extension.trim().isEmpty) {
+      continue;
+    }
+
+    final qualityHeight = height.toInt();
+    if (qualityHeight <= 0) {
+      continue;
+    }
+
+    final label = quality['label'];
+    formats.add(
+      <String, dynamic>{
+        'format_id': qualityHeight.toString(),
+        'extension': extension,
+        'resolution': label is String && label.trim().isNotEmpty
+            ? label
+            : '${qualityHeight}p',
+        'filesize': quality['estimated_filesize'],
+      },
+    );
+  }
+
+  normalized['formats'] = formats;
+  return normalized;
 }

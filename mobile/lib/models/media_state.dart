@@ -26,6 +26,7 @@ class MediaState with _$MediaState {
     String? downloadedFilename,
     String? savedFilePath,
     String? savedDirectory,
+    @Default(false) bool fileOpenLoading,
   }) = MediaSuccess;
 
   const factory MediaState.error(String message) = MediaError;

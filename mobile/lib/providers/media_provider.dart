@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_exception.dart';
@@ -30,6 +31,10 @@ class MediaController extends Notifier<MediaState> {
   }
 
   Future<void> getMediaInfo(String url) async {
+    if (_isWorkflowBusy) {
+      return;
+    }
+
     await _closeJobSubscription();
     _cancelFileDownload();
 
@@ -45,6 +50,11 @@ class MediaController extends Notifier<MediaState> {
     try {
       final metadata =
           await ref.read(mediaRepositoryProvider).getMediaInfo(trimmedUrl);
+      if (kDebugMode) {
+        debugPrint(
+          'MediaProvider received quality count=${metadata.qualities.length}',
+        );
+      }
       state = MediaState.success(metadata: metadata);
     } on ApiException catch (error) {
       state = MediaState.error(error.message);
@@ -54,13 +64,17 @@ class MediaController extends Notifier<MediaState> {
   }
 
   void selectFormat(MediaFormat format) {
-    unawaited(_closeJobSubscription());
-    _cancelFileDownload();
-
     final current = _successState;
-    if (current == null) {
+    if (current == null ||
+        current.downloadLoading ||
+        current.fileDownloadLoading ||
+        current.fileOpenLoading ||
+        _isActiveStatus(current.currentStatus)) {
       return;
     }
+
+    unawaited(_closeJobSubscription());
+    _cancelFileDownload();
 
     state = MediaState.success(
       metadata: current.metadata,
@@ -69,14 +83,17 @@ class MediaController extends Notifier<MediaState> {
   }
 
   Future<void> createDownloadJob() async {
-    _cancelFileDownload();
-
     final current = _successState;
     if (current == null ||
         current.downloadLoading ||
-        _isActiveStatus(current.currentStatus)) {
+        current.fileDownloadLoading ||
+        current.fileOpenLoading ||
+        _isActiveStatus(current.currentStatus) ||
+        _isCompletedStatus(current.currentStatus)) {
       return;
     }
+
+    _cancelFileDownload();
 
     final selectedFormat = current.selectedFormat;
     if (selectedFormat == null) {
@@ -108,6 +125,7 @@ class MediaController extends Notifier<MediaState> {
       downloadedFilename: null,
       savedFilePath: null,
       savedDirectory: null,
+      fileOpenLoading: false,
     );
 
     try {
@@ -154,7 +172,13 @@ class MediaController extends Notifier<MediaState> {
 
   Future<void> downloadCompletedFile() async {
     final current = _successState;
-    if (current == null || current.fileDownloadLoading) {
+    if (current == null ||
+        current.fileDownloadLoading ||
+        current.fileOpenLoading) {
+      return;
+    }
+
+    if (current.savedFilePath?.trim().isNotEmpty == true) {
       return;
     }
 
@@ -183,6 +207,7 @@ class MediaController extends Notifier<MediaState> {
       downloadedFilename: null,
       savedFilePath: null,
       savedDirectory: null,
+      fileOpenLoading: false,
     );
 
     try {
@@ -211,6 +236,7 @@ class MediaController extends Notifier<MediaState> {
         downloadedFilename: savedFile.filename,
         savedFilePath: savedFile.savedPath,
         savedDirectory: savedFile.savedDirectory,
+        fileOpenLoading: false,
       );
     } on ApiException catch (error) {
       _markFileDownloadFailed(cancelToken, error.message);
@@ -229,26 +255,44 @@ class MediaController extends Notifier<MediaState> {
   Future<void> openDownloadedFile() async {
     final current = _successState;
     final filePath = current?.savedFilePath?.trim();
-    if (current == null || filePath == null || filePath.isEmpty) {
+    if (current == null || current.fileOpenLoading) {
+      return;
+    }
+
+    if (filePath == null || filePath.isEmpty) {
       _setFileDownloadError('Downloaded file path is missing.');
       return;
     }
+
+    state = current.copyWith(
+      fileOpenLoading: true,
+      fileDownloadError: null,
+    );
 
     try {
       await ref.read(mediaRepositoryProvider).openDownloadedFile(filePath);
       final latest = _successState;
       if (latest != null) {
-        state = latest.copyWith(fileDownloadError: null);
+        state = latest.copyWith(
+          fileOpenLoading: false,
+          fileDownloadError: null,
+        );
       }
     } on ApiException catch (error) {
       final latest = _successState;
       if (latest != null) {
-        state = latest.copyWith(fileDownloadError: error.message);
+        state = latest.copyWith(
+          fileOpenLoading: false,
+          fileDownloadError: error.message,
+        );
       }
     } catch (_) {
       final latest = _successState;
       if (latest != null) {
-        state = latest.copyWith(fileDownloadError: 'Unable to open the file.');
+        state = latest.copyWith(
+          fileOpenLoading: false,
+          fileDownloadError: 'Unable to open the file.',
+        );
       }
     }
   }
@@ -348,6 +392,7 @@ class MediaController extends Notifier<MediaState> {
     state = current.copyWith(
       fileDownloadLoading: false,
       fileDownloadError: message,
+      fileOpenLoading: false,
     );
   }
 
@@ -374,14 +419,25 @@ class MediaController extends Notifier<MediaState> {
     return current is MediaSuccess ? current : null;
   }
 
+  bool get _isWorkflowBusy {
+    final current = state;
+    if (current is MediaLoading) {
+      return true;
+    }
+
+    if (current is! MediaSuccess) {
+      return false;
+    }
+
+    return current.downloadLoading ||
+        current.fileDownloadLoading ||
+        current.fileOpenLoading ||
+        _isActiveStatus(current.currentStatus);
+  }
+
   String _progressErrorMessage(Object error) {
     if (error is ApiException) {
       return error.message;
-    }
-
-    final message = error.toString().trim();
-    if (message.isNotEmpty) {
-      return message;
     }
 
     return 'Unable to receive download progress.';
@@ -410,6 +466,10 @@ class MediaController extends Notifier<MediaState> {
   bool _isTerminalStatus(String? status) {
     final normalizedStatus = status?.toLowerCase();
     return normalizedStatus == 'completed' || normalizedStatus == 'failed';
+  }
+
+  bool _isCompletedStatus(String? status) {
+    return status?.toLowerCase() == 'completed';
   }
 
   bool _isConnectionLostStatus(String? status) {

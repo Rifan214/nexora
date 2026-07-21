@@ -10,9 +10,10 @@ from yt_dlp.utils import DownloadError, ExtractorError, YoutubeDLError
 from app.core.config import get_settings
 from app.core.exceptions import APIError
 from app.models.job import DownloadJob
-from app.models.media import MediaFormat, MediaMetadata
+from app.models.media import MediaMetadata
 from app.models.requests import MediaDownloadRequest
 from app.services.job_manager import build_job_download_url, get_job_manager
+from app.services.quality_selector import QualitySelector
 from app.utils.platforms import detect_platform_from_url
 from app.utils.storage import build_download_outtmpl, find_downloaded_file, get_temp_storage_dir
 from app.utils.validators import validate_http_url
@@ -23,13 +24,14 @@ logger = logging.getLogger(__name__)
 class MediaService:
     def __init__(self) -> None:
         self._settings = get_settings()
+        self._quality_selector = QualitySelector()
 
     def get_metadata(self, url: str) -> MediaMetadata:
         normalized_url = validate_http_url(url)
         logger.info("Metadata extraction started url=%s", normalized_url)
 
         try:
-            info = self._extract_info(normalized_url)
+            info = self._extract_info_or_raise_api_error(normalized_url)
             platform = self._detect_platform(info)
             if platform != "youtube":
                 raise APIError(
@@ -42,13 +44,9 @@ class MediaService:
             metadata = self._build_metadata(info=info, platform=platform, url=normalized_url)
             logger.info("Metadata extraction completed url=%s platform=%s", normalized_url, platform)
             return metadata
-        except APIError:
-            logger.warning("Metadata extraction failed url=%s", normalized_url)
+        except APIError as exc:
+            self._log_failure(normalized_url, exc.message, exc.details)
             raise
-        except (DownloadError, ExtractorError) as exc:
-            api_error = self._map_yt_dlp_error(exc)
-            self._log_failure(normalized_url, api_error.message, api_error.details)
-            raise api_error from None
         except Exception as exc:
             api_error = APIError(
                 code="METADATA_EXTRACTION_ERROR",
@@ -62,31 +60,62 @@ class MediaService:
     def create_download_job(self, request: MediaDownloadRequest) -> DownloadJob:
         normalized_url = validate_http_url(request.url)
         logger.info(
-            "Download job request received url=%s format_id=%s type=%s",
+            "Download job request received url=%s quality_height=%s legacy_format_request=%s type=%s",
             normalized_url,
-            request.format_id,
+            request.quality_height,
+            request.format_id is not None,
             request.type,
         )
 
-        platform = detect_platform_from_url(normalized_url)
+        try:
+            info = self._extract_info_or_raise_api_error(normalized_url)
+            platform = self._detect_platform(info)
+            if platform != "youtube":
+                raise APIError(
+                    code="UNSUPPORTED_PLATFORM",
+                    message="Unsupported platform",
+                    details=f"Platform '{platform}' is not supported in V1",
+                    status_code=501,
+                )
+
+            if request.quality_height is not None:
+                selection = self._quality_selector.select_for_height(
+                    info.get("formats") or [],
+                    request.quality_height,
+                )
+                if selection is None:
+                    raise APIError(
+                        code="QUALITY_NOT_AVAILABLE",
+                        message="Requested quality unavailable",
+                        details="The requested quality is no longer available for this media",
+                        status_code=409,
+                    )
+                format_selector = selection.selector
+            else:
+                # Deprecated request support for clients released before V1.1.
+                format_selector = request.format_id or ""
+        except APIError as exc:
+            self._log_failure(normalized_url, exc.message, exc.details)
+            raise
 
         job_manager = get_job_manager()
         job = job_manager.create_job(
             media_url=normalized_url,
             platform=platform,
-            format_id=request.format_id,
+            title=str(info.get("title") or "Untitled media"),
+            format_id=format_selector,
             output_type=request.type,
         )
         worker = threading.Thread(
             target=self._download_job_background,
-            args=(job.job_id, normalized_url, request.format_id, request.type),
+            args=(job.job_id, normalized_url, format_selector, request.type),
             daemon=True,
             name=f"nexora-download-{job.job_id}",
         )
         worker.start()
         return job
 
-    def _download_job_background(self, job_id, url: str, format_id: str, output_type: str) -> None:
+    def _download_job_background(self, job_id, url: str, format_selector: str, output_type: str) -> None:
         job_manager = get_job_manager()
 
         try:
@@ -117,10 +146,10 @@ class MediaService:
                 job_id,
                 title=str(extracted_info.get("title") or "Untitled media"),
                 platform=detected_platform,
-                format_id=format_id,
+                format_id=format_selector,
                 output_type=output_type,
             )
-            logger.info("Download started job_id=%s url=%s format_id=%s", job_id, url, format_id)
+            logger.info("Download started job_id=%s url=%s", job_id, url)
 
             temp_dir = get_temp_storage_dir()
             output_template = build_download_outtmpl(job_id, temp_dir=temp_dir)
@@ -131,7 +160,7 @@ class MediaService:
                 "noplaylist": True,
                 "skip_download": False,
                 "cachedir": False,
-                "format": format_id,
+                "format": format_selector,
                 "outtmpl": output_template,
                 "paths": {"home": str(temp_dir)},
                 "progress_hooks": [self._build_progress_hook(job_id, job_manager)],
@@ -209,8 +238,11 @@ class MediaService:
         message = str(exc)
         lowered = message.casefold()
 
+        if any(token in lowered for token in ("http error 403", "forbidden", "access denied")):
+            return "The media source rejected the download request"
+
         if any(token in lowered for token in ("requested format is not available", "format not available", "format unavailable")):
-            return "Requested format is not available"
+            return "Requested quality is no longer available"
         if any(token in lowered for token in ("cancelled", "canceled")):
             return "Download cancelled"
         if any(token in lowered for token in ("timeout", "timed out", "network", "connection", "http error", "unable to download webpage")):
@@ -247,6 +279,21 @@ class MediaService:
 
         return extracted_info
 
+    def _extract_info_or_raise_api_error(self, url: str) -> dict[str, Any]:
+        try:
+            return self._extract_info(url)
+        except APIError:
+            raise
+        except (DownloadError, ExtractorError) as exc:
+            raise self._map_yt_dlp_error(exc) from None
+        except Exception as exc:
+            raise APIError(
+                code="METADATA_EXTRACTION_ERROR",
+                message="Failed to extract media metadata",
+                details="An unexpected error occurred while extracting media metadata",
+                status_code=500,
+            ) from exc
+
     @staticmethod
     def _detect_platform(info: dict[str, Any]) -> str:
         extractor_key = str(info.get("extractor_key") or info.get("ie_key") or "").casefold()
@@ -282,65 +329,8 @@ class MediaService:
             view_count=self._int_or_none(info.get("view_count")),
             like_count=self._int_or_none(info.get("like_count")),
             description=info.get("description"),
-            formats=self._normalize_formats(info.get("formats") or []),
+            qualities=self._quality_selector.build_qualities(info.get("formats") or []),
         )
-
-    def _normalize_formats(self, formats: list[dict[str, Any]]) -> list[MediaFormat]:
-        normalized: list[MediaFormat] = []
-        seen: set[tuple[Any, ...]] = set()
-
-        for format_item in formats:
-            format_id = str(format_item.get("format_id") or "").strip()
-            if not format_id:
-                continue
-
-            resolution = self._format_resolution(format_item)
-            filesize = self._int_or_none(format_item.get("filesize") or format_item.get("filesize_approx"))
-            fingerprint = (
-                format_id,
-                format_item.get("ext") or "unknown",
-                resolution,
-                format_item.get("fps"),
-                filesize,
-                format_item.get("vcodec"),
-                format_item.get("acodec"),
-            )
-            if fingerprint in seen:
-                continue
-            seen.add(fingerprint)
-
-            normalized.append(
-                MediaFormat(
-                    format_id=format_id,
-                    extension=str(format_item.get("ext") or "unknown"),
-                    resolution=resolution,
-                    fps=self._int_or_none(format_item.get("fps")),
-                    filesize=filesize,
-                    video_codec=self._clean_codec(format_item.get("vcodec")),
-                    audio_codec=self._clean_codec(format_item.get("acodec")),
-                )
-            )
-
-        return normalized
-
-    @staticmethod
-    def _format_resolution(format_item: dict[str, Any]) -> str | None:
-        resolution = format_item.get("resolution")
-        if resolution:
-            return str(resolution)
-
-        width = format_item.get("width")
-        height = format_item.get("height")
-        if width and height:
-            return f"{width}x{height}"
-        if height:
-            return f"{height}p"
-
-        format_note = format_item.get("format_note")
-        if format_note:
-            return str(format_note)
-
-        return None
 
     @staticmethod
     def _select_thumbnail(info: dict[str, Any]) -> str | None:
@@ -365,11 +355,6 @@ class MediaService:
         except (TypeError, ValueError):
             return None
 
-    @staticmethod
-    def _clean_codec(value: Any) -> str | None:
-        if value in (None, "none", "None", ""):
-            return None
-        return str(value)
 
     @staticmethod
     def _map_yt_dlp_error(exc: Exception) -> APIError:

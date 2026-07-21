@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.dependencies import run_lazy_cleanup
 from app.core.exceptions import APIError
-from app.models.job import DownloadJob, JobDeleteResponse
+from app.models.job import DownloadJobStatusResponse, JobDeleteResponse
 from app.models.response import APIResponse
 from app.services.job_manager import JobManager, get_job_manager
 
@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 
 @router.get(
     "/jobs/{job_id}",
-    response_model=APIResponse[DownloadJob],
+    response_model=APIResponse[DownloadJobStatusResponse],
     summary="Get job status",
     response_model_exclude_none=True,
     dependencies=[Depends(run_lazy_cleanup)],
 )
-def get_job(job_id: UUID, job_manager: JobManager = Depends(get_job_manager)) -> APIResponse[DownloadJob]:
+def get_job(job_id: UUID, job_manager: JobManager = Depends(get_job_manager)) -> APIResponse[DownloadJobStatusResponse]:
     job = job_manager.get_job(job_id)
     if job is None:
         raise APIError(
@@ -32,7 +32,7 @@ def get_job(job_id: UUID, job_manager: JobManager = Depends(get_job_manager)) ->
             status_code=404,
         )
 
-    return APIResponse.ok(data=job)
+    return APIResponse.ok(data=DownloadJobStatusResponse.from_job(job))
 
 
 @router.delete(

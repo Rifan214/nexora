@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_exception.dart';
@@ -37,6 +39,15 @@ class MediaRepository {
       ApiPaths.mediaInfo,
       data: {'url': url.trim()},
     );
+    final rawData = response['data'];
+    final rawQualities = rawData is Map ? rawData['qualities'] : null;
+    if (kDebugMode) {
+      debugPrint(
+        'MediaRepository /media/info qualities present=${rawQualities is List} '
+        'count=${rawQualities is List ? rawQualities.length : 0}',
+      );
+      debugPrint('MediaRepository /media/info payload: ${jsonEncode(response)}');
+    }
     final mediaResponse = MediaInfoResponse.fromJson(response);
 
     if (!mediaResponse.success) {
@@ -52,6 +63,12 @@ class MediaRepository {
       throw const ApiException('Invalid response from server.');
     }
 
+    if (kDebugMode) {
+      debugPrint(
+        'MediaRepository parsed quality count=${metadata.qualities.length}',
+      );
+    }
+
     return metadata;
   }
 
@@ -59,14 +76,17 @@ class MediaRepository {
     required String mediaUrl,
     required MediaFormat format,
   }) async {
-    final request = DownloadJobRequest(
-      url: mediaUrl.trim(),
-      formatId: format.formatId,
-      type: _downloadTypeFor(format),
-    );
+    final qualityHeight = format.qualityHeight;
+    if (qualityHeight <= 0) {
+      throw const ApiException('Invalid selected quality.');
+    }
+
     final response = await _apiService.postJson(
       ApiPaths.mediaDownload,
-      data: request.toJson(),
+      data: {
+        'url': mediaUrl.trim(),
+        'quality_height': qualityHeight,
+      },
     );
     final downloadResponse = DownloadJobResponse.fromJson(response);
 
@@ -92,9 +112,7 @@ class MediaRepository {
       return Stream<JobUpdate>.error(const ApiException('Invalid job id.'));
     }
 
-    return _webSocketService
-        .connectJson(ApiPaths.jobWebSocket(trimmedJobId))
-        .map(JobUpdate.fromJson);
+    return _listenToJob(trimmedJobId);
   }
 
   Future<CompletedFileDownload> downloadCompletedFile({
@@ -162,21 +180,6 @@ class MediaRepository {
     return _deviceFileService.openFile(trimmedPath);
   }
 
-  String _downloadTypeFor(MediaFormat format) {
-    final videoCodec = format.videoCodec?.trim().toLowerCase();
-    final audioCodec = format.audioCodec?.trim().toLowerCase();
-    final hasVideo =
-        videoCodec != null && videoCodec.isNotEmpty && videoCodec != 'none';
-    final hasAudio =
-        audioCodec != null && audioCodec.isNotEmpty && audioCodec != 'none';
-
-    if (!hasVideo && hasAudio) {
-      return 'audio';
-    }
-
-    return 'video';
-  }
-
   Future<Directory> _prepareDownloadDirectory() async {
     try {
       return await _deviceFileService.prepareDownloadDirectory();
@@ -184,6 +187,21 @@ class MediaRepository {
       rethrow;
     } catch (_) {
       throw const ApiException('Unable to prepare the download location.');
+    }
+  }
+
+  Stream<JobUpdate> _listenToJob(String jobId) async* {
+    try {
+      await for (final message
+          in _webSocketService.connectJson(ApiPaths.jobWebSocket(jobId))) {
+        yield JobUpdate.fromJson(message);
+      }
+    } on ApiException {
+      rethrow;
+    } on WebSocketServiceException catch (error) {
+      throw ApiException(error.message);
+    } catch (_) {
+      throw const ApiException('Unable to receive download progress.');
     }
   }
 }

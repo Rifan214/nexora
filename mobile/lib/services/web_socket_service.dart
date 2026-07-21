@@ -29,8 +29,9 @@ class WebSocketService {
         await for (final message in channel.stream) {
           yield _decodeJsonMessage(message);
         }
-
-        return;
+        throw const WebSocketClosedException(
+          'Download progress connection closed.',
+        );
       } catch (error) {
         if (error is WebSocketConfigurationException ||
             error is WebSocketMessageException) {
@@ -144,4 +145,8 @@ class WebSocketConfigurationException extends WebSocketServiceException {
 
 class WebSocketMessageException extends WebSocketServiceException {
   const WebSocketMessageException(super.message);
+}
+
+class WebSocketClosedException extends WebSocketServiceException {
+  const WebSocketClosedException(super.message);
 }

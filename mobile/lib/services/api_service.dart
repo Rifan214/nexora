@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_exception.dart';
@@ -16,14 +18,20 @@ class ApiService {
   final Dio _dio;
 
   Future<Map<String, dynamic>> getJson(String path) async {
-    return _sendJson(() => _dio.get<Object?>(path));
+    return _sendJson(
+      () => _dio.get<Object?>(path),
+      requestLabel: 'GET $path',
+    );
   }
 
   Future<Map<String, dynamic>> postJson(
     String path, {
     Map<String, dynamic>? data,
   }) async {
-    return _sendJson(() => _dio.post<Object?>(path, data: data));
+    return _sendJson(
+      () => _dio.post<Object?>(path, data: data),
+      requestLabel: 'POST $path',
+    );
   }
 
   Future<void> downloadFile(
@@ -50,18 +58,28 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> _sendJson(
-    Future<Response<Object?>> Function() request,
-  ) async {
+    Future<Response<Object?>> Function() request, {
+    required String requestLabel,
+  }) async {
     try {
       final response = await request();
       final data = response.data;
 
       if (data is Map<String, dynamic>) {
+        _logJsonResponse(requestLabel, data);
         return data;
       }
 
       if (data is Map) {
-        return Map<String, dynamic>.from(data);
+        final response = Map<String, dynamic>.from(data);
+        _logJsonResponse(requestLabel, response);
+        return response;
+      }
+
+      if (data is String && _looksLikeHtml(data)) {
+        throw const ApiException(
+          'Backend URL is pointing to the Flutter app. Configure the API base URL to the backend server.',
+        );
       }
 
       throw const ApiException('Invalid response from server.');
@@ -83,6 +101,7 @@ class ApiService {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:
       case DioExceptionType.receiveTimeout:
+      case DioExceptionType.transformTimeout:
         return 'Connection timed out. Please try again.';
       case DioExceptionType.connectionError:
       case DioExceptionType.unknown:
@@ -104,9 +123,18 @@ class ApiService {
     final data = response.data;
     if (data is Map) {
       final payload = Map<String, dynamic>.from(data);
+      final error = payload['error'];
+      if (error is Map) {
+        final errorPayload = Map<String, dynamic>.from(error);
+        final details = errorPayload['details'];
+        if (details is String && details.trim().isNotEmpty) {
+          return details.trim();
+        }
+      }
+
       final message = payload['message'];
       if (message is String && message.trim().isNotEmpty) {
-        return message;
+        return message.trim();
       }
     }
 
@@ -116,5 +144,17 @@ class ApiService {
     }
 
     return 'Server returned status code $statusCode.';
+  }
+
+  bool _looksLikeHtml(String value) {
+    final normalized = value.trimLeft().toLowerCase();
+    return normalized.startsWith('<!doctype html') ||
+        normalized.startsWith('<html');
+  }
+
+  void _logJsonResponse(String requestLabel, Map<String, dynamic> response) {
+    if (kDebugMode) {
+      debugPrint('$requestLabel raw JSON response: ${jsonEncode(response)}');
+    }
   }
 }

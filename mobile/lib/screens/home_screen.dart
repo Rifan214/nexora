@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -21,7 +22,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   final _urlController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    _urlController.addListener(_onUrlChanged);
+  }
+
+  @override
   void dispose() {
+    _urlController.removeListener(_onUrlChanged);
     _urlController.dispose();
     super.dispose();
   }
@@ -32,10 +40,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final healthState = ref.watch(healthProvider);
     final mediaState = ref.watch(mediaProvider);
     final isCheckingHealth = healthState.isLoading;
-    final isLoadingMedia = mediaState.maybeWhen(
-      loading: () => true,
-      orElse: () => false,
-    );
+    final hasMediaUrl = _urlController.text.trim().isNotEmpty;
+    final isMediaBusy = _isMediaBusy(mediaState);
+    final canRequestMetadata = hasMediaUrl && !isMediaBusy;
+    final metadataButtonLabel = mediaState is MediaLoading
+        ? 'Loading...'
+        : isMediaBusy
+            ? 'Please wait...'
+            : 'Get Metadata';
 
     return Scaffold(
       body: SafeArea(
@@ -73,12 +85,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       border: OutlineInputBorder(),
                       labelText: 'Media URL',
                     ),
-                    onSubmitted: (_) => _getMetadata(isLoadingMedia),
+                    enabled: !isMediaBusy,
+                    onSubmitted: (_) => _getMetadata(canRequestMetadata),
                   ),
                   const SizedBox(height: 12),
                   FilledButton(
-                    onPressed: isLoadingMedia ? null : () => _getMetadata(isLoadingMedia),
-                    child: Text(isLoadingMedia ? 'Loading...' : 'Get Metadata'),
+                    onPressed:
+                        canRequestMetadata ? () => _getMetadata(canRequestMetadata) : null,
+                    child: Text(metadataButtonLabel),
                   ),
                   const SizedBox(height: 16),
                   _MediaStatus(mediaState: mediaState),
@@ -91,12 +105,33 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  void _getMetadata(bool isLoading) {
-    if (isLoading) {
+  void _getMetadata(bool canRequest) {
+    if (!canRequest) {
       return;
     }
 
     ref.read(mediaProvider.notifier).getMediaInfo(_urlController.text);
+  }
+
+  void _onUrlChanged() {
+    setState(() {});
+  }
+
+  bool _isMediaBusy(MediaState state) {
+    if (state is MediaLoading) {
+      return true;
+    }
+
+    if (state is! MediaSuccess) {
+      return false;
+    }
+
+    final normalizedStatus = state.currentStatus?.toLowerCase();
+    return state.downloadLoading ||
+        state.fileDownloadLoading ||
+        state.fileOpenLoading ||
+        normalizedStatus == 'pending' ||
+        normalizedStatus == 'processing';
   }
 }
 
@@ -121,7 +156,7 @@ class _HealthStatus extends StatelessWidget {
       error: (error, _) {
         return _StatusMessage(
           title: '\u274C Backend Offline',
-          message: error.toString(),
+          message: _readErrorMessage(error),
         );
       },
       loading: () {
@@ -134,6 +169,14 @@ class _HealthStatus extends StatelessWidget {
         );
       },
     );
+  }
+
+  String _readErrorMessage(Object error) {
+    if (error is String && error.trim().isNotEmpty) {
+      return error.trim();
+    }
+
+    return 'Unable to contact the backend.';
   }
 }
 
@@ -172,6 +215,7 @@ class _MediaStatus extends ConsumerWidget {
           downloadedFilename: state.downloadedFilename,
           savedFilePath: state.savedFilePath,
           savedDirectory: state.savedDirectory,
+          fileOpenLoading: state.fileOpenLoading,
           onFormatSelected: mediaController.selectFormat,
           onDownloadPressed: mediaController.createDownloadJob,
           onFileDownloadPressed: mediaController.downloadCompletedFile,
@@ -204,6 +248,7 @@ class _MetadataSummary extends StatelessWidget {
     required this.downloadedFilename,
     required this.savedFilePath,
     required this.savedDirectory,
+    required this.fileOpenLoading,
     required this.onFormatSelected,
     required this.onDownloadPressed,
     required this.onFileDownloadPressed,
@@ -224,6 +269,7 @@ class _MetadataSummary extends StatelessWidget {
   final String? downloadedFilename;
   final String? savedFilePath;
   final String? savedDirectory;
+  final bool fileOpenLoading;
   final ValueChanged<MediaFormat> onFormatSelected;
   final VoidCallback onDownloadPressed;
   final VoidCallback onFileDownloadPressed;
@@ -235,8 +281,12 @@ class _MetadataSummary extends StatelessWidget {
     final hasCreatedJob = downloadSuccess && currentJobId != null;
     final isDownloadDisabled = selectedFormat == null ||
         downloadLoading ||
+        fileDownloadLoading ||
         _isActiveStatus(currentStatus) ||
         _isCompletedStatus(currentStatus);
+    final isFormatSelectionEnabled = !downloadLoading &&
+        !fileDownloadLoading &&
+        !_isActiveStatus(currentStatus);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -272,13 +322,14 @@ class _MetadataSummary extends StatelessWidget {
         _MetadataRow(label: 'Duration', value: _formatDuration(metadata.durationSeconds)),
         _MetadataRow(label: 'Platform', value: metadata.platform),
         _MetadataRow(
-          label: 'Available formats',
-          value: metadata.formats.length.toString(),
+          label: 'Available qualities',
+          value: metadata.qualities.length.toString(),
         ),
         const SizedBox(height: 16),
         _FormatSelectionList(
-          formats: metadata.formats,
+          formats: metadata.qualities,
           selectedFormat: selectedFormat,
+          enabled: isFormatSelectionEnabled,
           onFormatSelected: onFormatSelected,
         ),
         const SizedBox(height: 16),
@@ -311,6 +362,7 @@ class _MetadataSummary extends StatelessWidget {
             downloadedFilename: downloadedFilename,
             savedFilePath: savedFilePath,
             savedDirectory: savedDirectory,
+            fileOpenLoading: fileOpenLoading,
             onFileDownloadPressed: onFileDownloadPressed,
             onOpenFilePressed: onOpenFilePressed,
           ),
@@ -371,6 +423,7 @@ class _DownloadProgressStatus extends StatelessWidget {
     required this.downloadedFilename,
     required this.savedFilePath,
     required this.savedDirectory,
+    required this.fileOpenLoading,
     required this.onFileDownloadPressed,
     required this.onOpenFilePressed,
   });
@@ -384,6 +437,7 @@ class _DownloadProgressStatus extends StatelessWidget {
   final String? downloadedFilename;
   final String? savedFilePath;
   final String? savedDirectory;
+  final bool fileOpenLoading;
   final VoidCallback onFileDownloadPressed;
   final VoidCallback onOpenFilePressed;
 
@@ -400,6 +454,7 @@ class _DownloadProgressStatus extends StatelessWidget {
         downloadedFilename: downloadedFilename,
         savedFilePath: savedFilePath,
         savedDirectory: savedDirectory,
+        fileOpenLoading: fileOpenLoading,
         onFileDownloadPressed: onFileDownloadPressed,
         onOpenFilePressed: onOpenFilePressed,
       );
@@ -479,6 +534,7 @@ class _CompletedDownloadSection extends StatelessWidget {
     required this.downloadedFilename,
     required this.savedFilePath,
     required this.savedDirectory,
+    required this.fileOpenLoading,
     required this.onFileDownloadPressed,
     required this.onOpenFilePressed,
   });
@@ -489,6 +545,7 @@ class _CompletedDownloadSection extends StatelessWidget {
   final String? downloadedFilename;
   final String? savedFilePath;
   final String? savedDirectory;
+  final bool fileOpenLoading;
   final VoidCallback onFileDownloadPressed;
   final VoidCallback onOpenFilePressed;
 
@@ -524,8 +581,8 @@ class _CompletedDownloadSection extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           OutlinedButton(
-            onPressed: onOpenFilePressed,
-            child: const Text('Open File'),
+            onPressed: fileOpenLoading ? null : onOpenFilePressed,
+            child: Text(fileOpenLoading ? 'Opening...' : 'Open File'),
           ),
         ],
         if (fileDownloadError != null && fileDownloadError!.isNotEmpty) ...[
@@ -596,26 +653,32 @@ class _FormatSelectionList extends StatelessWidget {
   const _FormatSelectionList({
     required this.formats,
     required this.selectedFormat,
+    required this.enabled,
     required this.onFormatSelected,
   });
 
   final List<MediaFormat> formats;
   final MediaFormat? selectedFormat;
+  final bool enabled;
   final ValueChanged<MediaFormat> onFormatSelected;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
 
+    if (kDebugMode) {
+      debugPrint('Quality UI render count=${formats.length}');
+    }
+
     if (formats.isEmpty) {
-      return const Text('No formats were returned.');
+      return const Text('No qualities were returned.');
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Available Formats',
+          'Available Qualities',
           style: textTheme.titleMedium,
         ),
         const SizedBox(height: 8),
@@ -623,6 +686,7 @@ class _FormatSelectionList extends StatelessWidget {
           _FormatCard(
             format: format,
             selectedFormatId: selectedFormat?.formatId,
+            enabled: enabled,
             onSelected: () => onFormatSelected(format),
           ),
       ],
@@ -634,11 +698,13 @@ class _FormatCard extends StatelessWidget {
   const _FormatCard({
     required this.format,
     required this.selectedFormatId,
+    required this.enabled,
     required this.onSelected,
   });
 
   final MediaFormat format;
   final String? selectedFormatId;
+  final bool enabled;
   final VoidCallback onSelected;
 
   @override
@@ -648,11 +714,14 @@ class _FormatCard extends StatelessWidget {
 
     return Card(
       color: isSelected ? colorScheme.secondaryContainer : null,
-      child: RadioListTile<String>(
-        value: format.formatId,
-        groupValue: selectedFormatId,
-        onChanged: (_) => onSelected(),
+      child: ListTile(
+        enabled: enabled,
         selected: isSelected,
+        onTap: enabled ? onSelected : null,
+        leading: Icon(
+          isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+          color: isSelected ? colorScheme.primary : null,
+        ),
         title: Text(_formatTitle(format)),
         subtitle: Text(_formatSubtitle(format)),
       ),
@@ -660,17 +729,14 @@ class _FormatCard extends StatelessWidget {
   }
 
   String _formatTitle(MediaFormat format) {
-    final resolution = _fallback(format.resolution);
+    final resolution = format.qualityLabel;
     final extension = format.extension.toUpperCase();
     return '$resolution - $extension';
   }
 
   String _formatSubtitle(MediaFormat format) {
     final parts = <String>[
-      'Estimated filesize: ${_formatFileSize(format.filesize)}',
-      if (format.fps != null) 'FPS: ${format.fps}',
-      'Video codec: ${_fallback(format.videoCodec)}',
-      'Audio codec: ${_fallback(format.audioCodec)}',
+      'Estimated filesize: ${_formatFileSize(format.estimatedFilesize)}',
     ];
 
     return parts.join('\n');
@@ -700,13 +766,6 @@ class _FormatCard extends StatelessWidget {
     return '$bytes B';
   }
 
-  String _fallback(String? value) {
-    final trimmedValue = value?.trim();
-    if (trimmedValue == null || trimmedValue.isEmpty) {
-      return 'Unknown';
-    }
-    return trimmedValue;
-  }
 }
 
 class _MetadataRow extends StatelessWidget {
