@@ -12,6 +12,7 @@ import '../widgets/downloads_content.dart';
 import '../widgets/history_content.dart';
 import '../widgets/nexora_brand.dart';
 import '../widgets/nexora_navigation_bar.dart';
+import '../widgets/settings_content.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -55,6 +56,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     if (_selectedDestinationIndex == NexoraNavigationBar.historyIndex) {
       return _buildScaffold(HistoryContent(mediaState: mediaState));
+    }
+
+    if (_selectedDestinationIndex == NexoraNavigationBar.settingsIndex) {
+      return _buildScaffold(const SettingsContent());
     }
 
     if (mediaState is MediaIdle) {
@@ -168,7 +173,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     if (index == NexoraNavigationBar.downloadIndex ||
         index == NexoraNavigationBar.downloadsIndex ||
-        index == NexoraNavigationBar.historyIndex) {
+        index == NexoraNavigationBar.historyIndex ||
+        index == NexoraNavigationBar.settingsIndex) {
       setState(() {
         _selectedDestinationIndex = index;
       });
