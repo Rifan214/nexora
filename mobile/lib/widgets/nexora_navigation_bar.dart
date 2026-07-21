@@ -11,6 +11,7 @@ class NexoraNavigationBar extends StatelessWidget {
 
   static const downloadIndex = 0;
   static const downloadsIndex = 1;
+  static const historyIndex = 2;
   static const _downloadLabel = 'Download';
   static const _downloadsLabel = 'Downloads';
   static const _historyLabel = 'History';

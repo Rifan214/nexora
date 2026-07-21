@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/theme/app_tokens.dart';
 import '../models/media_download_type.dart';
 import '../models/media_state.dart';
+import 'media_card_parts.dart';
 import 'nexora_brand.dart';
 
 class DownloadsContent extends StatelessWidget {
@@ -143,7 +144,10 @@ class _ActiveDownloadCard extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final useVerticalLayout = constraints.maxWidth < 520;
-            final thumbnail = _DownloadThumbnail(download: download);
+            final thumbnail = NexoraMediaThumbnail(
+              metadata: download.metadata,
+              mediaType: download.currentMediaType,
+            );
             final details = _DownloadDetails(download: download);
             final cancelAction = const _UnavailableCancelAction();
 
@@ -183,91 +187,6 @@ class _ActiveDownloadCard extends StatelessWidget {
   }
 }
 
-class _DownloadThumbnail extends StatelessWidget {
-  const _DownloadThumbnail({required this.download});
-
-  final MediaSuccess download;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final thumbnailUrl = download.metadata.thumbnailUrl?.trim();
-
-    return ClipRRect(
-      borderRadius: AppRadii.input,
-      child: AspectRatio(
-        aspectRatio: 16 / 9,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (thumbnailUrl == null || thumbnailUrl.isEmpty)
-              _DownloadThumbnailPlaceholder(
-                isAudio: download.currentMediaType == MediaDownloadType.audio,
-              )
-            else
-              Image.network(
-                thumbnailUrl,
-                fit: BoxFit.cover,
-                semanticLabel: download.metadata.title,
-                errorBuilder: (_, __, ___) {
-                  return _DownloadThumbnailPlaceholder(
-                    isAudio:
-                        download.currentMediaType == MediaDownloadType.audio,
-                  );
-                },
-              ),
-            Positioned(
-              right: AppSpacing.sm,
-              bottom: AppSpacing.sm,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.xs,
-                  vertical: AppSpacing.xxs,
-                ),
-                decoration: BoxDecoration(
-                  color: colorScheme.inverseSurface.withAlpha(224),
-                  borderRadius: const BorderRadius.all(Radius.circular(8)),
-                ),
-                child: Text(
-                  _formatDownloadDuration(download.metadata.durationSeconds),
-                  style: textTheme.labelMedium?.copyWith(
-                    color: colorScheme.onInverseSurface,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DownloadThumbnailPlaceholder extends StatelessWidget {
-  const _DownloadThumbnailPlaceholder({required this.isAudio});
-
-  final bool isAudio;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return ColoredBox(
-      color: colorScheme.surfaceContainerHigh,
-      child: Center(
-        child: Icon(
-          isAudio
-              ? Icons.audio_file_outlined
-              : Icons.image_not_supported_outlined,
-          color: colorScheme.onSurfaceVariant,
-          size: 40,
-        ),
-      ),
-    );
-  }
-}
-
 class _DownloadDetails extends StatelessWidget {
   const _DownloadDetails({required this.download});
 
@@ -295,7 +214,7 @@ class _DownloadDetails extends StatelessWidget {
               ),
             ),
             const SizedBox(width: AppSpacing.sm),
-            _SelectedFormatBadge(label: _qualityLabel(download)),
+            MediaBadge(label: _qualityLabel(download)),
           ],
         ),
         const SizedBox(height: AppSpacing.lg),
@@ -360,55 +279,6 @@ class _DownloadDetails extends StatelessWidget {
 
       return '${word[0].toUpperCase()}${word.substring(1)}';
     }).join(' ');
-  }
-
-}
-
-String _formatDownloadDuration(int? seconds) {
-  if (seconds == null) {
-    return 'Unknown';
-  }
-
-  final duration = Duration(seconds: seconds);
-  final hours = duration.inHours;
-  final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
-  final remainingSeconds =
-      duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-
-  if (hours > 0) {
-    return '$hours:$minutes:$remainingSeconds';
-  }
-
-  return '${duration.inMinutes}:$remainingSeconds';
-}
-
-class _SelectedFormatBadge extends StatelessWidget {
-  const _SelectedFormatBadge({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: AppSpacing.xs,
-      ),
-      decoration: BoxDecoration(
-        color: colorScheme.secondaryContainer,
-        borderRadius: const BorderRadius.all(Radius.circular(12)),
-      ),
-      child: Text(
-        label,
-        style: textTheme.labelMedium?.copyWith(
-          color: colorScheme.onSecondaryContainer,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
   }
 }
 

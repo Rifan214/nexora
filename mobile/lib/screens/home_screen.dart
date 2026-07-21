@@ -9,6 +9,7 @@ import '../models/media_state.dart';
 import '../providers/health_provider.dart';
 import '../providers/media_provider.dart';
 import '../widgets/downloads_content.dart';
+import '../widgets/history_content.dart';
 import '../widgets/nexora_brand.dart';
 import '../widgets/nexora_navigation_bar.dart';
 
@@ -50,6 +51,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     if (_selectedDestinationIndex == NexoraNavigationBar.downloadsIndex) {
       return _buildScaffold(DownloadsContent(mediaState: mediaState));
+    }
+
+    if (_selectedDestinationIndex == NexoraNavigationBar.historyIndex) {
+      return _buildScaffold(HistoryContent(mediaState: mediaState));
     }
 
     if (mediaState is MediaIdle) {
@@ -162,7 +167,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
 
     if (index == NexoraNavigationBar.downloadIndex ||
-        index == NexoraNavigationBar.downloadsIndex) {
+        index == NexoraNavigationBar.downloadsIndex ||
+        index == NexoraNavigationBar.historyIndex) {
       setState(() {
         _selectedDestinationIndex = index;
       });
