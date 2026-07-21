@@ -5,6 +5,7 @@ import '../models/media_download_type.dart';
 import '../models/media_state.dart';
 import 'media_card_parts.dart';
 import 'nexora_brand.dart';
+import 'nexora_state_panel.dart';
 
 class HistoryContent extends StatelessWidget {
   const HistoryContent({
@@ -18,7 +19,6 @@ class HistoryContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final completedDownloads = _completedDownloads(mediaState);
     final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
 
     return SingleChildScrollView(
       padding: AppSpacing.pageHorizontal,
@@ -39,22 +39,28 @@ class HistoryContent extends StatelessWidget {
                 style: textTheme.headlineMedium,
               ),
               const SizedBox(height: AppSpacing.xl),
-              if (completedDownloads.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: AppSpacing.xxl),
-                  child: Text(
-                    'No completed downloads.',
-                    style: textTheme.bodyLarge?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                )
-              else
-                for (final download in completedDownloads) ...[
-                  _HistoryDownloadCard(download: download),
-                  const SizedBox(height: AppSpacing.xl),
-                ],
+              AnimatedSwitcher(
+                duration: AppDurations.short,
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                child: KeyedSubtree(
+                  key: ValueKey(completedDownloads.isEmpty),
+                  child: completedDownloads.isEmpty
+                      ? const NexoraStatePanel(
+                          title: 'No completed downloads',
+                          message: 'Completed downloads will appear here.',
+                          icon: Icons.history_rounded,
+                        )
+                      : Column(
+                          children: [
+                            for (final download in completedDownloads) ...[
+                              _HistoryDownloadCard(download: download),
+                              const SizedBox(height: AppSpacing.xl),
+                            ],
+                          ],
+                        ),
+                ),
+              ),
               const SizedBox(height: AppSpacing.xxl),
             ],
           ),

@@ -58,7 +58,7 @@ class NexoraMediaThumbnail extends StatelessWidget {
                   ),
                   decoration: BoxDecoration(
                     color: colorScheme.inverseSurface.withAlpha(224),
-                    borderRadius: const BorderRadius.all(Radius.circular(8)),
+                    borderRadius: AppRadii.duration,
                   ),
                   child: Text(
                     _formatMediaDuration(metadata.durationSeconds!),
@@ -100,7 +100,7 @@ class MediaBadge extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: _backgroundColor(colorScheme),
-        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        borderRadius: AppRadii.badge,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -161,7 +161,7 @@ class _MediaThumbnailPlaceholder extends StatelessWidget {
               ? Icons.audio_file_outlined
               : Icons.image_not_supported_outlined,
           color: colorScheme.onSurfaceVariant,
-          size: 40,
+          size: AppSizes.mediaPlaceholderIcon,
         ),
       ),
     );

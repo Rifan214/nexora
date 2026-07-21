@@ -5,6 +5,7 @@ import '../models/media_download_type.dart';
 import '../models/media_state.dart';
 import 'media_card_parts.dart';
 import 'nexora_brand.dart';
+import 'nexora_state_panel.dart';
 
 class DownloadsContent extends StatelessWidget {
   const DownloadsContent({
@@ -53,22 +54,29 @@ class DownloadsContent extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: AppSpacing.xl),
-              if (activeDownloads.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: AppSpacing.xxl),
-                  child: Text(
-                    'No active downloads.',
-                    style: textTheme.bodyLarge?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                )
-              else
-                for (final download in activeDownloads) ...[
-                  _ActiveDownloadCard(download: download),
-                  const SizedBox(height: AppSpacing.xl),
-                ],
+              AnimatedSwitcher(
+                duration: AppDurations.short,
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                child: KeyedSubtree(
+                  key: ValueKey(activeDownloads.isEmpty),
+                  child: activeDownloads.isEmpty
+                      ? const NexoraStatePanel(
+                          title: 'No active downloads',
+                          message:
+                              'New download jobs will appear here while they are processing.',
+                          icon: Icons.downloading_outlined,
+                        )
+                      : Column(
+                          children: [
+                            for (final download in activeDownloads) ...[
+                              _ActiveDownloadCard(download: download),
+                              const SizedBox(height: AppSpacing.xl),
+                            ],
+                          ],
+                        ),
+                ),
+              ),
               const SizedBox(height: AppSpacing.xxl),
             ],
           ),
@@ -118,7 +126,7 @@ class _DownloadCountBadge extends StatelessWidget {
         border: Border.all(
           color: colorScheme.outlineVariant.withAlpha(96),
         ),
-        borderRadius: const BorderRadius.all(Radius.circular(999)),
+        borderRadius: AppRadii.pill,
       ),
       child: Text(
         label,
@@ -171,7 +179,7 @@ class _ActiveDownloadCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
-                  width: 160,
+                  width: AppSizes.compactThumbnailWidth,
                   child: thumbnail,
                 ),
                 const SizedBox(width: AppSpacing.md),
@@ -234,7 +242,7 @@ class _DownloadDetails extends StatelessWidget {
         Semantics(
           label: 'Download progress: $progress percent',
           child: ClipRRect(
-            borderRadius: const BorderRadius.all(Radius.circular(999)),
+            borderRadius: AppRadii.pill,
             child: LinearProgressIndicator(
               value: progress / 100,
               minHeight: AppSpacing.xs,
@@ -299,7 +307,7 @@ class _DownloadStatusBadge extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLow,
-        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        borderRadius: AppRadii.badge,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

@@ -117,6 +117,9 @@ abstract final class AppTheme {
           minimumSize: const Size.fromHeight(AppSizes.primaryButtonHeight),
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
           shape: const StadiumBorder(),
+          disabledBackgroundColor: colorScheme.surfaceContainerHigh,
+          disabledForegroundColor: colorScheme.onSurfaceVariant,
+          animationDuration: AppDurations.short,
           textStyle: textTheme.titleMedium?.copyWith(
             color: colorScheme.onPrimary,
           ),
@@ -130,7 +133,30 @@ abstract final class AppTheme {
           backgroundColor: colorScheme.surfaceContainerHigh,
           foregroundColor: colorScheme.onSurface,
           elevation: 0,
+          animationDuration: AppDurations.short,
           textStyle: textTheme.titleMedium,
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size.fromHeight(AppSizes.touchTarget),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+          foregroundColor: colorScheme.primary,
+          side: BorderSide(color: colorScheme.outlineVariant),
+          shape: const StadiumBorder(),
+          animationDuration: AppDurations.short,
+          textStyle: textTheme.titleMedium,
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          minimumSize: const Size.fromHeight(AppSizes.touchTarget),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          shape: const StadiumBorder(),
+          animationDuration: AppDurations.short,
+          textStyle: textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
       cardTheme: CardThemeData(
@@ -141,6 +167,39 @@ abstract final class AppTheme {
         margin: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias,
         shape: const RoundedRectangleBorder(borderRadius: AppRadii.card),
+      ),
+      dividerTheme: DividerThemeData(
+        color: colorScheme.outlineVariant.withAlpha(160),
+        thickness: 1,
+      ),
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: colorScheme.primary,
+        linearTrackColor: colorScheme.surfaceContainerHigh,
+        linearMinHeight: AppSpacing.xs,
+        borderRadius: AppRadii.pill,
+        circularTrackColor: colorScheme.surfaceContainerHigh,
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          return states.contains(WidgetState.selected)
+              ? colorScheme.onPrimary
+              : colorScheme.outline;
+        }),
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return colorScheme.primary;
+          }
+          return colorScheme.surfaceContainerHigh;
+        }),
+      ),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: colorScheme.inverseSurface,
+        contentTextStyle: textTheme.bodyMedium?.copyWith(
+          color: colorScheme.onInverseSurface,
+        ),
+        shape: const RoundedRectangleBorder(borderRadius: AppRadii.input),
+        elevation: 2,
       ),
       inputDecorationTheme: InputDecorationThemeData(
         filled: true,

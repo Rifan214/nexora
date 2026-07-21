@@ -12,6 +12,7 @@ import '../widgets/downloads_content.dart';
 import '../widgets/history_content.dart';
 import '../widgets/nexora_brand.dart';
 import '../widgets/nexora_navigation_bar.dart';
+import '../widgets/nexora_state_panel.dart';
 import '../widgets/settings_content.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -112,7 +113,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   Widget _buildScaffold(Widget body) {
     return Scaffold(
-      body: SafeArea(child: body),
+      body: SafeArea(
+        child: AnimatedSwitcher(
+          duration: AppDurations.medium,
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          child: KeyedSubtree(
+            key: ValueKey(_selectedDestinationIndex),
+            child: body,
+          ),
+        ),
+      ),
       bottomNavigationBar: NexoraNavigationBar(
         selectedIndex: _selectedDestinationIndex,
         onDestinationSelected: _onDestinationSelected,
@@ -256,7 +267,7 @@ class _HomeReadyContent extends StatelessWidget {
                           child: Icon(
                             Icons.bolt_rounded,
                             color: colorScheme.primary,
-                            size: 64,
+                            size: AppSizes.heroIcon,
                             semanticLabel: 'Ready to fetch media',
                           ),
                         ),
@@ -436,26 +447,25 @@ class _LegacyWorkflowContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(AppSpacing.xl),
+      padding: AppSpacing.pageHorizontal,
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: AppSizes.actionPanelMaxWidth),
+          constraints: const BoxConstraints(maxWidth: AppSizes.contentMaxWidth),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                'Nexora',
-                style: textTheme.headlineMedium,
-                textAlign: TextAlign.center,
-              ),
               const SizedBox(height: AppSpacing.md),
-              FilledButton(
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: NexoraBrand(),
+              ),
+              const SizedBox(height: AppSpacing.xxl),
+              FilledButton.icon(
                 onPressed: isCheckingHealth ? null : onCheckBackend,
-                child: Text(isCheckingHealth ? 'Checking...' : 'Check Backend'),
+                icon: const Icon(Icons.health_and_safety_outlined),
+                label: Text(isCheckingHealth ? 'Checking...' : 'Check Backend'),
               ),
               const SizedBox(height: AppSpacing.md),
               _HealthStatus(healthState: healthState),
@@ -469,12 +479,14 @@ class _LegacyWorkflowContent extends StatelessWidget {
                 onSubmitted: (_) => onGetMetadata(),
               ),
               const SizedBox(height: AppSpacing.sm),
-              FilledButton(
+              FilledButton.icon(
                 onPressed: canRequestMetadata ? onGetMetadata : null,
-                child: Text(metadataButtonLabel),
+                icon: const Icon(Icons.search_rounded),
+                label: Text(metadataButtonLabel),
               ),
               const SizedBox(height: AppSpacing.md),
               _MediaStatus(mediaState: mediaState),
+              const SizedBox(height: AppSpacing.xxl),
             ],
           ),
         ),
@@ -497,23 +509,23 @@ class _HealthStatus extends StatelessWidget {
         }
 
         return _StatusMessage(
-          title: result.isHealthy ? '\u2705 Backend Online' : '\u274C Backend Offline',
+          title: result.isHealthy ? 'Backend Online' : 'Backend Offline',
           message: result.serverMessage,
+          tone: result.isHealthy ? NexoraStateTone.success : NexoraStateTone.error,
         );
       },
       error: (error, _) {
         return _StatusMessage(
-          title: '\u274C Backend Offline',
+          title: 'Backend Offline',
           message: _readErrorMessage(error),
+          tone: NexoraStateTone.error,
         );
       },
       loading: () {
-        return const Center(
-          child: SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
+        return const NexoraStatePanel(
+          title: 'Checking backend',
+          message: 'Contacting Nexora services.',
+          isLoading: true,
         );
       },
     );
@@ -538,12 +550,10 @@ class _MediaStatus extends ConsumerWidget {
     return mediaState.map(
       idle: (_) => const SizedBox.shrink(),
       loading: (_) {
-        return const Center(
-          child: SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
+        return const NexoraStatePanel(
+          title: 'Fetching metadata',
+          message: 'Inspecting the media link.',
+          isLoading: true,
         );
       },
       success: (state) {
@@ -574,8 +584,9 @@ class _MediaStatus extends ConsumerWidget {
       },
       error: (state) {
         return _StatusMessage(
-          title: '\u274C Metadata Error',
+          title: 'Metadata Error',
           message: state.message,
+          tone: NexoraStateTone.error,
         );
       },
     );
@@ -717,8 +728,9 @@ class _MetadataSummary extends StatelessWidget {
         ] else if (downloadError != null && downloadError!.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.xl),
           _StatusMessage(
-            title: '\u274C Download Error',
+            title: 'Download Error',
             message: downloadError!,
+            tone: NexoraStateTone.error,
           ),
         ],
       ],
@@ -775,7 +787,7 @@ class _MetadataPreviewCard extends StatelessWidget {
                   ),
                   decoration: BoxDecoration(
                     color: colorScheme.inverseSurface.withAlpha(224),
-                    borderRadius: AppRadii.input,
+                    borderRadius: AppRadii.duration,
                   ),
                   child: Text(
                     _formatMediaDuration(metadata.durationSeconds),
@@ -842,7 +854,7 @@ class _ThumbnailPlaceholder extends StatelessWidget {
         child: Icon(
           Icons.image_not_supported_outlined,
           color: colorScheme.onSurfaceVariant,
-          size: 40,
+          size: AppSizes.mediaPlaceholderIcon,
         ),
       ),
     );
@@ -925,15 +937,17 @@ class _DownloadProgressStatus extends StatelessWidget {
 
     if (normalizedStatus == 'failed') {
       return _StatusMessage(
-        title: '\u274C Download Failed',
+        title: 'Download Failed',
         message: _fallback(error, 'Download failed.'),
+        tone: NexoraStateTone.error,
       );
     }
 
     if (error != null && error!.isNotEmpty) {
       return _StatusMessage(
-        title: '\u274C Progress Error',
+        title: 'Progress Error',
         message: error!,
+        tone: NexoraStateTone.error,
       );
     }
 
@@ -942,17 +956,27 @@ class _DownloadProgressStatus extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Status: ${_formatStatus(normalizedStatus)}',
-          style: textTheme.bodyMedium,
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Status: ${_formatStatus(normalizedStatus)}',
+                style: textTheme.bodyMedium,
+              ),
+            ),
+            Text(
+              '$clampedProgress%',
+              style: textTheme.titleMedium?.copyWith(
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 8),
-        Text(
-          '$clampedProgress%',
-          style: textTheme.titleMedium,
+        const SizedBox(height: AppSpacing.sm),
+        ClipRRect(
+          borderRadius: AppRadii.pill,
+          child: LinearProgressIndicator(value: clampedProgress / 100),
         ),
-        const SizedBox(height: 8),
-        LinearProgressIndicator(value: clampedProgress / 100),
       ],
     );
   }
@@ -1025,34 +1049,39 @@ class _CompletedDownloadSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const _StatusMessage(
-          title: '\u2705 Download Complete',
+          title: 'Download Complete',
           message: 'Ready to download.',
+          tone: NexoraStateTone.success,
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.sm),
         if (fileDownloadLoading)
           _FileTransferProgress(progress: fileDownloadProgress)
         else if (!hasSavedFile)
-          FilledButton(
+          FilledButton.icon(
             onPressed: onFileDownloadPressed,
-            child: const Text('Download File'),
+            icon: const Icon(Icons.download_rounded),
+            label: const Text('Download File'),
           ),
         if (hasSavedFile) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.sm),
           _StatusMessage(
-            title: '\u2705 File downloaded successfully',
+            title: 'File downloaded successfully',
             message: 'Filename:\n$filename\n\nSaved location:\n$savedLocation',
+            tone: NexoraStateTone.success,
           ),
-          const SizedBox(height: 12),
-          OutlinedButton(
+          const SizedBox(height: AppSpacing.sm),
+          OutlinedButton.icon(
             onPressed: fileOpenLoading ? null : onOpenFilePressed,
-            child: Text(fileOpenLoading ? 'Opening...' : 'Open File'),
+            icon: const Icon(Icons.open_in_new_rounded),
+            label: Text(fileOpenLoading ? 'Opening...' : 'Open File'),
           ),
         ],
         if (fileDownloadError != null && fileDownloadError!.isNotEmpty) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.sm),
           _StatusMessage(
-            title: '\u274C File Download Error',
+            title: 'File Download Error',
             message: fileDownloadError!,
+            tone: NexoraStateTone.error,
           ),
         ],
       ],
@@ -1086,14 +1115,32 @@ class _FileTransferProgress extends StatelessWidget {
           'Saving file',
           style: textTheme.bodyMedium,
         ),
-        const SizedBox(height: 8),
-        Text(
-          hasKnownProgress ? '$clampedProgress%' : 'Starting...',
-          style: textTheme.titleMedium,
+        const SizedBox(height: AppSpacing.xxs),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                hasKnownProgress ? 'Saving to device' : 'Starting...',
+                style: textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            if (hasKnownProgress)
+              Text(
+                '$clampedProgress%',
+                style: textTheme.titleMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+          ],
         ),
-        const SizedBox(height: 8),
-        LinearProgressIndicator(
-          value: hasKnownProgress ? clampedProgress / 100 : null,
+        const SizedBox(height: AppSpacing.sm),
+        ClipRRect(
+          borderRadius: AppRadii.pill,
+          child: LinearProgressIndicator(
+            value: hasKnownProgress ? clampedProgress / 100 : null,
+          ),
         ),
       ],
     );
@@ -1199,6 +1246,7 @@ class _VideoQualityChip extends StatelessWidget {
         color: isSelected ? colorScheme.primary : colorScheme.outlineVariant,
       ),
       shape: const StadiumBorder(),
+      materialTapTargetSize: MaterialTapTargetSize.padded,
       labelPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.xs,
@@ -1233,47 +1281,63 @@ class _AudioOptionSelector extends StatelessWidget {
     return Column(
       children: [
         for (final option in options)
-          Material(
-            type: MaterialType.transparency,
-            borderRadius: AppRadii.input,
-            child: InkWell(
-              onTap: enabled ? onSelected : null,
+          AnimatedContainer(
+            duration: AppDurations.short,
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? colorScheme.secondaryContainer.withAlpha(72)
+                  : Colors.transparent,
               borderRadius: AppRadii.input,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.music_note_rounded,
-                      color: isSelected
-                          ? colorScheme.primary
-                          : colorScheme.onSurfaceVariant,
-                      size: AppSpacing.xl,
+            ),
+            child: Material(
+              type: MaterialType.transparency,
+              borderRadius: AppRadii.input,
+              child: InkWell(
+                onTap: enabled ? onSelected : null,
+                borderRadius: AppRadii.input,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    minHeight: AppSizes.touchTarget,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: AppSpacing.xs,
                     ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${option.label} (Best Quality)',
-                            style: textTheme.titleMedium,
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.music_note_rounded,
+                          color: isSelected
+                              ? colorScheme.primary
+                              : colorScheme.onSurfaceVariant,
+                          size: AppSpacing.xl,
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${option.label} (Best Quality)',
+                                style: textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: AppSpacing.xxs),
+                              Text(
+                                'Save as high-quality ${option.extension.toUpperCase()}',
+                                style: textTheme.bodyMedium?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: AppSpacing.xxs),
-                          Text(
-                            'Save as high-quality ${option.extension.toUpperCase()}',
-                            style: textTheme.bodyMedium?.copyWith(
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                        Switch(
+                          value: isSelected,
+                          onChanged: enabled ? (_) => onSelected() : null,
+                        ),
+                      ],
                     ),
-                    Switch(
-                      value: isSelected,
-                      onChanged: enabled ? (_) => onSelected() : null,
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -1287,30 +1351,19 @@ class _StatusMessage extends StatelessWidget {
   const _StatusMessage({
     required this.title,
     required this.message,
+    required this.tone,
   });
 
   final String title;
   final String message;
+  final NexoraStateTone tone;
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          title,
-          style: textTheme.titleMedium,
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          message,
-          style: textTheme.bodyMedium,
-          textAlign: TextAlign.center,
-        ),
-      ],
+    return NexoraStatePanel(
+      title: title,
+      message: message,
+      tone: tone,
     );
   }
 }

@@ -18,12 +18,20 @@ abstract final class AppSpacing {
 }
 
 abstract final class AppRadii {
+  static const BorderRadius duration = BorderRadius.all(Radius.circular(8));
+  static const BorderRadius badge = BorderRadius.all(Radius.circular(12));
   static const BorderRadius input = BorderRadius.all(Radius.circular(16));
   static const BorderRadius card = BorderRadius.all(Radius.circular(24));
   static const BorderRadius actionPanel = BorderRadius.all(Radius.circular(32));
+  static const BorderRadius pill = BorderRadius.all(Radius.circular(999));
   static const BorderRadius navigation = BorderRadius.vertical(
     top: Radius.circular(24),
   );
+}
+
+abstract final class AppDurations {
+  static const Duration short = Duration(milliseconds: 160);
+  static const Duration medium = Duration(milliseconds: 220);
 }
 
 abstract final class AppSizes {
@@ -31,6 +39,9 @@ abstract final class AppSizes {
   static const double primaryButtonHeight = 56;
   static const double navigationHeight = 80;
   static const double heroIconContainer = 128;
+  static const double heroIcon = 64;
+  static const double mediaPlaceholderIcon = 40;
+  static const double compactThumbnailWidth = 160;
   static const double contentMaxWidth = 560;
   static const double actionPanelMaxWidth = 520;
 }
