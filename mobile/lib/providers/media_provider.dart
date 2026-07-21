@@ -37,7 +37,7 @@ class MediaController extends Notifier<MediaState> {
 
   void selectFormat(MediaFormat format) {
     state.maybeWhen(
-      success: (metadata, _) {
+      success: (metadata, _, __, ___, ____, _____) {
         state = MediaState.success(
           metadata: metadata,
           selectedFormat: format,
@@ -45,6 +45,83 @@ class MediaController extends Notifier<MediaState> {
       },
       orElse: () {},
     );
+  }
+
+  Future<void> createDownloadJob() async {
+    MediaMetadata? currentMetadata;
+    MediaFormat? currentFormat;
+    var isDownloadLoading = false;
+
+    state.maybeWhen(
+      success: (
+        metadata,
+        selectedFormat,
+        downloadLoading,
+        _,
+        __,
+        ___,
+      ) {
+        currentMetadata = metadata;
+        currentFormat = selectedFormat;
+        isDownloadLoading = downloadLoading;
+      },
+      orElse: () {},
+    );
+
+    final metadata = currentMetadata;
+    if (metadata == null || isDownloadLoading) {
+      return;
+    }
+
+    final selectedFormat = currentFormat;
+    if (selectedFormat == null) {
+      state = MediaState.success(
+        metadata: metadata,
+        downloadError: 'Select a format before downloading.',
+      );
+      return;
+    }
+
+    final validationMessage = _validateUrl(metadata.webpageUrl);
+    if (validationMessage != null) {
+      state = MediaState.success(
+        metadata: metadata,
+        selectedFormat: selectedFormat,
+        downloadError: validationMessage,
+      );
+      return;
+    }
+
+    state = MediaState.success(
+      metadata: metadata,
+      selectedFormat: selectedFormat,
+      downloadLoading: true,
+    );
+
+    try {
+      final job = await ref.read(mediaRepositoryProvider).createDownloadJob(
+            mediaUrl: metadata.webpageUrl,
+            format: selectedFormat,
+          );
+      state = MediaState.success(
+        metadata: metadata,
+        selectedFormat: selectedFormat,
+        downloadSuccess: true,
+        currentJobId: job.jobId,
+      );
+    } on ApiException catch (error) {
+      state = MediaState.success(
+        metadata: metadata,
+        selectedFormat: selectedFormat,
+        downloadError: error.message,
+      );
+    } catch (_) {
+      state = MediaState.success(
+        metadata: metadata,
+        selectedFormat: selectedFormat,
+        downloadError: 'Unable to create download job.',
+      );
+    }
   }
 
   String? _validateUrl(String value) {

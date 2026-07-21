@@ -155,11 +155,23 @@ class _MediaStatus extends ConsumerWidget {
           ),
         );
       },
-      success: (metadata, selectedFormat) {
+      success: (
+        metadata,
+        selectedFormat,
+        downloadLoading,
+        downloadSuccess,
+        downloadError,
+        currentJobId,
+      ) {
         return _MetadataSummary(
           metadata: metadata,
           selectedFormat: selectedFormat,
+          downloadLoading: downloadLoading,
+          downloadSuccess: downloadSuccess,
+          downloadError: downloadError,
+          currentJobId: currentJobId,
           onFormatSelected: ref.read(mediaProvider.notifier).selectFormat,
+          onDownloadPressed: ref.read(mediaProvider.notifier).createDownloadJob,
         );
       },
       error: (message) {
@@ -176,12 +188,22 @@ class _MetadataSummary extends StatelessWidget {
   const _MetadataSummary({
     required this.metadata,
     required this.selectedFormat,
+    required this.downloadLoading,
+    required this.downloadSuccess,
+    required this.downloadError,
+    required this.currentJobId,
     required this.onFormatSelected,
+    required this.onDownloadPressed,
   });
 
   final MediaMetadata metadata;
   final MediaFormat? selectedFormat;
+  final bool downloadLoading;
+  final bool downloadSuccess;
+  final String? downloadError;
+  final String? currentJobId;
   final ValueChanged<MediaFormat> onFormatSelected;
+  final VoidCallback onDownloadPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -232,9 +254,37 @@ class _MetadataSummary extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         FilledButton(
-          onPressed: selectedFormat == null ? null : () {},
-          child: const Text('Continue'),
+          onPressed:
+              selectedFormat == null || downloadLoading ? null : onDownloadPressed,
+          child: downloadLoading
+              ? const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 8),
+                    Text('Download'),
+                  ],
+                )
+              : const Text('Download'),
         ),
+        if (downloadSuccess && currentJobId != null) ...[
+          const SizedBox(height: 16),
+          _StatusMessage(
+            title: 'Download Job Created',
+            message: 'Job ID:\n$currentJobId',
+          ),
+        ],
+        if (downloadError != null && downloadError!.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _StatusMessage(
+            title: '\u274C Download Error',
+            message: downloadError!,
+          ),
+        ],
       ],
     );
   }

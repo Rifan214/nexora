@@ -21,7 +21,12 @@ mixin _$MediaState {
     required TResult Function() idle,
     required TResult Function() loading,
     required TResult Function(
-            MediaMetadata metadata, MediaFormat? selectedFormat)
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)
         success,
     required TResult Function(String message) error,
   }) =>
@@ -30,7 +35,13 @@ mixin _$MediaState {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function()? idle,
     TResult? Function()? loading,
-    TResult? Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+    TResult? Function(
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)?
         success,
     TResult? Function(String message)? error,
   }) =>
@@ -39,7 +50,13 @@ mixin _$MediaState {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function()? idle,
     TResult Function()? loading,
-    TResult Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+    TResult Function(
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
@@ -137,7 +154,12 @@ class _$MediaIdleImpl implements MediaIdle {
     required TResult Function() idle,
     required TResult Function() loading,
     required TResult Function(
-            MediaMetadata metadata, MediaFormat? selectedFormat)
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)
         success,
     required TResult Function(String message) error,
   }) {
@@ -149,7 +171,13 @@ class _$MediaIdleImpl implements MediaIdle {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function()? idle,
     TResult? Function()? loading,
-    TResult? Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+    TResult? Function(
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)?
         success,
     TResult? Function(String message)? error,
   }) {
@@ -161,7 +189,13 @@ class _$MediaIdleImpl implements MediaIdle {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function()? idle,
     TResult Function()? loading,
-    TResult Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+    TResult Function(
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
@@ -258,7 +292,12 @@ class _$MediaLoadingImpl implements MediaLoading {
     required TResult Function() idle,
     required TResult Function() loading,
     required TResult Function(
-            MediaMetadata metadata, MediaFormat? selectedFormat)
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)
         success,
     required TResult Function(String message) error,
   }) {
@@ -270,7 +309,13 @@ class _$MediaLoadingImpl implements MediaLoading {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function()? idle,
     TResult? Function()? loading,
-    TResult? Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+    TResult? Function(
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)?
         success,
     TResult? Function(String message)? error,
   }) {
@@ -282,7 +327,13 @@ class _$MediaLoadingImpl implements MediaLoading {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function()? idle,
     TResult Function()? loading,
-    TResult Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+    TResult Function(
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
@@ -341,7 +392,13 @@ abstract class _$$MediaSuccessImplCopyWith<$Res> {
           _$MediaSuccessImpl value, $Res Function(_$MediaSuccessImpl) then) =
       __$$MediaSuccessImplCopyWithImpl<$Res>;
   @useResult
-  $Res call({MediaMetadata metadata, MediaFormat? selectedFormat});
+  $Res call(
+      {MediaMetadata metadata,
+      MediaFormat? selectedFormat,
+      bool downloadLoading,
+      bool downloadSuccess,
+      String? downloadError,
+      String? currentJobId});
 
   $MediaMetadataCopyWith<$Res> get metadata;
   $MediaFormatCopyWith<$Res>? get selectedFormat;
@@ -362,6 +419,10 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
   $Res call({
     Object? metadata = null,
     Object? selectedFormat = freezed,
+    Object? downloadLoading = null,
+    Object? downloadSuccess = null,
+    Object? downloadError = freezed,
+    Object? currentJobId = freezed,
   }) {
     return _then(_$MediaSuccessImpl(
       metadata: null == metadata
@@ -372,6 +433,22 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
           ? _value.selectedFormat
           : selectedFormat // ignore: cast_nullable_to_non_nullable
               as MediaFormat?,
+      downloadLoading: null == downloadLoading
+          ? _value.downloadLoading
+          : downloadLoading // ignore: cast_nullable_to_non_nullable
+              as bool,
+      downloadSuccess: null == downloadSuccess
+          ? _value.downloadSuccess
+          : downloadSuccess // ignore: cast_nullable_to_non_nullable
+              as bool,
+      downloadError: freezed == downloadError
+          ? _value.downloadError
+          : downloadError // ignore: cast_nullable_to_non_nullable
+              as String?,
+      currentJobId: freezed == currentJobId
+          ? _value.currentJobId
+          : currentJobId // ignore: cast_nullable_to_non_nullable
+              as String?,
     ));
   }
 
@@ -403,16 +480,32 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
 /// @nodoc
 
 class _$MediaSuccessImpl implements MediaSuccess {
-  const _$MediaSuccessImpl({required this.metadata, this.selectedFormat});
+  const _$MediaSuccessImpl(
+      {required this.metadata,
+      this.selectedFormat,
+      this.downloadLoading = false,
+      this.downloadSuccess = false,
+      this.downloadError,
+      this.currentJobId});
 
   @override
   final MediaMetadata metadata;
   @override
   final MediaFormat? selectedFormat;
+  @override
+  @JsonKey()
+  final bool downloadLoading;
+  @override
+  @JsonKey()
+  final bool downloadSuccess;
+  @override
+  final String? downloadError;
+  @override
+  final String? currentJobId;
 
   @override
   String toString() {
-    return 'MediaState.success(metadata: $metadata, selectedFormat: $selectedFormat)';
+    return 'MediaState.success(metadata: $metadata, selectedFormat: $selectedFormat, downloadLoading: $downloadLoading, downloadSuccess: $downloadSuccess, downloadError: $downloadError, currentJobId: $currentJobId)';
   }
 
   @override
@@ -423,11 +516,20 @@ class _$MediaSuccessImpl implements MediaSuccess {
             (identical(other.metadata, metadata) ||
                 other.metadata == metadata) &&
             (identical(other.selectedFormat, selectedFormat) ||
-                other.selectedFormat == selectedFormat));
+                other.selectedFormat == selectedFormat) &&
+            (identical(other.downloadLoading, downloadLoading) ||
+                other.downloadLoading == downloadLoading) &&
+            (identical(other.downloadSuccess, downloadSuccess) ||
+                other.downloadSuccess == downloadSuccess) &&
+            (identical(other.downloadError, downloadError) ||
+                other.downloadError == downloadError) &&
+            (identical(other.currentJobId, currentJobId) ||
+                other.currentJobId == currentJobId));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, metadata, selectedFormat);
+  int get hashCode => Object.hash(runtimeType, metadata, selectedFormat,
+      downloadLoading, downloadSuccess, downloadError, currentJobId);
 
   /// Create a copy of MediaState
   /// with the given fields replaced by the non-null parameter values.
@@ -443,11 +545,17 @@ class _$MediaSuccessImpl implements MediaSuccess {
     required TResult Function() idle,
     required TResult Function() loading,
     required TResult Function(
-            MediaMetadata metadata, MediaFormat? selectedFormat)
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)
         success,
     required TResult Function(String message) error,
   }) {
-    return success(metadata, selectedFormat);
+    return success(metadata, selectedFormat, downloadLoading, downloadSuccess,
+        downloadError, currentJobId);
   }
 
   @override
@@ -455,11 +563,18 @@ class _$MediaSuccessImpl implements MediaSuccess {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function()? idle,
     TResult? Function()? loading,
-    TResult? Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+    TResult? Function(
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)?
         success,
     TResult? Function(String message)? error,
   }) {
-    return success?.call(metadata, selectedFormat);
+    return success?.call(metadata, selectedFormat, downloadLoading,
+        downloadSuccess, downloadError, currentJobId);
   }
 
   @override
@@ -467,13 +582,20 @@ class _$MediaSuccessImpl implements MediaSuccess {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function()? idle,
     TResult Function()? loading,
-    TResult Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+    TResult Function(
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
   }) {
     if (success != null) {
-      return success(metadata, selectedFormat);
+      return success(metadata, selectedFormat, downloadLoading, downloadSuccess,
+          downloadError, currentJobId);
     }
     return orElse();
   }
@@ -519,10 +641,18 @@ class _$MediaSuccessImpl implements MediaSuccess {
 abstract class MediaSuccess implements MediaState {
   const factory MediaSuccess(
       {required final MediaMetadata metadata,
-      final MediaFormat? selectedFormat}) = _$MediaSuccessImpl;
+      final MediaFormat? selectedFormat,
+      final bool downloadLoading,
+      final bool downloadSuccess,
+      final String? downloadError,
+      final String? currentJobId}) = _$MediaSuccessImpl;
 
   MediaMetadata get metadata;
   MediaFormat? get selectedFormat;
+  bool get downloadLoading;
+  bool get downloadSuccess;
+  String? get downloadError;
+  String? get currentJobId;
 
   /// Create a copy of MediaState
   /// with the given fields replaced by the non-null parameter values.
@@ -602,7 +732,12 @@ class _$MediaErrorImpl implements MediaError {
     required TResult Function() idle,
     required TResult Function() loading,
     required TResult Function(
-            MediaMetadata metadata, MediaFormat? selectedFormat)
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)
         success,
     required TResult Function(String message) error,
   }) {
@@ -614,7 +749,13 @@ class _$MediaErrorImpl implements MediaError {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function()? idle,
     TResult? Function()? loading,
-    TResult? Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+    TResult? Function(
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)?
         success,
     TResult? Function(String message)? error,
   }) {
@@ -626,7 +767,13 @@ class _$MediaErrorImpl implements MediaError {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function()? idle,
     TResult Function()? loading,
-    TResult Function(MediaMetadata metadata, MediaFormat? selectedFormat)?
+    TResult Function(
+            MediaMetadata metadata,
+            MediaFormat? selectedFormat,
+            bool downloadLoading,
+            bool downloadSuccess,
+            String? downloadError,
+            String? currentJobId)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),

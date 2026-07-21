@@ -13,6 +13,10 @@ class MediaState with _$MediaState {
   const factory MediaState.success({
     required MediaMetadata metadata,
     MediaFormat? selectedFormat,
+    @Default(false) bool downloadLoading,
+    @Default(false) bool downloadSuccess,
+    String? downloadError,
+    String? currentJobId,
   }) = MediaSuccess;
 
   const factory MediaState.error(String message) = MediaError;
