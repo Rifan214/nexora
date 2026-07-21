@@ -9,8 +9,8 @@ part 'download_job.g.dart';
 class DownloadJobRequest with _$DownloadJobRequest {
   const factory DownloadJobRequest({
     required String url,
-    @JsonKey(name: 'format_id') required String formatId,
-    required String type,
+    @JsonKey(name: 'media_type') required String mediaType,
+    @JsonKey(name: 'quality_height', includeIfNull: false) int? qualityHeight,
   }) = _DownloadJobRequest;
 
   factory DownloadJobRequest.fromJson(Map<String, dynamic> json) =>

@@ -43,87 +43,36 @@ class MediaMetadata with _$MediaMetadata {
     @JsonKey(name: 'view_count') int? viewCount,
     @JsonKey(name: 'like_count') int? likeCount,
     String? description,
-    @Default(<MediaFormat>[]) List<MediaFormat> formats,
+    @JsonKey(name: 'video_qualities')
+    @Default(<VideoQuality>[]) List<VideoQuality> videoQualities,
+    @JsonKey(name: 'audio_options')
+    @Default(<AudioOption>[]) List<AudioOption> audioOptions,
   }) = _MediaMetadata;
 
   factory MediaMetadata.fromJson(Map<String, dynamic> json) =>
-      _$MediaMetadataFromJson(_normalizeQualityPayload(json));
+      _$MediaMetadataFromJson(json);
 }
 
 @freezed
-class MediaFormat with _$MediaFormat {
-  const factory MediaFormat({
-    @JsonKey(name: 'format_id') required String formatId,
+class VideoQuality with _$VideoQuality {
+  const factory VideoQuality({
+    required String label,
+    required int height,
     required String extension,
-    String? resolution,
-    int? fps,
-    int? filesize,
-    @JsonKey(name: 'video_codec') String? videoCodec,
-    @JsonKey(name: 'audio_codec') String? audioCodec,
-  }) = _MediaFormat;
+    @JsonKey(name: 'estimated_filesize') int? estimatedFilesize,
+  }) = _VideoQuality;
 
-  factory MediaFormat.fromJson(Map<String, dynamic> json) =>
-      _$MediaFormatFromJson(json);
+  factory VideoQuality.fromJson(Map<String, dynamic> json) =>
+      _$VideoQualityFromJson(json);
 }
 
-extension MediaMetadataQualityExtension on MediaMetadata {
-  /// Compatibility view for the V1.1 quality-based metadata response.
-  List<MediaFormat> get qualities => formats;
-}
+@freezed
+class AudioOption with _$AudioOption {
+  const factory AudioOption({
+    required String label,
+    required String extension,
+  }) = _AudioOption;
 
-extension MediaFormatQualityExtension on MediaFormat {
-  int get qualityHeight => int.tryParse(formatId) ?? 0;
-
-  String get qualityLabel {
-    final label = resolution?.trim();
-    if (label != null && label.isNotEmpty) {
-      return label;
-    }
-
-    return qualityHeight > 0 ? '${qualityHeight}p' : 'Unknown quality';
-  }
-
-  int? get estimatedFilesize => filesize;
-}
-
-Map<String, dynamic> _normalizeQualityPayload(Map<String, dynamic> json) {
-  final normalized = Map<String, dynamic>.from(json);
-  final rawQualities = normalized['qualities'];
-  if (rawQualities is! List) {
-    return normalized;
-  }
-
-  final formats = <Map<String, dynamic>>[];
-  for (final rawQuality in rawQualities) {
-    if (rawQuality is! Map) {
-      continue;
-    }
-
-    final quality = Map<String, dynamic>.from(rawQuality);
-    final height = quality['height'];
-    final extension = quality['extension'];
-    if (height is! num || extension is! String || extension.trim().isEmpty) {
-      continue;
-    }
-
-    final qualityHeight = height.toInt();
-    if (qualityHeight <= 0) {
-      continue;
-    }
-
-    final label = quality['label'];
-    formats.add(
-      <String, dynamic>{
-        'format_id': qualityHeight.toString(),
-        'extension': extension,
-        'resolution': label is String && label.trim().isNotEmpty
-            ? label
-            : '${qualityHeight}p',
-        'filesize': quality['estimated_filesize'],
-      },
-    );
-  }
-
-  normalized['formats'] = formats;
-  return normalized;
+  factory AudioOption.fromJson(Map<String, dynamic> json) =>
+      _$AudioOptionFromJson(json);
 }

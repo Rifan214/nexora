@@ -21,9 +21,10 @@ DownloadJobRequest _$DownloadJobRequestFromJson(Map<String, dynamic> json) {
 /// @nodoc
 mixin _$DownloadJobRequest {
   String get url => throw _privateConstructorUsedError;
-  @JsonKey(name: 'format_id')
-  String get formatId => throw _privateConstructorUsedError;
-  String get type => throw _privateConstructorUsedError;
+  @JsonKey(name: 'media_type')
+  String get mediaType => throw _privateConstructorUsedError;
+  @JsonKey(name: 'quality_height', includeIfNull: false)
+  int? get qualityHeight => throw _privateConstructorUsedError;
 
   /// Serializes this DownloadJobRequest to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -42,7 +43,10 @@ abstract class $DownloadJobRequestCopyWith<$Res> {
       _$DownloadJobRequestCopyWithImpl<$Res, DownloadJobRequest>;
   @useResult
   $Res call(
-      {String url, @JsonKey(name: 'format_id') String formatId, String type});
+      {String url,
+      @JsonKey(name: 'media_type') String mediaType,
+      @JsonKey(name: 'quality_height', includeIfNull: false)
+      int? qualityHeight});
 }
 
 /// @nodoc
@@ -61,22 +65,22 @@ class _$DownloadJobRequestCopyWithImpl<$Res, $Val extends DownloadJobRequest>
   @override
   $Res call({
     Object? url = null,
-    Object? formatId = null,
-    Object? type = null,
+    Object? mediaType = null,
+    Object? qualityHeight = freezed,
   }) {
     return _then(_value.copyWith(
       url: null == url
           ? _value.url
           : url // ignore: cast_nullable_to_non_nullable
               as String,
-      formatId: null == formatId
-          ? _value.formatId
-          : formatId // ignore: cast_nullable_to_non_nullable
+      mediaType: null == mediaType
+          ? _value.mediaType
+          : mediaType // ignore: cast_nullable_to_non_nullable
               as String,
-      type: null == type
-          ? _value.type
-          : type // ignore: cast_nullable_to_non_nullable
-              as String,
+      qualityHeight: freezed == qualityHeight
+          ? _value.qualityHeight
+          : qualityHeight // ignore: cast_nullable_to_non_nullable
+              as int?,
     ) as $Val);
   }
 }
@@ -90,7 +94,10 @@ abstract class _$$DownloadJobRequestImplCopyWith<$Res>
   @override
   @useResult
   $Res call(
-      {String url, @JsonKey(name: 'format_id') String formatId, String type});
+      {String url,
+      @JsonKey(name: 'media_type') String mediaType,
+      @JsonKey(name: 'quality_height', includeIfNull: false)
+      int? qualityHeight});
 }
 
 /// @nodoc
@@ -107,22 +114,22 @@ class __$$DownloadJobRequestImplCopyWithImpl<$Res>
   @override
   $Res call({
     Object? url = null,
-    Object? formatId = null,
-    Object? type = null,
+    Object? mediaType = null,
+    Object? qualityHeight = freezed,
   }) {
     return _then(_$DownloadJobRequestImpl(
       url: null == url
           ? _value.url
           : url // ignore: cast_nullable_to_non_nullable
               as String,
-      formatId: null == formatId
-          ? _value.formatId
-          : formatId // ignore: cast_nullable_to_non_nullable
+      mediaType: null == mediaType
+          ? _value.mediaType
+          : mediaType // ignore: cast_nullable_to_non_nullable
               as String,
-      type: null == type
-          ? _value.type
-          : type // ignore: cast_nullable_to_non_nullable
-              as String,
+      qualityHeight: freezed == qualityHeight
+          ? _value.qualityHeight
+          : qualityHeight // ignore: cast_nullable_to_non_nullable
+              as int?,
     ));
   }
 }
@@ -132,8 +139,9 @@ class __$$DownloadJobRequestImplCopyWithImpl<$Res>
 class _$DownloadJobRequestImpl implements _DownloadJobRequest {
   const _$DownloadJobRequestImpl(
       {required this.url,
-      @JsonKey(name: 'format_id') required this.formatId,
-      required this.type});
+      @JsonKey(name: 'media_type') required this.mediaType,
+      @JsonKey(name: 'quality_height', includeIfNull: false)
+      this.qualityHeight});
 
   factory _$DownloadJobRequestImpl.fromJson(Map<String, dynamic> json) =>
       _$$DownloadJobRequestImplFromJson(json);
@@ -141,14 +149,15 @@ class _$DownloadJobRequestImpl implements _DownloadJobRequest {
   @override
   final String url;
   @override
-  @JsonKey(name: 'format_id')
-  final String formatId;
+  @JsonKey(name: 'media_type')
+  final String mediaType;
   @override
-  final String type;
+  @JsonKey(name: 'quality_height', includeIfNull: false)
+  final int? qualityHeight;
 
   @override
   String toString() {
-    return 'DownloadJobRequest(url: $url, formatId: $formatId, type: $type)';
+    return 'DownloadJobRequest(url: $url, mediaType: $mediaType, qualityHeight: $qualityHeight)';
   }
 
   @override
@@ -157,14 +166,15 @@ class _$DownloadJobRequestImpl implements _DownloadJobRequest {
         (other.runtimeType == runtimeType &&
             other is _$DownloadJobRequestImpl &&
             (identical(other.url, url) || other.url == url) &&
-            (identical(other.formatId, formatId) ||
-                other.formatId == formatId) &&
-            (identical(other.type, type) || other.type == type));
+            (identical(other.mediaType, mediaType) ||
+                other.mediaType == mediaType) &&
+            (identical(other.qualityHeight, qualityHeight) ||
+                other.qualityHeight == qualityHeight));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(runtimeType, url, formatId, type);
+  int get hashCode => Object.hash(runtimeType, url, mediaType, qualityHeight);
 
   /// Create a copy of DownloadJobRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -186,8 +196,9 @@ class _$DownloadJobRequestImpl implements _DownloadJobRequest {
 abstract class _DownloadJobRequest implements DownloadJobRequest {
   const factory _DownloadJobRequest(
       {required final String url,
-      @JsonKey(name: 'format_id') required final String formatId,
-      required final String type}) = _$DownloadJobRequestImpl;
+      @JsonKey(name: 'media_type') required final String mediaType,
+      @JsonKey(name: 'quality_height', includeIfNull: false)
+      final int? qualityHeight}) = _$DownloadJobRequestImpl;
 
   factory _DownloadJobRequest.fromJson(Map<String, dynamic> json) =
       _$DownloadJobRequestImpl.fromJson;
@@ -195,10 +206,11 @@ abstract class _DownloadJobRequest implements DownloadJobRequest {
   @override
   String get url;
   @override
-  @JsonKey(name: 'format_id')
-  String get formatId;
+  @JsonKey(name: 'media_type')
+  String get mediaType;
   @override
-  String get type;
+  @JsonKey(name: 'quality_height', includeIfNull: false)
+  int? get qualityHeight;
 
   /// Create a copy of DownloadJobRequest
   /// with the given fields replaced by the non-null parameter values.

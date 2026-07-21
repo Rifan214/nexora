@@ -202,7 +202,7 @@ class _MediaStatus extends ConsumerWidget {
         final mediaController = ref.read(mediaProvider.notifier);
         return _MetadataSummary(
           metadata: state.metadata,
-          selectedFormat: state.selectedFormat,
+          selectedVideoQuality: state.selectedVideoQuality,
           downloadLoading: state.downloadLoading,
           downloadSuccess: state.downloadSuccess,
           downloadError: state.downloadError,
@@ -216,8 +216,9 @@ class _MediaStatus extends ConsumerWidget {
           savedFilePath: state.savedFilePath,
           savedDirectory: state.savedDirectory,
           fileOpenLoading: state.fileOpenLoading,
-          onFormatSelected: mediaController.selectFormat,
-          onDownloadPressed: mediaController.createDownloadJob,
+          onVideoQualitySelected: mediaController.selectVideoQuality,
+          onVideoDownloadPressed: mediaController.createVideoDownloadJob,
+          onAudioDownloadPressed: mediaController.createAudioDownloadJob,
           onFileDownloadPressed: mediaController.downloadCompletedFile,
           onOpenFilePressed: mediaController.openDownloadedFile,
         );
@@ -235,7 +236,7 @@ class _MediaStatus extends ConsumerWidget {
 class _MetadataSummary extends StatelessWidget {
   const _MetadataSummary({
     required this.metadata,
-    required this.selectedFormat,
+    required this.selectedVideoQuality,
     required this.downloadLoading,
     required this.downloadSuccess,
     required this.downloadError,
@@ -249,14 +250,15 @@ class _MetadataSummary extends StatelessWidget {
     required this.savedFilePath,
     required this.savedDirectory,
     required this.fileOpenLoading,
-    required this.onFormatSelected,
-    required this.onDownloadPressed,
+    required this.onVideoQualitySelected,
+    required this.onVideoDownloadPressed,
+    required this.onAudioDownloadPressed,
     required this.onFileDownloadPressed,
     required this.onOpenFilePressed,
   });
 
   final MediaMetadata metadata;
-  final MediaFormat? selectedFormat;
+  final VideoQuality? selectedVideoQuality;
   final bool downloadLoading;
   final bool downloadSuccess;
   final String? downloadError;
@@ -270,8 +272,9 @@ class _MetadataSummary extends StatelessWidget {
   final String? savedFilePath;
   final String? savedDirectory;
   final bool fileOpenLoading;
-  final ValueChanged<MediaFormat> onFormatSelected;
-  final VoidCallback onDownloadPressed;
+  final ValueChanged<VideoQuality> onVideoQualitySelected;
+  final VoidCallback onVideoDownloadPressed;
+  final VoidCallback onAudioDownloadPressed;
   final VoidCallback onFileDownloadPressed;
   final VoidCallback onOpenFilePressed;
 
@@ -279,13 +282,16 @@ class _MetadataSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     final thumbnailUrl = metadata.thumbnailUrl;
     final hasCreatedJob = downloadSuccess && currentJobId != null;
-    final isDownloadDisabled = selectedFormat == null ||
-        downloadLoading ||
+    final isDownloadActionDisabled = downloadLoading ||
         fileDownloadLoading ||
+        fileOpenLoading ||
         _isActiveStatus(currentStatus) ||
         _isCompletedStatus(currentStatus);
-    final isFormatSelectionEnabled = !downloadLoading &&
+    final isVideoDownloadDisabled =
+        selectedVideoQuality == null || isDownloadActionDisabled;
+    final isVideoQualitySelectionEnabled = !downloadLoading &&
         !fileDownloadLoading &&
+        !fileOpenLoading &&
         !_isActiveStatus(currentStatus);
 
     return Column(
@@ -323,18 +329,18 @@ class _MetadataSummary extends StatelessWidget {
         _MetadataRow(label: 'Platform', value: metadata.platform),
         _MetadataRow(
           label: 'Available qualities',
-          value: metadata.qualities.length.toString(),
+          value: metadata.videoQualities.length.toString(),
         ),
         const SizedBox(height: 16),
-        _FormatSelectionList(
-          formats: metadata.qualities,
-          selectedFormat: selectedFormat,
-          enabled: isFormatSelectionEnabled,
-          onFormatSelected: onFormatSelected,
+        _VideoQualitySelectionList(
+          qualities: metadata.videoQualities,
+          selectedVideoQuality: selectedVideoQuality,
+          enabled: isVideoQualitySelectionEnabled,
+          onVideoQualitySelected: onVideoQualitySelected,
         ),
         const SizedBox(height: 16),
         FilledButton(
-          onPressed: isDownloadDisabled ? null : onDownloadPressed,
+          onPressed: isVideoDownloadDisabled ? null : onVideoDownloadPressed,
           child: downloadLoading
               ? const Row(
                   mainAxisSize: MainAxisSize.min,
@@ -350,6 +356,22 @@ class _MetadataSummary extends StatelessWidget {
                 )
               : const Text('Download'),
         ),
+        if (metadata.audioOptions.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          const Divider(),
+          const SizedBox(height: 16),
+          Text(
+            'Audio',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          for (final option in metadata.audioOptions)
+            _AudioOptionCard(
+              option: option,
+              enabled: !isDownloadActionDisabled,
+              onSelected: onAudioDownloadPressed,
+            ),
+        ],
         if (hasCreatedJob) ...[
           const SizedBox(height: 16),
           _DownloadProgressStatus(
@@ -649,29 +671,29 @@ class _FileTransferProgress extends StatelessWidget {
   }
 }
 
-class _FormatSelectionList extends StatelessWidget {
-  const _FormatSelectionList({
-    required this.formats,
-    required this.selectedFormat,
+class _VideoQualitySelectionList extends StatelessWidget {
+  const _VideoQualitySelectionList({
+    required this.qualities,
+    required this.selectedVideoQuality,
     required this.enabled,
-    required this.onFormatSelected,
+    required this.onVideoQualitySelected,
   });
 
-  final List<MediaFormat> formats;
-  final MediaFormat? selectedFormat;
+  final List<VideoQuality> qualities;
+  final VideoQuality? selectedVideoQuality;
   final bool enabled;
-  final ValueChanged<MediaFormat> onFormatSelected;
+  final ValueChanged<VideoQuality> onVideoQualitySelected;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
 
     if (kDebugMode) {
-      debugPrint('Quality UI render count=${formats.length}');
+      debugPrint('Video quality UI render count=${qualities.length}');
     }
 
-    if (formats.isEmpty) {
-      return const Text('No qualities were returned.');
+    if (qualities.isEmpty) {
+      return const Text('No video qualities were returned.');
     }
 
     return Column(
@@ -682,35 +704,35 @@ class _FormatSelectionList extends StatelessWidget {
           style: textTheme.titleMedium,
         ),
         const SizedBox(height: 8),
-        for (final format in formats)
-          _FormatCard(
-            format: format,
-            selectedFormatId: selectedFormat?.formatId,
+        for (final quality in qualities)
+          _VideoQualityCard(
+            quality: quality,
+            selectedHeight: selectedVideoQuality?.height,
             enabled: enabled,
-            onSelected: () => onFormatSelected(format),
+            onSelected: () => onVideoQualitySelected(quality),
           ),
       ],
     );
   }
 }
 
-class _FormatCard extends StatelessWidget {
-  const _FormatCard({
-    required this.format,
-    required this.selectedFormatId,
+class _VideoQualityCard extends StatelessWidget {
+  const _VideoQualityCard({
+    required this.quality,
+    required this.selectedHeight,
     required this.enabled,
     required this.onSelected,
   });
 
-  final MediaFormat format;
-  final String? selectedFormatId;
+  final VideoQuality quality;
+  final int? selectedHeight;
   final bool enabled;
   final VoidCallback onSelected;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isSelected = selectedFormatId == format.formatId;
+    final isSelected = selectedHeight == quality.height;
 
     return Card(
       color: isSelected ? colorScheme.secondaryContainer : null,
@@ -722,24 +744,18 @@ class _FormatCard extends StatelessWidget {
           isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
           color: isSelected ? colorScheme.primary : null,
         ),
-        title: Text(_formatTitle(format)),
-        subtitle: Text(_formatSubtitle(format)),
+        title: Text(_qualityTitle(quality)),
+        subtitle: Text(_qualitySubtitle(quality)),
       ),
     );
   }
 
-  String _formatTitle(MediaFormat format) {
-    final resolution = format.qualityLabel;
-    final extension = format.extension.toUpperCase();
-    return '$resolution - $extension';
+  String _qualityTitle(VideoQuality quality) {
+    return '${quality.label} - ${quality.extension.toUpperCase()}';
   }
 
-  String _formatSubtitle(MediaFormat format) {
-    final parts = <String>[
-      'Estimated filesize: ${_formatFileSize(format.estimatedFilesize)}',
-    ];
-
-    return parts.join('\n');
+  String _qualitySubtitle(VideoQuality quality) {
+    return 'Estimated filesize: ${_formatFileSize(quality.estimatedFilesize)}';
   }
 
   String _formatFileSize(int? bytes) {
@@ -765,7 +781,31 @@ class _FormatCard extends StatelessWidget {
 
     return '$bytes B';
   }
+}
 
+class _AudioOptionCard extends StatelessWidget {
+  const _AudioOptionCard({
+    required this.option,
+    required this.enabled,
+    required this.onSelected,
+  });
+
+  final AudioOption option;
+  final bool enabled;
+  final VoidCallback onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ListTile(
+        enabled: enabled,
+        onTap: enabled ? onSelected : null,
+        leading: const Icon(Icons.music_note),
+        title: Text('${option.label} (Best Quality)'),
+        subtitle: Text(option.extension.toUpperCase()),
+      ),
+    );
+  }
 }
 
 class _MetadataRow extends StatelessWidget {

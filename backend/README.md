@@ -4,7 +4,8 @@ FastAPI backend for Nexora.
 
 ## Media Quality API
 
-`POST /media/info` returns metadata plus client-safe, playable quality options.
+`POST /media/info` returns metadata plus client-safe video and audio download
+options.
 It does not expose raw yt-dlp stream IDs, codecs, or DASH stream details.
 
 ```json
@@ -19,7 +20,7 @@ It does not expose raw yt-dlp stream IDs, codecs, or DASH stream details.
   "message": "Request successful",
   "data": {
     "title": "Example Video",
-    "qualities": [
+    "video_qualities": [
       {
         "label": "360p",
         "height": 360,
@@ -32,6 +33,12 @@ It does not expose raw yt-dlp stream IDs, codecs, or DASH stream details.
         "extension": "mp4",
         "estimated_filesize": 456123456
       }
+    ],
+    "audio_options": [
+      {
+        "label": "MP3",
+        "extension": "mp3"
+      }
     ]
   }
 }
@@ -42,15 +49,27 @@ Create a job by sending a quality height returned by that response:
 ```json
 {
   "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "quality_height": 1080
+  "quality_height": 1080,
+  "media_type": "video"
 }
 ```
 
 The backend validates the requested height again, chooses the best stream, and pairs adaptive video with the best available audio stream. A missing or changed quality returns the standardized `QUALITY_NOT_AVAILABLE` error; the backend never silently downgrades a request.
 
-The previous `format_id` request field remains temporarily accepted for legacy clients but is deprecated. New clients must use `quality_height`.
+Create an audio-only job without a quality or format identifier:
 
-Adaptive video/audio selectors require yt-dlp's normal merge support. Deployments must make FFmpeg available to yt-dlp for those pairs; this backend does not install or configure FFmpeg.
+```json
+{
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "media_type": "audio"
+}
+```
+
+The backend selects the best available audio stream and converts it to MP3 with FFmpeg. If the source no longer has audio, it returns `AUDIO_NOT_AVAILABLE`. If FFmpeg is unavailable, the job follows the existing failed-job/WebSocket error flow; there is no fallback format.
+
+The request fields `format_id` and `type` remain temporarily accepted for legacy clients. New clients must use `video_qualities`, `media_type`, and, for video, `quality_height`.
+
+Adaptive video/audio selectors and MP3 conversion require yt-dlp's normal FFmpeg support. Deployments must make FFmpeg available to yt-dlp; this backend does not install or configure FFmpeg.
 
 ## Real-Time Job Progress
 

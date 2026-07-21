@@ -58,6 +58,26 @@ def test_files_endpoint_downloads_completed_job() -> None:
         file_path.unlink(missing_ok=True)
 
 
+def test_completed_audio_job_returns_an_mp3_attachment() -> None:
+    manager = JobManager()
+    job = manager.create_job(
+        media_url="https://www.youtube.com/watch?v=audio-file",
+        platform="youtube",
+        title="Example Audio",
+        output_type="audio",
+    )
+    manager.mark_completed(job.job_id)
+    file_path = get_temp_storage_dir() / f"{job.job_id}.mp3"
+    file_path.write_bytes(b"mp3-media")
+    try:
+        response = DownloadFileService().create_file_response(job.job_id, job_manager=manager)
+
+        assert response.media_type == "audio/mpeg"
+        assert response.headers["content-disposition"] == 'attachment; filename="Example Audio.mp3"'
+    finally:
+        file_path.unlink(missing_ok=True)
+
+
 def test_files_endpoint_missing_job_returns_standardized_response() -> None:
     manager = JobManager()
     app = create_app()

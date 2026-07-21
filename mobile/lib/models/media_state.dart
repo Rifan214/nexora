@@ -1,5 +1,6 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
+import 'media_download_type.dart';
 import 'media_metadata.dart';
 
 part 'media_state.freezed.dart';
@@ -12,7 +13,8 @@ class MediaState with _$MediaState {
 
   const factory MediaState.success({
     required MediaMetadata metadata,
-    MediaFormat? selectedFormat,
+    VideoQuality? selectedVideoQuality,
+    MediaDownloadType? currentMediaType,
     @Default(false) bool downloadLoading,
     @Default(false) bool downloadSuccess,
     String? downloadError,

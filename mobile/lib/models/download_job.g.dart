@@ -10,16 +10,16 @@ _$DownloadJobRequestImpl _$$DownloadJobRequestImplFromJson(
         Map<String, dynamic> json) =>
     _$DownloadJobRequestImpl(
       url: json['url'] as String,
-      formatId: json['format_id'] as String,
-      type: json['type'] as String,
+      mediaType: json['media_type'] as String,
+      qualityHeight: (json['quality_height'] as num?)?.toInt(),
     );
 
 Map<String, dynamic> _$$DownloadJobRequestImplToJson(
         _$DownloadJobRequestImpl instance) =>
     <String, dynamic>{
       'url': instance.url,
-      'format_id': instance.formatId,
-      'type': instance.type,
+      'media_type': instance.mediaType,
+      if (instance.qualityHeight case final value?) 'quality_height': value,
     };
 
 _$DownloadJobResponseImpl _$$DownloadJobResponseImplFromJson(

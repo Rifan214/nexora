@@ -50,7 +50,8 @@ class FakeYoutubeDL:
         progress_hook({"status": "downloading", "downloaded_bytes": 100, "total_bytes": 100})
         progress_hook({"status": "finished"})
 
-        output_path = Path(self.options["outtmpl"].replace("%(ext)s", "mp4"))
+        extension = "mp3" if self.options.get("postprocessors") else "mp4"
+        output_path = Path(self.options["outtmpl"].replace("%(ext)s", extension))
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"downloaded-media")
         return {"title": "A title that must not become a filename"}
@@ -108,6 +109,49 @@ def test_background_download_completes_for_youtube_videos_and_shorts(
 
         download_options = FakeYoutubeDL.instances[1].options
         assert download_options["format"] == format_id
+        assert "postprocessors" not in download_options
+    finally:
+        downloaded_file.unlink(missing_ok=True)
+
+
+def test_background_audio_download_extracts_a_high_quality_mp3(monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeYoutubeDL.instances = []
+    FakeYoutubeDL.download_error = None
+    monkeypatch.setattr(media_service_module, "YoutubeDL", FakeYoutubeDL)
+
+    service = MediaService()
+    request = MediaDownloadRequest(
+        url="https://www.youtube.com/watch?v=audio-only",
+        media_type="audio",
+    )
+    job = get_job_manager().create_job(
+        media_url=request.url,
+        platform="youtube",
+        format_id="bestaudio/best",
+        output_type=request.media_type,
+    )
+    downloaded_file = get_temp_storage_dir() / f"{job.job_id}.mp3"
+
+    try:
+        service._download_job_background(job.job_id, request.url, "bestaudio/best", request.media_type)
+
+        completed_job = get_job_manager().get_job(job.job_id)
+        assert completed_job is not None
+        assert completed_job.status is JobStatus.completed
+        assert completed_job.progress == 100
+        assert completed_job.output_type == "audio"
+        assert completed_job.download_url == f"/files/{job.job_id}"
+        assert downloaded_file.read_bytes() == b"downloaded-media"
+
+        download_options = FakeYoutubeDL.instances[1].options
+        assert download_options["format"] == "bestaudio/best"
+        assert download_options["postprocessors"] == [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "0",
+            }
+        ]
     finally:
         downloaded_file.unlink(missing_ok=True)
 
@@ -149,6 +193,31 @@ def test_background_download_marks_yt_dlp_failures_as_failed(
     assert failed_job is not None
     assert failed_job.status is JobStatus.failed
     assert failed_job.error_message == expected_message
+
+
+def test_background_audio_download_reports_a_missing_ffmpeg(monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeYoutubeDL.instances = []
+    FakeYoutubeDL.download_error = DownloadError("Postprocessing: ffmpeg not found")
+    monkeypatch.setattr(media_service_module, "YoutubeDL", FakeYoutubeDL)
+
+    service = MediaService()
+    request = MediaDownloadRequest(
+        url="https://www.youtube.com/watch?v=audio-no-ffmpeg",
+        media_type="audio",
+    )
+    job = get_job_manager().create_job(
+        media_url=request.url,
+        platform="youtube",
+        format_id="bestaudio/best",
+        output_type=request.media_type,
+    )
+
+    service._download_job_background(job.job_id, request.url, "bestaudio/best", request.media_type)
+
+    failed_job = get_job_manager().get_job(job.job_id)
+    assert failed_job is not None
+    assert failed_job.status is JobStatus.failed
+    assert failed_job.error_message == "FFmpeg is required to process this download but is unavailable"
 
 
 def test_background_download_marks_filesystem_errors_as_failed(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -22,8 +22,11 @@ def get_media_service() -> MediaService:
 @router.post(
     "/info",
     response_model=APIResponse[MediaMetadata],
-    summary="Get media metadata and playable quality options",
-    description="Returns UI-friendly quality options. Raw yt-dlp stream identifiers are never included in the response.",
+    summary="Get media metadata and playable download options",
+    description=(
+        "Returns UI-friendly video_qualities and audio_options. Raw yt-dlp stream identifiers are never "
+        "included in the response."
+    ),
     response_model_exclude_none=True,
 )
 def media_info(
@@ -38,11 +41,12 @@ def media_info(
 @router.post(
     "/download",
     response_model=APIResponse[JobCreateResponse],
-    summary="Create a quality-based download job",
+    summary="Create a video or audio download job",
     description=(
-        "Send a quality_height returned by POST /media/info. The backend resolves it to a playable "
-        "yt-dlp selector and pairs adaptive video with audio when needed. The deprecated format_id "
-        "field is accepted only for temporary legacy-client compatibility."
+        "For video downloads, send quality_height from video_qualities. For audio downloads, send "
+        "media_type=audio without a quality or format identifier; the backend selects bestaudio and "
+        "converts it to MP3 with FFmpeg. The deprecated format_id and type fields remain accepted for "
+        "temporary legacy-client compatibility."
     ),
     response_model_exclude_none=True,
     dependencies=[Depends(run_lazy_cleanup)],
@@ -52,11 +56,11 @@ def media_download(
     media_service: MediaService = Depends(get_media_service),
 ) -> APIResponse[JobCreateResponse]:
     logger.info(
-        "Incoming media download request url=%s quality_height=%s legacy_format_request=%s type=%s",
+        "Incoming media download request url=%s media_type=%s quality_height=%s legacy_format_request=%s",
         request.url,
+        request.media_type,
         request.quality_height,
         request.format_id is not None,
-        request.type,
     )
     job = media_service.create_download_job(request)
     return APIResponse.ok(data=JobCreateResponse(job_id=job.job_id))

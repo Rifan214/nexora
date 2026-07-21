@@ -22,7 +22,8 @@ mixin _$MediaState {
     required TResult Function() loading,
     required TResult Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -47,7 +48,8 @@ mixin _$MediaState {
     TResult? Function()? loading,
     TResult? Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -72,7 +74,8 @@ mixin _$MediaState {
     TResult Function()? loading,
     TResult Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -185,7 +188,8 @@ class _$MediaIdleImpl implements MediaIdle {
     required TResult Function() loading,
     required TResult Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -213,7 +217,8 @@ class _$MediaIdleImpl implements MediaIdle {
     TResult? Function()? loading,
     TResult? Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -241,7 +246,8 @@ class _$MediaIdleImpl implements MediaIdle {
     TResult Function()? loading,
     TResult Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -353,7 +359,8 @@ class _$MediaLoadingImpl implements MediaLoading {
     required TResult Function() loading,
     required TResult Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -381,7 +388,8 @@ class _$MediaLoadingImpl implements MediaLoading {
     TResult? Function()? loading,
     TResult? Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -409,7 +417,8 @@ class _$MediaLoadingImpl implements MediaLoading {
     TResult Function()? loading,
     TResult Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -484,7 +493,8 @@ abstract class _$$MediaSuccessImplCopyWith<$Res> {
   @useResult
   $Res call(
       {MediaMetadata metadata,
-      MediaFormat? selectedFormat,
+      VideoQuality? selectedVideoQuality,
+      MediaDownloadType? currentMediaType,
       bool downloadLoading,
       bool downloadSuccess,
       String? downloadError,
@@ -501,7 +511,7 @@ abstract class _$$MediaSuccessImplCopyWith<$Res> {
       bool fileOpenLoading});
 
   $MediaMetadataCopyWith<$Res> get metadata;
-  $MediaFormatCopyWith<$Res>? get selectedFormat;
+  $VideoQualityCopyWith<$Res>? get selectedVideoQuality;
 }
 
 /// @nodoc
@@ -518,7 +528,8 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
   @override
   $Res call({
     Object? metadata = null,
-    Object? selectedFormat = freezed,
+    Object? selectedVideoQuality = freezed,
+    Object? currentMediaType = freezed,
     Object? downloadLoading = null,
     Object? downloadSuccess = null,
     Object? downloadError = freezed,
@@ -539,10 +550,14 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
           ? _value.metadata
           : metadata // ignore: cast_nullable_to_non_nullable
               as MediaMetadata,
-      selectedFormat: freezed == selectedFormat
-          ? _value.selectedFormat
-          : selectedFormat // ignore: cast_nullable_to_non_nullable
-              as MediaFormat?,
+      selectedVideoQuality: freezed == selectedVideoQuality
+          ? _value.selectedVideoQuality
+          : selectedVideoQuality // ignore: cast_nullable_to_non_nullable
+              as VideoQuality?,
+      currentMediaType: freezed == currentMediaType
+          ? _value.currentMediaType
+          : currentMediaType // ignore: cast_nullable_to_non_nullable
+              as MediaDownloadType?,
       downloadLoading: null == downloadLoading
           ? _value.downloadLoading
           : downloadLoading // ignore: cast_nullable_to_non_nullable
@@ -616,13 +631,13 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
   /// with the given fields replaced by the non-null parameter values.
   @override
   @pragma('vm:prefer-inline')
-  $MediaFormatCopyWith<$Res>? get selectedFormat {
-    if (_value.selectedFormat == null) {
+  $VideoQualityCopyWith<$Res>? get selectedVideoQuality {
+    if (_value.selectedVideoQuality == null) {
       return null;
     }
 
-    return $MediaFormatCopyWith<$Res>(_value.selectedFormat!, (value) {
-      return _then(_value.copyWith(selectedFormat: value));
+    return $VideoQualityCopyWith<$Res>(_value.selectedVideoQuality!, (value) {
+      return _then(_value.copyWith(selectedVideoQuality: value));
     });
   }
 }
@@ -632,7 +647,8 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
 class _$MediaSuccessImpl implements MediaSuccess {
   const _$MediaSuccessImpl(
       {required this.metadata,
-      this.selectedFormat,
+      this.selectedVideoQuality,
+      this.currentMediaType,
       this.downloadLoading = false,
       this.downloadSuccess = false,
       this.downloadError,
@@ -651,7 +667,9 @@ class _$MediaSuccessImpl implements MediaSuccess {
   @override
   final MediaMetadata metadata;
   @override
-  final MediaFormat? selectedFormat;
+  final VideoQuality? selectedVideoQuality;
+  @override
+  final MediaDownloadType? currentMediaType;
   @override
   @JsonKey()
   final bool downloadLoading;
@@ -689,7 +707,7 @@ class _$MediaSuccessImpl implements MediaSuccess {
 
   @override
   String toString() {
-    return 'MediaState.success(metadata: $metadata, selectedFormat: $selectedFormat, downloadLoading: $downloadLoading, downloadSuccess: $downloadSuccess, downloadError: $downloadError, currentJobId: $currentJobId, currentStatus: $currentStatus, currentProgress: $currentProgress, downloadUrl: $downloadUrl, fileDownloadLoading: $fileDownloadLoading, fileDownloadProgress: $fileDownloadProgress, fileDownloadError: $fileDownloadError, downloadedFilename: $downloadedFilename, savedFilePath: $savedFilePath, savedDirectory: $savedDirectory, fileOpenLoading: $fileOpenLoading)';
+    return 'MediaState.success(metadata: $metadata, selectedVideoQuality: $selectedVideoQuality, currentMediaType: $currentMediaType, downloadLoading: $downloadLoading, downloadSuccess: $downloadSuccess, downloadError: $downloadError, currentJobId: $currentJobId, currentStatus: $currentStatus, currentProgress: $currentProgress, downloadUrl: $downloadUrl, fileDownloadLoading: $fileDownloadLoading, fileDownloadProgress: $fileDownloadProgress, fileDownloadError: $fileDownloadError, downloadedFilename: $downloadedFilename, savedFilePath: $savedFilePath, savedDirectory: $savedDirectory, fileOpenLoading: $fileOpenLoading)';
   }
 
   @override
@@ -699,8 +717,10 @@ class _$MediaSuccessImpl implements MediaSuccess {
             other is _$MediaSuccessImpl &&
             (identical(other.metadata, metadata) ||
                 other.metadata == metadata) &&
-            (identical(other.selectedFormat, selectedFormat) ||
-                other.selectedFormat == selectedFormat) &&
+            (identical(other.selectedVideoQuality, selectedVideoQuality) ||
+                other.selectedVideoQuality == selectedVideoQuality) &&
+            (identical(other.currentMediaType, currentMediaType) ||
+                other.currentMediaType == currentMediaType) &&
             (identical(other.downloadLoading, downloadLoading) ||
                 other.downloadLoading == downloadLoading) &&
             (identical(other.downloadSuccess, downloadSuccess) ||
@@ -735,7 +755,8 @@ class _$MediaSuccessImpl implements MediaSuccess {
   int get hashCode => Object.hash(
       runtimeType,
       metadata,
-      selectedFormat,
+      selectedVideoQuality,
+      currentMediaType,
       downloadLoading,
       downloadSuccess,
       downloadError,
@@ -766,7 +787,8 @@ class _$MediaSuccessImpl implements MediaSuccess {
     required TResult Function() loading,
     required TResult Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -786,7 +808,8 @@ class _$MediaSuccessImpl implements MediaSuccess {
   }) {
     return success(
         metadata,
-        selectedFormat,
+        selectedVideoQuality,
+        currentMediaType,
         downloadLoading,
         downloadSuccess,
         downloadError,
@@ -810,7 +833,8 @@ class _$MediaSuccessImpl implements MediaSuccess {
     TResult? Function()? loading,
     TResult? Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -830,7 +854,8 @@ class _$MediaSuccessImpl implements MediaSuccess {
   }) {
     return success?.call(
         metadata,
-        selectedFormat,
+        selectedVideoQuality,
+        currentMediaType,
         downloadLoading,
         downloadSuccess,
         downloadError,
@@ -854,7 +879,8 @@ class _$MediaSuccessImpl implements MediaSuccess {
     TResult Function()? loading,
     TResult Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -876,7 +902,8 @@ class _$MediaSuccessImpl implements MediaSuccess {
     if (success != null) {
       return success(
           metadata,
-          selectedFormat,
+          selectedVideoQuality,
+          currentMediaType,
           downloadLoading,
           downloadSuccess,
           downloadError,
@@ -936,7 +963,8 @@ class _$MediaSuccessImpl implements MediaSuccess {
 abstract class MediaSuccess implements MediaState {
   const factory MediaSuccess(
       {required final MediaMetadata metadata,
-      final MediaFormat? selectedFormat,
+      final VideoQuality? selectedVideoQuality,
+      final MediaDownloadType? currentMediaType,
       final bool downloadLoading,
       final bool downloadSuccess,
       final String? downloadError,
@@ -953,7 +981,8 @@ abstract class MediaSuccess implements MediaState {
       final bool fileOpenLoading}) = _$MediaSuccessImpl;
 
   MediaMetadata get metadata;
-  MediaFormat? get selectedFormat;
+  VideoQuality? get selectedVideoQuality;
+  MediaDownloadType? get currentMediaType;
   bool get downloadLoading;
   bool get downloadSuccess;
   String? get downloadError;
@@ -1048,7 +1077,8 @@ class _$MediaErrorImpl implements MediaError {
     required TResult Function() loading,
     required TResult Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -1076,7 +1106,8 @@ class _$MediaErrorImpl implements MediaError {
     TResult? Function()? loading,
     TResult? Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,
@@ -1104,7 +1135,8 @@ class _$MediaErrorImpl implements MediaError {
     TResult Function()? loading,
     TResult Function(
             MediaMetadata metadata,
-            MediaFormat? selectedFormat,
+            VideoQuality? selectedVideoQuality,
+            MediaDownloadType? currentMediaType,
             bool downloadLoading,
             bool downloadSuccess,
             String? downloadError,

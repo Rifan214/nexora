@@ -10,6 +10,7 @@ import '../core/network/api_paths.dart';
 import '../models/completed_file_download.dart';
 import '../models/download_job.dart';
 import '../models/job_update.dart';
+import '../models/media_download_type.dart';
 import '../models/media_metadata.dart';
 import '../services/api_service.dart';
 import '../services/device_file_service.dart';
@@ -40,11 +41,16 @@ class MediaRepository {
       data: {'url': url.trim()},
     );
     final rawData = response['data'];
-    final rawQualities = rawData is Map ? rawData['qualities'] : null;
+    final rawVideoQualities = rawData is Map ? rawData['video_qualities'] : null;
+    final rawAudioOptions = rawData is Map ? rawData['audio_options'] : null;
     if (kDebugMode) {
       debugPrint(
-        'MediaRepository /media/info qualities present=${rawQualities is List} '
-        'count=${rawQualities is List ? rawQualities.length : 0}',
+        'MediaRepository /media/info video_qualities present=${rawVideoQualities is List} '
+        'count=${rawVideoQualities is List ? rawVideoQualities.length : 0}',
+      );
+      debugPrint(
+        'MediaRepository /media/info audio_options present=${rawAudioOptions is List} '
+        'count=${rawAudioOptions is List ? rawAudioOptions.length : 0}',
       );
       debugPrint('MediaRepository /media/info payload: ${jsonEncode(response)}');
     }
@@ -65,7 +71,8 @@ class MediaRepository {
 
     if (kDebugMode) {
       debugPrint(
-        'MediaRepository parsed quality count=${metadata.qualities.length}',
+        'MediaRepository parsed video quality count=${metadata.videoQualities.length} '
+        'audio option count=${metadata.audioOptions.length}',
       );
     }
 
@@ -74,19 +81,24 @@ class MediaRepository {
 
   Future<DownloadJobData> createDownloadJob({
     required String mediaUrl,
-    required MediaFormat format,
+    required MediaDownloadType mediaType,
+    VideoQuality? videoQuality,
   }) async {
-    final qualityHeight = format.qualityHeight;
-    if (qualityHeight <= 0) {
-      throw const ApiException('Invalid selected quality.');
+    final qualityHeight = videoQuality?.height;
+    if (mediaType == MediaDownloadType.video &&
+        (qualityHeight == null || qualityHeight <= 0)) {
+      throw const ApiException('Invalid selected video quality.');
     }
 
+    final request = DownloadJobRequest(
+      url: mediaUrl.trim(),
+      mediaType: mediaType.requestValue,
+      qualityHeight:
+          mediaType == MediaDownloadType.video ? qualityHeight : null,
+    );
     final response = await _apiService.postJson(
       ApiPaths.mediaDownload,
-      data: {
-        'url': mediaUrl.trim(),
-        'quality_height': qualityHeight,
-      },
+      data: request.toJson(),
     );
     final downloadResponse = DownloadJobResponse.fromJson(response);
 

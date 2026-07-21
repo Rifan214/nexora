@@ -57,10 +57,14 @@ _$MediaMetadataImpl _$$MediaMetadataImplFromJson(Map<String, dynamic> json) =>
       viewCount: (json['view_count'] as num?)?.toInt(),
       likeCount: (json['like_count'] as num?)?.toInt(),
       description: json['description'] as String?,
-      formats: (json['formats'] as List<dynamic>?)
-              ?.map((e) => MediaFormat.fromJson(e as Map<String, dynamic>))
+      videoQualities: (json['video_qualities'] as List<dynamic>?)
+              ?.map((e) => VideoQuality.fromJson(e as Map<String, dynamic>))
               .toList() ??
-          const <MediaFormat>[],
+          const <VideoQuality>[],
+      audioOptions: (json['audio_options'] as List<dynamic>?)
+              ?.map((e) => AudioOption.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const <AudioOption>[],
     );
 
 Map<String, dynamic> _$$MediaMetadataImplToJson(_$MediaMetadataImpl instance) =>
@@ -78,27 +82,34 @@ Map<String, dynamic> _$$MediaMetadataImplToJson(_$MediaMetadataImpl instance) =>
       'view_count': instance.viewCount,
       'like_count': instance.likeCount,
       'description': instance.description,
-      'formats': instance.formats,
+      'video_qualities': instance.videoQualities,
+      'audio_options': instance.audioOptions,
     };
 
-_$MediaFormatImpl _$$MediaFormatImplFromJson(Map<String, dynamic> json) =>
-    _$MediaFormatImpl(
-      formatId: json['format_id'] as String,
+_$VideoQualityImpl _$$VideoQualityImplFromJson(Map<String, dynamic> json) =>
+    _$VideoQualityImpl(
+      label: json['label'] as String,
+      height: (json['height'] as num).toInt(),
       extension: json['extension'] as String,
-      resolution: json['resolution'] as String?,
-      fps: (json['fps'] as num?)?.toInt(),
-      filesize: (json['filesize'] as num?)?.toInt(),
-      videoCodec: json['video_codec'] as String?,
-      audioCodec: json['audio_codec'] as String?,
+      estimatedFilesize: (json['estimated_filesize'] as num?)?.toInt(),
     );
 
-Map<String, dynamic> _$$MediaFormatImplToJson(_$MediaFormatImpl instance) =>
+Map<String, dynamic> _$$VideoQualityImplToJson(_$VideoQualityImpl instance) =>
     <String, dynamic>{
-      'format_id': instance.formatId,
+      'label': instance.label,
+      'height': instance.height,
       'extension': instance.extension,
-      'resolution': instance.resolution,
-      'fps': instance.fps,
-      'filesize': instance.filesize,
-      'video_codec': instance.videoCodec,
-      'audio_codec': instance.audioCodec,
+      'estimated_filesize': instance.estimatedFilesize,
+    };
+
+_$AudioOptionImpl _$$AudioOptionImplFromJson(Map<String, dynamic> json) =>
+    _$AudioOptionImpl(
+      label: json['label'] as String,
+      extension: json['extension'] as String,
+    );
+
+Map<String, dynamic> _$$AudioOptionImplToJson(_$AudioOptionImpl instance) =>
+    <String, dynamic>{
+      'label': instance.label,
+      'extension': instance.extension,
     };

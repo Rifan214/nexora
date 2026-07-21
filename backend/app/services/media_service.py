@@ -10,7 +10,7 @@ from yt_dlp.utils import DownloadError, ExtractorError, YoutubeDLError
 from app.core.config import get_settings
 from app.core.exceptions import APIError
 from app.models.job import DownloadJob
-from app.models.media import MediaMetadata
+from app.models.media import AudioOption, MediaMetadata
 from app.models.requests import MediaDownloadRequest
 from app.services.job_manager import build_job_download_url, get_job_manager
 from app.services.quality_selector import QualitySelector
@@ -19,6 +19,13 @@ from app.utils.storage import build_download_outtmpl, find_downloaded_file, get_
 from app.utils.validators import validate_http_url
 
 logger = logging.getLogger(__name__)
+
+_AUDIO_FORMAT_SELECTOR = "bestaudio/best"
+_AUDIO_MP3_POSTPROCESSOR = {
+    "key": "FFmpegExtractAudio",
+    "preferredcodec": "mp3",
+    "preferredquality": "0",
+}
 
 
 class MediaService:
@@ -60,11 +67,11 @@ class MediaService:
     def create_download_job(self, request: MediaDownloadRequest) -> DownloadJob:
         normalized_url = validate_http_url(request.url)
         logger.info(
-            "Download job request received url=%s quality_height=%s legacy_format_request=%s type=%s",
+            "Download job request received url=%s media_type=%s quality_height=%s legacy_format_request=%s",
             normalized_url,
+            request.media_type,
             request.quality_height,
             request.format_id is not None,
-            request.type,
         )
 
         try:
@@ -78,9 +85,19 @@ class MediaService:
                     status_code=501,
                 )
 
-            if request.quality_height is not None:
+            formats = info.get("formats") or []
+            if request.media_type == "audio":
+                if not self._has_audio_available(formats):
+                    raise APIError(
+                        code="AUDIO_NOT_AVAILABLE",
+                        message="Audio unavailable",
+                        details="The requested media does not provide an audio stream",
+                        status_code=409,
+                    )
+                format_selector = _AUDIO_FORMAT_SELECTOR
+            elif request.quality_height is not None:
                 selection = self._quality_selector.select_for_height(
-                    info.get("formats") or [],
+                    formats,
                     request.quality_height,
                 )
                 if selection is None:
@@ -104,11 +121,11 @@ class MediaService:
             platform=platform,
             title=str(info.get("title") or "Untitled media"),
             format_id=format_selector,
-            output_type=request.type,
+            output_type=request.media_type,
         )
         worker = threading.Thread(
             target=self._download_job_background,
-            args=(job.job_id, normalized_url, format_selector, request.type),
+            args=(job.job_id, normalized_url, format_selector, request.media_type),
             daemon=True,
             name=f"nexora-download-{job.job_id}",
         )
@@ -149,22 +166,19 @@ class MediaService:
                 format_id=format_selector,
                 output_type=output_type,
             )
-            logger.info("Download started job_id=%s url=%s", job_id, url)
+            logger.info("Download started job_id=%s media_type=%s url=%s", job_id, output_type, url)
 
             temp_dir = get_temp_storage_dir()
             output_template = build_download_outtmpl(job_id, temp_dir=temp_dir)
 
-            ydl_options = {
-                "quiet": True,
-                "no_warnings": True,
-                "noplaylist": True,
-                "skip_download": False,
-                "cachedir": False,
-                "format": format_selector,
-                "outtmpl": output_template,
-                "paths": {"home": str(temp_dir)},
-                "progress_hooks": [self._build_progress_hook(job_id, job_manager)],
-            }
+            ydl_options = self._build_download_options(
+                job_id=job_id,
+                format_selector=format_selector,
+                output_type=output_type,
+                output_template=output_template,
+                temp_dir=temp_dir,
+                job_manager=job_manager,
+            )
 
             with YoutubeDL(ydl_options) as youtube_dl:
                 downloaded_info = youtube_dl.extract_info(url, download=True)
@@ -223,6 +237,33 @@ class MediaService:
 
         return hook
 
+    def _build_download_options(
+        self,
+        *,
+        job_id,
+        format_selector: str,
+        output_type: str,
+        output_template: str,
+        temp_dir,
+        job_manager,
+    ) -> dict[str, Any]:
+        options: dict[str, Any] = {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "skip_download": False,
+            "cachedir": False,
+            "format": format_selector,
+            "outtmpl": output_template,
+            "paths": {"home": str(temp_dir)},
+            "progress_hooks": [self._build_progress_hook(job_id, job_manager)],
+        }
+        if output_type == "audio":
+            # yt-dlp chooses its best audio stream, then FFmpeg produces a
+            # playable MP3 at its highest VBR quality setting.
+            options["postprocessors"] = [dict(_AUDIO_MP3_POSTPROCESSOR)]
+        return options
+
     @staticmethod
     def _parse_percent(value: Any) -> int:
         text = str(value).strip().rstrip("%")
@@ -243,6 +284,8 @@ class MediaService:
 
         if any(token in lowered for token in ("requested format is not available", "format not available", "format unavailable")):
             return "Requested quality is no longer available"
+        if any(token in lowered for token in ("ffmpeg is not installed", "ffmpeg not found", "ffmpeg unavailable")):
+            return "FFmpeg is required to process this download but is unavailable"
         if any(token in lowered for token in ("cancelled", "canceled")):
             return "Download cancelled"
         if any(token in lowered for token in ("timeout", "timed out", "network", "connection", "http error", "unable to download webpage")):
@@ -315,6 +358,8 @@ class MediaService:
         return "unknown"
 
     def _build_metadata(self, *, info: dict[str, Any], platform: str, url: str) -> MediaMetadata:
+        formats = info.get("formats") or []
+        video_qualities = self._quality_selector.build_qualities(formats)
         return MediaMetadata(
             platform=platform,
             title=str(info.get("title") or "Untitled media"),
@@ -329,8 +374,25 @@ class MediaService:
             view_count=self._int_or_none(info.get("view_count")),
             like_count=self._int_or_none(info.get("like_count")),
             description=info.get("description"),
-            qualities=self._quality_selector.build_qualities(info.get("formats") or []),
+            video_qualities=video_qualities,
+            audio_options=self._build_audio_options(formats),
         )
+
+    @classmethod
+    def _build_audio_options(cls, formats: list[dict[str, Any]]) -> list[AudioOption]:
+        if not cls._has_audio_available(formats):
+            return []
+        return [AudioOption(label="MP3", extension="mp3")]
+
+    @staticmethod
+    def _has_audio_available(formats: list[dict[str, Any]]) -> bool:
+        for format_item in formats:
+            if not isinstance(format_item, dict):
+                continue
+            audio_codec = str(format_item.get("acodec") or "").strip().casefold()
+            if audio_codec and audio_codec != "none":
+                return True
+        return False
 
     @staticmethod
     def _select_thumbnail(info: dict[str, Any]) -> str | None:

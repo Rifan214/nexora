@@ -456,7 +456,10 @@ mixin _$MediaMetadata {
   @JsonKey(name: 'like_count')
   int? get likeCount => throw _privateConstructorUsedError;
   String? get description => throw _privateConstructorUsedError;
-  List<MediaFormat> get formats => throw _privateConstructorUsedError;
+  @JsonKey(name: 'video_qualities')
+  List<VideoQuality> get videoQualities => throw _privateConstructorUsedError;
+  @JsonKey(name: 'audio_options')
+  List<AudioOption> get audioOptions => throw _privateConstructorUsedError;
 
   /// Serializes this MediaMetadata to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -488,7 +491,8 @@ abstract class $MediaMetadataCopyWith<$Res> {
       @JsonKey(name: 'view_count') int? viewCount,
       @JsonKey(name: 'like_count') int? likeCount,
       String? description,
-      List<MediaFormat> formats});
+      @JsonKey(name: 'video_qualities') List<VideoQuality> videoQualities,
+      @JsonKey(name: 'audio_options') List<AudioOption> audioOptions});
 }
 
 /// @nodoc
@@ -519,7 +523,8 @@ class _$MediaMetadataCopyWithImpl<$Res, $Val extends MediaMetadata>
     Object? viewCount = freezed,
     Object? likeCount = freezed,
     Object? description = freezed,
-    Object? formats = null,
+    Object? videoQualities = null,
+    Object? audioOptions = null,
   }) {
     return _then(_value.copyWith(
       platform: null == platform
@@ -574,10 +579,14 @@ class _$MediaMetadataCopyWithImpl<$Res, $Val extends MediaMetadata>
           ? _value.description
           : description // ignore: cast_nullable_to_non_nullable
               as String?,
-      formats: null == formats
-          ? _value.formats
-          : formats // ignore: cast_nullable_to_non_nullable
-              as List<MediaFormat>,
+      videoQualities: null == videoQualities
+          ? _value.videoQualities
+          : videoQualities // ignore: cast_nullable_to_non_nullable
+              as List<VideoQuality>,
+      audioOptions: null == audioOptions
+          ? _value.audioOptions
+          : audioOptions // ignore: cast_nullable_to_non_nullable
+              as List<AudioOption>,
     ) as $Val);
   }
 }
@@ -604,7 +613,8 @@ abstract class _$$MediaMetadataImplCopyWith<$Res>
       @JsonKey(name: 'view_count') int? viewCount,
       @JsonKey(name: 'like_count') int? likeCount,
       String? description,
-      List<MediaFormat> formats});
+      @JsonKey(name: 'video_qualities') List<VideoQuality> videoQualities,
+      @JsonKey(name: 'audio_options') List<AudioOption> audioOptions});
 }
 
 /// @nodoc
@@ -633,7 +643,8 @@ class __$$MediaMetadataImplCopyWithImpl<$Res>
     Object? viewCount = freezed,
     Object? likeCount = freezed,
     Object? description = freezed,
-    Object? formats = null,
+    Object? videoQualities = null,
+    Object? audioOptions = null,
   }) {
     return _then(_$MediaMetadataImpl(
       platform: null == platform
@@ -688,10 +699,14 @@ class __$$MediaMetadataImplCopyWithImpl<$Res>
           ? _value.description
           : description // ignore: cast_nullable_to_non_nullable
               as String?,
-      formats: null == formats
-          ? _value._formats
-          : formats // ignore: cast_nullable_to_non_nullable
-              as List<MediaFormat>,
+      videoQualities: null == videoQualities
+          ? _value._videoQualities
+          : videoQualities // ignore: cast_nullable_to_non_nullable
+              as List<VideoQuality>,
+      audioOptions: null == audioOptions
+          ? _value._audioOptions
+          : audioOptions // ignore: cast_nullable_to_non_nullable
+              as List<AudioOption>,
     ));
   }
 }
@@ -713,8 +728,12 @@ class _$MediaMetadataImpl implements _MediaMetadata {
       @JsonKey(name: 'view_count') this.viewCount,
       @JsonKey(name: 'like_count') this.likeCount,
       this.description,
-      final List<MediaFormat> formats = const <MediaFormat>[]})
-      : _formats = formats;
+      @JsonKey(name: 'video_qualities')
+      final List<VideoQuality> videoQualities = const <VideoQuality>[],
+      @JsonKey(name: 'audio_options')
+      final List<AudioOption> audioOptions = const <AudioOption>[]})
+      : _videoQualities = videoQualities,
+        _audioOptions = audioOptions;
 
   factory _$MediaMetadataImpl.fromJson(Map<String, dynamic> json) =>
       _$$MediaMetadataImplFromJson(json);
@@ -753,18 +772,27 @@ class _$MediaMetadataImpl implements _MediaMetadata {
   final int? likeCount;
   @override
   final String? description;
-  final List<MediaFormat> _formats;
+  final List<VideoQuality> _videoQualities;
   @override
-  @JsonKey()
-  List<MediaFormat> get formats {
-    if (_formats is EqualUnmodifiableListView) return _formats;
+  @JsonKey(name: 'video_qualities')
+  List<VideoQuality> get videoQualities {
+    if (_videoQualities is EqualUnmodifiableListView) return _videoQualities;
     // ignore: implicit_dynamic_type
-    return EqualUnmodifiableListView(_formats);
+    return EqualUnmodifiableListView(_videoQualities);
+  }
+
+  final List<AudioOption> _audioOptions;
+  @override
+  @JsonKey(name: 'audio_options')
+  List<AudioOption> get audioOptions {
+    if (_audioOptions is EqualUnmodifiableListView) return _audioOptions;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_audioOptions);
   }
 
   @override
   String toString() {
-    return 'MediaMetadata(platform: $platform, title: $title, uploader: $uploader, uploaderUrl: $uploaderUrl, thumbnailUrl: $thumbnailUrl, durationSeconds: $durationSeconds, webpageUrl: $webpageUrl, extractor: $extractor, extractorKey: $extractorKey, uploadDate: $uploadDate, viewCount: $viewCount, likeCount: $likeCount, description: $description, formats: $formats)';
+    return 'MediaMetadata(platform: $platform, title: $title, uploader: $uploader, uploaderUrl: $uploaderUrl, thumbnailUrl: $thumbnailUrl, durationSeconds: $durationSeconds, webpageUrl: $webpageUrl, extractor: $extractor, extractorKey: $extractorKey, uploadDate: $uploadDate, viewCount: $viewCount, likeCount: $likeCount, description: $description, videoQualities: $videoQualities, audioOptions: $audioOptions)';
   }
 
   @override
@@ -797,7 +825,10 @@ class _$MediaMetadataImpl implements _MediaMetadata {
                 other.likeCount == likeCount) &&
             (identical(other.description, description) ||
                 other.description == description) &&
-            const DeepCollectionEquality().equals(other._formats, _formats));
+            const DeepCollectionEquality()
+                .equals(other._videoQualities, _videoQualities) &&
+            const DeepCollectionEquality()
+                .equals(other._audioOptions, _audioOptions));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -817,7 +848,8 @@ class _$MediaMetadataImpl implements _MediaMetadata {
       viewCount,
       likeCount,
       description,
-      const DeepCollectionEquality().hash(_formats));
+      const DeepCollectionEquality().hash(_videoQualities),
+      const DeepCollectionEquality().hash(_audioOptions));
 
   /// Create a copy of MediaMetadata
   /// with the given fields replaced by the non-null parameter values.
@@ -850,7 +882,9 @@ abstract class _MediaMetadata implements MediaMetadata {
       @JsonKey(name: 'view_count') final int? viewCount,
       @JsonKey(name: 'like_count') final int? likeCount,
       final String? description,
-      final List<MediaFormat> formats}) = _$MediaMetadataImpl;
+      @JsonKey(name: 'video_qualities') final List<VideoQuality> videoQualities,
+      @JsonKey(name: 'audio_options')
+      final List<AudioOption> audioOptions}) = _$MediaMetadataImpl;
 
   factory _MediaMetadata.fromJson(Map<String, dynamic> json) =
       _$MediaMetadataImpl.fromJson;
@@ -890,7 +924,11 @@ abstract class _MediaMetadata implements MediaMetadata {
   @override
   String? get description;
   @override
-  List<MediaFormat> get formats;
+  @JsonKey(name: 'video_qualities')
+  List<VideoQuality> get videoQualities;
+  @override
+  @JsonKey(name: 'audio_options')
+  List<AudioOption> get audioOptions;
 
   /// Create a copy of MediaMetadata
   /// with the given fields replaced by the non-null parameter values.
@@ -900,292 +938,390 @@ abstract class _MediaMetadata implements MediaMetadata {
       throw _privateConstructorUsedError;
 }
 
-MediaFormat _$MediaFormatFromJson(Map<String, dynamic> json) {
-  return _MediaFormat.fromJson(json);
+VideoQuality _$VideoQualityFromJson(Map<String, dynamic> json) {
+  return _VideoQuality.fromJson(json);
 }
 
 /// @nodoc
-mixin _$MediaFormat {
-  @JsonKey(name: 'format_id')
-  String get formatId => throw _privateConstructorUsedError;
+mixin _$VideoQuality {
+  String get label => throw _privateConstructorUsedError;
+  int get height => throw _privateConstructorUsedError;
   String get extension => throw _privateConstructorUsedError;
-  String? get resolution => throw _privateConstructorUsedError;
-  int? get fps => throw _privateConstructorUsedError;
-  int? get filesize => throw _privateConstructorUsedError;
-  @JsonKey(name: 'video_codec')
-  String? get videoCodec => throw _privateConstructorUsedError;
-  @JsonKey(name: 'audio_codec')
-  String? get audioCodec => throw _privateConstructorUsedError;
+  @JsonKey(name: 'estimated_filesize')
+  int? get estimatedFilesize => throw _privateConstructorUsedError;
 
-  /// Serializes this MediaFormat to a JSON map.
+  /// Serializes this VideoQuality to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
 
-  /// Create a copy of MediaFormat
+  /// Create a copy of VideoQuality
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
-  $MediaFormatCopyWith<MediaFormat> get copyWith =>
+  $VideoQualityCopyWith<VideoQuality> get copyWith =>
       throw _privateConstructorUsedError;
 }
 
 /// @nodoc
-abstract class $MediaFormatCopyWith<$Res> {
-  factory $MediaFormatCopyWith(
-          MediaFormat value, $Res Function(MediaFormat) then) =
-      _$MediaFormatCopyWithImpl<$Res, MediaFormat>;
+abstract class $VideoQualityCopyWith<$Res> {
+  factory $VideoQualityCopyWith(
+          VideoQuality value, $Res Function(VideoQuality) then) =
+      _$VideoQualityCopyWithImpl<$Res, VideoQuality>;
   @useResult
   $Res call(
-      {@JsonKey(name: 'format_id') String formatId,
+      {String label,
+      int height,
       String extension,
-      String? resolution,
-      int? fps,
-      int? filesize,
-      @JsonKey(name: 'video_codec') String? videoCodec,
-      @JsonKey(name: 'audio_codec') String? audioCodec});
+      @JsonKey(name: 'estimated_filesize') int? estimatedFilesize});
 }
 
 /// @nodoc
-class _$MediaFormatCopyWithImpl<$Res, $Val extends MediaFormat>
-    implements $MediaFormatCopyWith<$Res> {
-  _$MediaFormatCopyWithImpl(this._value, this._then);
+class _$VideoQualityCopyWithImpl<$Res, $Val extends VideoQuality>
+    implements $VideoQualityCopyWith<$Res> {
+  _$VideoQualityCopyWithImpl(this._value, this._then);
 
   // ignore: unused_field
   final $Val _value;
   // ignore: unused_field
   final $Res Function($Val) _then;
 
-  /// Create a copy of MediaFormat
+  /// Create a copy of VideoQuality
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
   $Res call({
-    Object? formatId = null,
+    Object? label = null,
+    Object? height = null,
     Object? extension = null,
-    Object? resolution = freezed,
-    Object? fps = freezed,
-    Object? filesize = freezed,
-    Object? videoCodec = freezed,
-    Object? audioCodec = freezed,
+    Object? estimatedFilesize = freezed,
   }) {
     return _then(_value.copyWith(
-      formatId: null == formatId
-          ? _value.formatId
-          : formatId // ignore: cast_nullable_to_non_nullable
+      label: null == label
+          ? _value.label
+          : label // ignore: cast_nullable_to_non_nullable
               as String,
+      height: null == height
+          ? _value.height
+          : height // ignore: cast_nullable_to_non_nullable
+              as int,
       extension: null == extension
           ? _value.extension
           : extension // ignore: cast_nullable_to_non_nullable
               as String,
-      resolution: freezed == resolution
-          ? _value.resolution
-          : resolution // ignore: cast_nullable_to_non_nullable
-              as String?,
-      fps: freezed == fps
-          ? _value.fps
-          : fps // ignore: cast_nullable_to_non_nullable
+      estimatedFilesize: freezed == estimatedFilesize
+          ? _value.estimatedFilesize
+          : estimatedFilesize // ignore: cast_nullable_to_non_nullable
               as int?,
-      filesize: freezed == filesize
-          ? _value.filesize
-          : filesize // ignore: cast_nullable_to_non_nullable
-              as int?,
-      videoCodec: freezed == videoCodec
-          ? _value.videoCodec
-          : videoCodec // ignore: cast_nullable_to_non_nullable
-              as String?,
-      audioCodec: freezed == audioCodec
-          ? _value.audioCodec
-          : audioCodec // ignore: cast_nullable_to_non_nullable
-              as String?,
     ) as $Val);
   }
 }
 
 /// @nodoc
-abstract class _$$MediaFormatImplCopyWith<$Res>
-    implements $MediaFormatCopyWith<$Res> {
-  factory _$$MediaFormatImplCopyWith(
-          _$MediaFormatImpl value, $Res Function(_$MediaFormatImpl) then) =
-      __$$MediaFormatImplCopyWithImpl<$Res>;
+abstract class _$$VideoQualityImplCopyWith<$Res>
+    implements $VideoQualityCopyWith<$Res> {
+  factory _$$VideoQualityImplCopyWith(
+          _$VideoQualityImpl value, $Res Function(_$VideoQualityImpl) then) =
+      __$$VideoQualityImplCopyWithImpl<$Res>;
   @override
   @useResult
   $Res call(
-      {@JsonKey(name: 'format_id') String formatId,
+      {String label,
+      int height,
       String extension,
-      String? resolution,
-      int? fps,
-      int? filesize,
-      @JsonKey(name: 'video_codec') String? videoCodec,
-      @JsonKey(name: 'audio_codec') String? audioCodec});
+      @JsonKey(name: 'estimated_filesize') int? estimatedFilesize});
 }
 
 /// @nodoc
-class __$$MediaFormatImplCopyWithImpl<$Res>
-    extends _$MediaFormatCopyWithImpl<$Res, _$MediaFormatImpl>
-    implements _$$MediaFormatImplCopyWith<$Res> {
-  __$$MediaFormatImplCopyWithImpl(
-      _$MediaFormatImpl _value, $Res Function(_$MediaFormatImpl) _then)
+class __$$VideoQualityImplCopyWithImpl<$Res>
+    extends _$VideoQualityCopyWithImpl<$Res, _$VideoQualityImpl>
+    implements _$$VideoQualityImplCopyWith<$Res> {
+  __$$VideoQualityImplCopyWithImpl(
+      _$VideoQualityImpl _value, $Res Function(_$VideoQualityImpl) _then)
       : super(_value, _then);
 
-  /// Create a copy of MediaFormat
+  /// Create a copy of VideoQuality
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
   $Res call({
-    Object? formatId = null,
+    Object? label = null,
+    Object? height = null,
     Object? extension = null,
-    Object? resolution = freezed,
-    Object? fps = freezed,
-    Object? filesize = freezed,
-    Object? videoCodec = freezed,
-    Object? audioCodec = freezed,
+    Object? estimatedFilesize = freezed,
   }) {
-    return _then(_$MediaFormatImpl(
-      formatId: null == formatId
-          ? _value.formatId
-          : formatId // ignore: cast_nullable_to_non_nullable
+    return _then(_$VideoQualityImpl(
+      label: null == label
+          ? _value.label
+          : label // ignore: cast_nullable_to_non_nullable
               as String,
+      height: null == height
+          ? _value.height
+          : height // ignore: cast_nullable_to_non_nullable
+              as int,
       extension: null == extension
           ? _value.extension
           : extension // ignore: cast_nullable_to_non_nullable
               as String,
-      resolution: freezed == resolution
-          ? _value.resolution
-          : resolution // ignore: cast_nullable_to_non_nullable
-              as String?,
-      fps: freezed == fps
-          ? _value.fps
-          : fps // ignore: cast_nullable_to_non_nullable
+      estimatedFilesize: freezed == estimatedFilesize
+          ? _value.estimatedFilesize
+          : estimatedFilesize // ignore: cast_nullable_to_non_nullable
               as int?,
-      filesize: freezed == filesize
-          ? _value.filesize
-          : filesize // ignore: cast_nullable_to_non_nullable
-              as int?,
-      videoCodec: freezed == videoCodec
-          ? _value.videoCodec
-          : videoCodec // ignore: cast_nullable_to_non_nullable
-              as String?,
-      audioCodec: freezed == audioCodec
-          ? _value.audioCodec
-          : audioCodec // ignore: cast_nullable_to_non_nullable
-              as String?,
     ));
   }
 }
 
 /// @nodoc
 @JsonSerializable()
-class _$MediaFormatImpl implements _MediaFormat {
-  const _$MediaFormatImpl(
-      {@JsonKey(name: 'format_id') required this.formatId,
+class _$VideoQualityImpl implements _VideoQuality {
+  const _$VideoQualityImpl(
+      {required this.label,
+      required this.height,
       required this.extension,
-      this.resolution,
-      this.fps,
-      this.filesize,
-      @JsonKey(name: 'video_codec') this.videoCodec,
-      @JsonKey(name: 'audio_codec') this.audioCodec});
+      @JsonKey(name: 'estimated_filesize') this.estimatedFilesize});
 
-  factory _$MediaFormatImpl.fromJson(Map<String, dynamic> json) =>
-      _$$MediaFormatImplFromJson(json);
+  factory _$VideoQualityImpl.fromJson(Map<String, dynamic> json) =>
+      _$$VideoQualityImplFromJson(json);
 
   @override
-  @JsonKey(name: 'format_id')
-  final String formatId;
+  final String label;
+  @override
+  final int height;
   @override
   final String extension;
   @override
-  final String? resolution;
-  @override
-  final int? fps;
-  @override
-  final int? filesize;
-  @override
-  @JsonKey(name: 'video_codec')
-  final String? videoCodec;
-  @override
-  @JsonKey(name: 'audio_codec')
-  final String? audioCodec;
+  @JsonKey(name: 'estimated_filesize')
+  final int? estimatedFilesize;
 
   @override
   String toString() {
-    return 'MediaFormat(formatId: $formatId, extension: $extension, resolution: $resolution, fps: $fps, filesize: $filesize, videoCodec: $videoCodec, audioCodec: $audioCodec)';
+    return 'VideoQuality(label: $label, height: $height, extension: $extension, estimatedFilesize: $estimatedFilesize)';
   }
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is _$MediaFormatImpl &&
-            (identical(other.formatId, formatId) ||
-                other.formatId == formatId) &&
+            other is _$VideoQualityImpl &&
+            (identical(other.label, label) || other.label == label) &&
+            (identical(other.height, height) || other.height == height) &&
             (identical(other.extension, extension) ||
                 other.extension == extension) &&
-            (identical(other.resolution, resolution) ||
-                other.resolution == resolution) &&
-            (identical(other.fps, fps) || other.fps == fps) &&
-            (identical(other.filesize, filesize) ||
-                other.filesize == filesize) &&
-            (identical(other.videoCodec, videoCodec) ||
-                other.videoCodec == videoCodec) &&
-            (identical(other.audioCodec, audioCodec) ||
-                other.audioCodec == audioCodec));
+            (identical(other.estimatedFilesize, estimatedFilesize) ||
+                other.estimatedFilesize == estimatedFilesize));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(runtimeType, formatId, extension, resolution,
-      fps, filesize, videoCodec, audioCodec);
+  int get hashCode =>
+      Object.hash(runtimeType, label, height, extension, estimatedFilesize);
 
-  /// Create a copy of MediaFormat
+  /// Create a copy of VideoQuality
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   @pragma('vm:prefer-inline')
-  _$$MediaFormatImplCopyWith<_$MediaFormatImpl> get copyWith =>
-      __$$MediaFormatImplCopyWithImpl<_$MediaFormatImpl>(this, _$identity);
+  _$$VideoQualityImplCopyWith<_$VideoQualityImpl> get copyWith =>
+      __$$VideoQualityImplCopyWithImpl<_$VideoQualityImpl>(this, _$identity);
 
   @override
   Map<String, dynamic> toJson() {
-    return _$$MediaFormatImplToJson(
+    return _$$VideoQualityImplToJson(
       this,
     );
   }
 }
 
-abstract class _MediaFormat implements MediaFormat {
-  const factory _MediaFormat(
-          {@JsonKey(name: 'format_id') required final String formatId,
+abstract class _VideoQuality implements VideoQuality {
+  const factory _VideoQuality(
+          {required final String label,
+          required final int height,
           required final String extension,
-          final String? resolution,
-          final int? fps,
-          final int? filesize,
-          @JsonKey(name: 'video_codec') final String? videoCodec,
-          @JsonKey(name: 'audio_codec') final String? audioCodec}) =
-      _$MediaFormatImpl;
+          @JsonKey(name: 'estimated_filesize') final int? estimatedFilesize}) =
+      _$VideoQualityImpl;
 
-  factory _MediaFormat.fromJson(Map<String, dynamic> json) =
-      _$MediaFormatImpl.fromJson;
+  factory _VideoQuality.fromJson(Map<String, dynamic> json) =
+      _$VideoQualityImpl.fromJson;
 
   @override
-  @JsonKey(name: 'format_id')
-  String get formatId;
+  String get label;
+  @override
+  int get height;
   @override
   String get extension;
   @override
-  String? get resolution;
-  @override
-  int? get fps;
-  @override
-  int? get filesize;
-  @override
-  @JsonKey(name: 'video_codec')
-  String? get videoCodec;
-  @override
-  @JsonKey(name: 'audio_codec')
-  String? get audioCodec;
+  @JsonKey(name: 'estimated_filesize')
+  int? get estimatedFilesize;
 
-  /// Create a copy of MediaFormat
+  /// Create a copy of VideoQuality
   /// with the given fields replaced by the non-null parameter values.
   @override
   @JsonKey(includeFromJson: false, includeToJson: false)
-  _$$MediaFormatImplCopyWith<_$MediaFormatImpl> get copyWith =>
+  _$$VideoQualityImplCopyWith<_$VideoQualityImpl> get copyWith =>
+      throw _privateConstructorUsedError;
+}
+
+AudioOption _$AudioOptionFromJson(Map<String, dynamic> json) {
+  return _AudioOption.fromJson(json);
+}
+
+/// @nodoc
+mixin _$AudioOption {
+  String get label => throw _privateConstructorUsedError;
+  String get extension => throw _privateConstructorUsedError;
+
+  /// Serializes this AudioOption to a JSON map.
+  Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
+
+  /// Create a copy of AudioOption
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  $AudioOptionCopyWith<AudioOption> get copyWith =>
+      throw _privateConstructorUsedError;
+}
+
+/// @nodoc
+abstract class $AudioOptionCopyWith<$Res> {
+  factory $AudioOptionCopyWith(
+          AudioOption value, $Res Function(AudioOption) then) =
+      _$AudioOptionCopyWithImpl<$Res, AudioOption>;
+  @useResult
+  $Res call({String label, String extension});
+}
+
+/// @nodoc
+class _$AudioOptionCopyWithImpl<$Res, $Val extends AudioOption>
+    implements $AudioOptionCopyWith<$Res> {
+  _$AudioOptionCopyWithImpl(this._value, this._then);
+
+  // ignore: unused_field
+  final $Val _value;
+  // ignore: unused_field
+  final $Res Function($Val) _then;
+
+  /// Create a copy of AudioOption
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? label = null,
+    Object? extension = null,
+  }) {
+    return _then(_value.copyWith(
+      label: null == label
+          ? _value.label
+          : label // ignore: cast_nullable_to_non_nullable
+              as String,
+      extension: null == extension
+          ? _value.extension
+          : extension // ignore: cast_nullable_to_non_nullable
+              as String,
+    ) as $Val);
+  }
+}
+
+/// @nodoc
+abstract class _$$AudioOptionImplCopyWith<$Res>
+    implements $AudioOptionCopyWith<$Res> {
+  factory _$$AudioOptionImplCopyWith(
+          _$AudioOptionImpl value, $Res Function(_$AudioOptionImpl) then) =
+      __$$AudioOptionImplCopyWithImpl<$Res>;
+  @override
+  @useResult
+  $Res call({String label, String extension});
+}
+
+/// @nodoc
+class __$$AudioOptionImplCopyWithImpl<$Res>
+    extends _$AudioOptionCopyWithImpl<$Res, _$AudioOptionImpl>
+    implements _$$AudioOptionImplCopyWith<$Res> {
+  __$$AudioOptionImplCopyWithImpl(
+      _$AudioOptionImpl _value, $Res Function(_$AudioOptionImpl) _then)
+      : super(_value, _then);
+
+  /// Create a copy of AudioOption
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? label = null,
+    Object? extension = null,
+  }) {
+    return _then(_$AudioOptionImpl(
+      label: null == label
+          ? _value.label
+          : label // ignore: cast_nullable_to_non_nullable
+              as String,
+      extension: null == extension
+          ? _value.extension
+          : extension // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// @nodoc
+@JsonSerializable()
+class _$AudioOptionImpl implements _AudioOption {
+  const _$AudioOptionImpl({required this.label, required this.extension});
+
+  factory _$AudioOptionImpl.fromJson(Map<String, dynamic> json) =>
+      _$$AudioOptionImplFromJson(json);
+
+  @override
+  final String label;
+  @override
+  final String extension;
+
+  @override
+  String toString() {
+    return 'AudioOption(label: $label, extension: $extension)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is _$AudioOptionImpl &&
+            (identical(other.label, label) || other.label == label) &&
+            (identical(other.extension, extension) ||
+                other.extension == extension));
+  }
+
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  int get hashCode => Object.hash(runtimeType, label, extension);
+
+  /// Create a copy of AudioOption
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  @pragma('vm:prefer-inline')
+  _$$AudioOptionImplCopyWith<_$AudioOptionImpl> get copyWith =>
+      __$$AudioOptionImplCopyWithImpl<_$AudioOptionImpl>(this, _$identity);
+
+  @override
+  Map<String, dynamic> toJson() {
+    return _$$AudioOptionImplToJson(
+      this,
+    );
+  }
+}
+
+abstract class _AudioOption implements AudioOption {
+  const factory _AudioOption(
+      {required final String label,
+      required final String extension}) = _$AudioOptionImpl;
+
+  factory _AudioOption.fromJson(Map<String, dynamic> json) =
+      _$AudioOptionImpl.fromJson;
+
+  @override
+  String get label;
+  @override
+  String get extension;
+
+  /// Create a copy of AudioOption
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  _$$AudioOptionImplCopyWith<_$AudioOptionImpl> get copyWith =>
       throw _privateConstructorUsedError;
 }

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_exception.dart';
 import '../models/job_update.dart';
+import '../models/media_download_type.dart';
 import '../models/media_metadata.dart';
 import '../models/media_state.dart';
 import '../repositories/media_repository.dart';
@@ -52,7 +53,8 @@ class MediaController extends Notifier<MediaState> {
           await ref.read(mediaRepositoryProvider).getMediaInfo(trimmedUrl);
       if (kDebugMode) {
         debugPrint(
-          'MediaProvider received quality count=${metadata.qualities.length}',
+          'MediaProvider received video quality count=${metadata.videoQualities.length} '
+          'audio option count=${metadata.audioOptions.length}',
         );
       }
       state = MediaState.success(metadata: metadata);
@@ -63,7 +65,7 @@ class MediaController extends Notifier<MediaState> {
     }
   }
 
-  void selectFormat(MediaFormat format) {
+  void selectVideoQuality(VideoQuality quality) {
     final current = _successState;
     if (current == null ||
         current.downloadLoading ||
@@ -78,11 +80,19 @@ class MediaController extends Notifier<MediaState> {
 
     state = MediaState.success(
       metadata: current.metadata,
-      selectedFormat: format,
+      selectedVideoQuality: quality,
     );
   }
 
-  Future<void> createDownloadJob() async {
+  Future<void> createVideoDownloadJob() {
+    return _createDownloadJob(MediaDownloadType.video);
+  }
+
+  Future<void> createAudioDownloadJob() {
+    return _createDownloadJob(MediaDownloadType.audio);
+  }
+
+  Future<void> _createDownloadJob(MediaDownloadType mediaType) async {
     final current = _successState;
     if (current == null ||
         current.downloadLoading ||
@@ -95,10 +105,17 @@ class MediaController extends Notifier<MediaState> {
 
     _cancelFileDownload();
 
-    final selectedFormat = current.selectedFormat;
-    if (selectedFormat == null) {
+    final selectedVideoQuality = current.selectedVideoQuality;
+    if (mediaType == MediaDownloadType.video && selectedVideoQuality == null) {
       state = current.copyWith(
-        downloadError: 'Select a format before downloading.',
+        downloadError: 'Select a video quality before downloading.',
+      );
+      return;
+    }
+    if (mediaType == MediaDownloadType.audio &&
+        current.metadata.audioOptions.isEmpty) {
+      state = current.copyWith(
+        downloadError: 'Audio download is not available for this media.',
       );
       return;
     }
@@ -119,6 +136,7 @@ class MediaController extends Notifier<MediaState> {
       currentStatus: null,
       currentProgress: 0,
       downloadUrl: null,
+      currentMediaType: mediaType,
       fileDownloadLoading: false,
       fileDownloadProgress: 0,
       fileDownloadError: null,
@@ -131,7 +149,8 @@ class MediaController extends Notifier<MediaState> {
     try {
       final job = await ref.read(mediaRepositoryProvider).createDownloadJob(
             mediaUrl: current.metadata.webpageUrl,
-            format: selectedFormat,
+            mediaType: mediaType,
+            videoQuality: selectedVideoQuality,
           );
       final latest = _successState;
       if (latest == null) {
@@ -447,7 +466,9 @@ class MediaController extends Notifier<MediaState> {
     final title = current.metadata.title.trim().isEmpty
         ? 'download'
         : current.metadata.title.trim();
-    final extension = current.selectedFormat?.extension.trim();
+    final extension = current.currentMediaType == MediaDownloadType.audio
+        ? 'mp3'
+        : current.selectedVideoQuality?.extension.trim();
 
     if (extension == null || extension.isEmpty) {
       return title;
