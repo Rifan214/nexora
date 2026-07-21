@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
@@ -58,6 +57,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       );
     }
 
+    if (mediaState is MediaSuccess) {
+      return _buildScaffold(
+        _MetadataLoadedContent(
+          urlController: _urlController,
+          isInputEnabled: !isMediaBusy,
+          canAnalyze: canRequestMetadata,
+          showClearAction: hasMediaUrl,
+          onClearUrl: _clearUrl,
+          onAnalyze: () => _getMetadata(canRequestMetadata),
+          metadataContent: _MediaStatus(mediaState: mediaState),
+        ),
+      );
+    }
+
     final metadataButtonLabel = mediaState is MediaLoading
         ? 'Loading...'
         : isMediaBusy
@@ -101,6 +114,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   void _onUrlChanged() {
     setState(() {});
+  }
+
+  void _clearUrl() {
+    _urlController.clear();
   }
 
   Future<void> _pasteUrl() async {
@@ -298,6 +315,76 @@ class _HomeReadyContent extends StatelessWidget {
   }
 }
 
+class _MetadataLoadedContent extends StatelessWidget {
+  const _MetadataLoadedContent({
+    required this.urlController,
+    required this.isInputEnabled,
+    required this.canAnalyze,
+    required this.showClearAction,
+    required this.onClearUrl,
+    required this.onAnalyze,
+    required this.metadataContent,
+  });
+
+  final TextEditingController urlController;
+  final bool isInputEnabled;
+  final bool canAnalyze;
+  final bool showClearAction;
+  final VoidCallback onClearUrl;
+  final VoidCallback onAnalyze;
+  final Widget metadataContent;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: AppSpacing.pageHorizontal,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: AppSizes.contentMaxWidth),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: AppSpacing.md),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: NexoraBrand(),
+              ),
+              const SizedBox(height: AppSpacing.xxl),
+              TextField(
+                controller: urlController,
+                enabled: isInputEnabled,
+                keyboardType: TextInputType.url,
+                textInputAction: TextInputAction.search,
+                autocorrect: false,
+                enableSuggestions: false,
+                onSubmitted: (_) {
+                  if (canAnalyze) {
+                    onAnalyze();
+                  }
+                },
+                decoration: InputDecoration(
+                  hintText: 'Paste URL here...',
+                  prefixIcon: const Icon(Icons.link_rounded),
+                  suffixIcon: IconButton(
+                    tooltip: 'Clear URL',
+                    onPressed: showClearAction && isInputEnabled
+                        ? onClearUrl
+                        : null,
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xxl),
+              metadataContent,
+              const SizedBox(height: AppSpacing.xxl),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _LegacyWorkflowContent extends StatelessWidget {
   const _LegacyWorkflowContent({
     required this.urlController,
@@ -438,6 +525,7 @@ class _MediaStatus extends ConsumerWidget {
         return _MetadataSummary(
           metadata: state.metadata,
           selectedVideoQuality: state.selectedVideoQuality,
+          isAudioSelected: state.currentMediaType?.name == 'audio',
           downloadLoading: state.downloadLoading,
           downloadSuccess: state.downloadSuccess,
           downloadError: state.downloadError,
@@ -472,6 +560,7 @@ class _MetadataSummary extends StatelessWidget {
   const _MetadataSummary({
     required this.metadata,
     required this.selectedVideoQuality,
+    required this.isAudioSelected,
     required this.downloadLoading,
     required this.downloadSuccess,
     required this.downloadError,
@@ -494,6 +583,7 @@ class _MetadataSummary extends StatelessWidget {
 
   final MediaMetadata metadata;
   final VideoQuality? selectedVideoQuality;
+  final bool isAudioSelected;
   final bool downloadLoading;
   final bool downloadSuccess;
   final String? downloadError;
@@ -515,7 +605,6 @@ class _MetadataSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final thumbnailUrl = metadata.thumbnailUrl;
     final hasCreatedJob = downloadSuccess && currentJobId != null;
     final isDownloadActionDisabled = downloadLoading ||
         fileDownloadLoading ||
@@ -532,83 +621,59 @@ class _MetadataSummary extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (thumbnailUrl != null && thumbnailUrl.isNotEmpty)
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.network(
-              thumbnailUrl,
-              height: 180,
-              width: double.infinity,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) {
-                return const SizedBox(
-                  height: 180,
-                  child: Center(
-                    child: Text('Thumbnail unavailable'),
-                  ),
-                );
-              },
-            ),
-          )
-        else
-          const SizedBox(
-            height: 80,
-            child: Center(
-              child: Text('Thumbnail unavailable'),
-            ),
-          ),
-        const SizedBox(height: 16),
-        _MetadataRow(label: 'Title', value: metadata.title),
-        _MetadataRow(label: 'Uploader', value: _fallback(metadata.uploader)),
-        _MetadataRow(label: 'Duration', value: _formatDuration(metadata.durationSeconds)),
-        _MetadataRow(label: 'Platform', value: metadata.platform),
-        _MetadataRow(
-          label: 'Available qualities',
-          value: metadata.videoQualities.length.toString(),
-        ),
-        const SizedBox(height: 16),
+        _MetadataPreviewCard(metadata: metadata),
+        const SizedBox(height: AppSpacing.xxl),
         _VideoQualitySelectionList(
           qualities: metadata.videoQualities,
           selectedVideoQuality: selectedVideoQuality,
           enabled: isVideoQualitySelectionEnabled,
           onVideoQualitySelected: onVideoQualitySelected,
         ),
-        const SizedBox(height: 16),
-        FilledButton(
-          onPressed: isVideoDownloadDisabled ? null : onVideoDownloadPressed,
-          child: downloadLoading
-              ? const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    SizedBox(width: 8),
-                    Text('Download'),
-                  ],
-                )
-              : const Text('Download'),
-        ),
         if (metadata.audioOptions.isNotEmpty) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.xxl),
           const Divider(),
-          const SizedBox(height: 16),
-          Text(
-            'Audio',
-            style: Theme.of(context).textTheme.titleMedium,
+          const SizedBox(height: AppSpacing.xxl),
+          _AudioOptionSelector(
+            options: metadata.audioOptions,
+            isSelected: isAudioSelected,
+            enabled: !isDownloadActionDisabled,
+            onSelected: onAudioDownloadPressed,
           ),
-          const SizedBox(height: 8),
-          for (final option in metadata.audioOptions)
-            _AudioOptionCard(
-              option: option,
-              enabled: !isDownloadActionDisabled,
-              onSelected: onAudioDownloadPressed,
-            ),
         ],
+        const SizedBox(height: AppSpacing.xxl),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed:
+                isVideoDownloadDisabled ? null : onVideoDownloadPressed,
+            child: downloadLoading
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: AppSpacing.lg,
+                        height: AppSpacing.lg,
+                        child: CircularProgressIndicator(
+                          color: Theme.of(context).colorScheme.onPrimary,
+                          strokeWidth: 2,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.xs),
+                      const Text('Starting Download'),
+                    ],
+                  )
+                : const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.download_rounded),
+                      SizedBox(width: AppSpacing.xs),
+                      Text('Start Download'),
+                    ],
+                  ),
+          ),
+        ),
         if (hasCreatedJob) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.xl),
           _DownloadProgressStatus(
             status: currentStatus,
             progress: currentProgress,
@@ -624,7 +689,7 @@ class _MetadataSummary extends StatelessWidget {
             onOpenFilePressed: onOpenFilePressed,
           ),
         ] else if (downloadError != null && downloadError!.isNotEmpty) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.xl),
           _StatusMessage(
             title: '\u274C Download Error',
             message: downloadError!,
@@ -632,31 +697,6 @@ class _MetadataSummary extends StatelessWidget {
         ],
       ],
     );
-  }
-
-  static String _fallback(String? value) {
-    final trimmedValue = value?.trim();
-    if (trimmedValue == null || trimmedValue.isEmpty) {
-      return 'Unknown';
-    }
-    return trimmedValue;
-  }
-
-  static String _formatDuration(int? seconds) {
-    if (seconds == null) {
-      return 'Unknown';
-    }
-
-    final duration = Duration(seconds: seconds);
-    final hours = duration.inHours;
-    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final remainingSeconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-
-    if (hours > 0) {
-      return '$hours:$minutes:$remainingSeconds';
-    }
-
-    return '${duration.inMinutes}:$remainingSeconds';
   }
 
   bool _isActiveStatus(String? status) {
@@ -667,6 +707,146 @@ class _MetadataSummary extends StatelessWidget {
   bool _isCompletedStatus(String? status) {
     return status?.toLowerCase() == 'completed';
   }
+}
+
+class _MetadataPreviewCard extends StatelessWidget {
+  const _MetadataPreviewCard({required this.metadata});
+
+  final MediaMetadata metadata;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final thumbnailUrl = metadata.thumbnailUrl?.trim();
+
+    return Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Stack(
+            children: [
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: thumbnailUrl == null || thumbnailUrl.isEmpty
+                    ? const _ThumbnailPlaceholder()
+                    : Image.network(
+                        thumbnailUrl,
+                        fit: BoxFit.cover,
+                        semanticLabel: metadata.title,
+                        errorBuilder: (_, __, ___) {
+                          return const _ThumbnailPlaceholder();
+                        },
+                      ),
+              ),
+              Positioned(
+                right: AppSpacing.sm,
+                bottom: AppSpacing.sm,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.xs,
+                    vertical: AppSpacing.xxs,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colorScheme.inverseSurface.withAlpha(224),
+                    borderRadius: AppRadii.input,
+                  ),
+                  child: Text(
+                    _formatMediaDuration(metadata.durationSeconds),
+                    style: textTheme.labelMedium?.copyWith(
+                      color: colorScheme.onInverseSurface,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.xl),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _metadataFallback(metadata.title),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.titleLarge,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.account_circle_outlined,
+                      color: colorScheme.onSurfaceVariant,
+                      size: AppSpacing.xl,
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    Expanded(
+                      child: Text(
+                        '${_metadataFallback(metadata.uploader)}  \u2022  ${metadata.platform}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThumbnailPlaceholder extends StatelessWidget {
+  const _ThumbnailPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return ColoredBox(
+      color: colorScheme.surfaceContainerHigh,
+      child: Center(
+        child: Icon(
+          Icons.image_not_supported_outlined,
+          color: colorScheme.onSurfaceVariant,
+          size: 40,
+        ),
+      ),
+    );
+  }
+}
+
+String _metadataFallback(String? value) {
+  final trimmedValue = value?.trim();
+  if (trimmedValue == null || trimmedValue.isEmpty) {
+    return 'Unknown';
+  }
+  return trimmedValue;
+}
+
+String _formatMediaDuration(int? seconds) {
+  if (seconds == null) {
+    return 'Unknown';
+  }
+
+  final duration = Duration(seconds: seconds);
+  final hours = duration.inHours;
+  final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+  final remainingSeconds =
+      duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+
+  if (hours > 0) {
+    return '$hours:$minutes:$remainingSeconds';
+  }
+
+  return '${duration.inMinutes}:$remainingSeconds';
 }
 
 class _DownloadProgressStatus extends StatelessWidget {
@@ -922,37 +1102,48 @@ class _VideoQualitySelectionList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-
-    if (kDebugMode) {
-      debugPrint('Video quality UI render count=${qualities.length}');
-    }
+    final colorScheme = Theme.of(context).colorScheme;
 
     if (qualities.isEmpty) {
-      return const Text('No video qualities were returned.');
+      return Text(
+        'No video qualities are available.',
+        style: textTheme.bodyMedium?.copyWith(
+          color: colorScheme.onSurfaceVariant,
+        ),
+      );
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Available Qualities',
-          style: textTheme.titleMedium,
-        ),
-        const SizedBox(height: 8),
-        for (final quality in qualities)
-          _VideoQualityCard(
-            quality: quality,
-            selectedHeight: selectedVideoQuality?.height,
-            enabled: enabled,
-            onSelected: () => onVideoQualitySelected(quality),
+          'Video Quality',
+          style: textTheme.labelMedium?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
           ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: [
+            for (final quality in qualities)
+              _VideoQualityChip(
+                quality: quality,
+                selectedHeight: selectedVideoQuality?.height,
+                enabled: enabled,
+                onSelected: () => onVideoQualitySelected(quality),
+              ),
+          ],
+        ),
       ],
     );
   }
 }
 
-class _VideoQualityCard extends StatelessWidget {
-  const _VideoQualityCard({
+class _VideoQualityChip extends StatelessWidget {
+  const _VideoQualityChip({
     required this.quality,
     required this.selectedHeight,
     required this.enabled,
@@ -967,110 +1158,101 @@ class _VideoQualityCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     final isSelected = selectedHeight == quality.height;
 
-    return Card(
-      color: isSelected ? colorScheme.secondaryContainer : null,
-      child: ListTile(
-        enabled: enabled,
-        selected: isSelected,
-        onTap: enabled ? onSelected : null,
-        leading: Icon(
-          isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-          color: isSelected ? colorScheme.primary : null,
-        ),
-        title: Text(_qualityTitle(quality)),
-        subtitle: Text(_qualitySubtitle(quality)),
+    return ChoiceChip(
+      label: Text(quality.label),
+      selected: isSelected,
+      onSelected: enabled ? (_) => onSelected() : null,
+      showCheckmark: false,
+      selectedColor: colorScheme.primary,
+      backgroundColor: colorScheme.surfaceContainer,
+      disabledColor: colorScheme.surfaceContainerHigh,
+      side: BorderSide(
+        color: isSelected ? colorScheme.primary : colorScheme.outlineVariant,
+      ),
+      shape: const StadiumBorder(),
+      labelPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.xs,
+        vertical: AppSpacing.xxs,
+      ),
+      labelStyle: textTheme.bodyLarge?.copyWith(
+        color: isSelected ? colorScheme.onPrimary : colorScheme.onSurface,
+        fontWeight: FontWeight.w600,
       ),
     );
   }
-
-  String _qualityTitle(VideoQuality quality) {
-    return '${quality.label} - ${quality.extension.toUpperCase()}';
-  }
-
-  String _qualitySubtitle(VideoQuality quality) {
-    return 'Estimated filesize: ${_formatFileSize(quality.estimatedFilesize)}';
-  }
-
-  String _formatFileSize(int? bytes) {
-    if (bytes == null || bytes <= 0) {
-      return 'Unknown';
-    }
-
-    const kib = 1024;
-    const mib = kib * 1024;
-    const gib = mib * 1024;
-
-    if (bytes >= gib) {
-      return '${(bytes / gib).toStringAsFixed(1)} GB';
-    }
-
-    if (bytes >= mib) {
-      return '${(bytes / mib).toStringAsFixed(1)} MB';
-    }
-
-    if (bytes >= kib) {
-      return '${(bytes / kib).toStringAsFixed(1)} KB';
-    }
-
-    return '$bytes B';
-  }
 }
 
-class _AudioOptionCard extends StatelessWidget {
-  const _AudioOptionCard({
-    required this.option,
+class _AudioOptionSelector extends StatelessWidget {
+  const _AudioOptionSelector({
+    required this.options,
+    required this.isSelected,
     required this.enabled,
     required this.onSelected,
   });
 
-  final AudioOption option;
+  final List<AudioOption> options;
+  final bool isSelected;
   final bool enabled;
   final VoidCallback onSelected;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        enabled: enabled,
-        onTap: enabled ? onSelected : null,
-        leading: const Icon(Icons.music_note),
-        title: Text('${option.label} (Best Quality)'),
-        subtitle: Text(option.extension.toUpperCase()),
-      ),
-    );
-  }
-}
-
-class _MetadataRow extends StatelessWidget {
-  const _MetadataRow({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: textTheme.labelMedium,
+    return Column(
+      children: [
+        for (final option in options)
+          Material(
+            type: MaterialType.transparency,
+            borderRadius: AppRadii.input,
+            child: InkWell(
+              onTap: enabled ? onSelected : null,
+              borderRadius: AppRadii.input,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.music_note_rounded,
+                      color: isSelected
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant,
+                      size: AppSpacing.xl,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${option.label} (Best Quality)',
+                            style: textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: AppSpacing.xxs),
+                          Text(
+                            'Save as high-quality ${option.extension.toUpperCase()}',
+                            style: textTheme.bodyMedium?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: isSelected,
+                      onChanged: enabled ? (_) => onSelected() : null,
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-          Text(
-            value,
-            style: textTheme.bodyMedium,
-          ),
-        ],
-      ),
+      ],
     );
   }
 }
