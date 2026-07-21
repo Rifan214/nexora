@@ -20,6 +20,12 @@ class MediaState with _$MediaState {
     String? currentStatus,
     @Default(0) int currentProgress,
     String? downloadUrl,
+    @Default(false) bool fileDownloadLoading,
+    @Default(0) int fileDownloadProgress,
+    String? fileDownloadError,
+    String? downloadedFilename,
+    String? savedFilePath,
+    String? savedDirectory,
   }) = MediaSuccess;
 
   const factory MediaState.error(String message) = MediaError;

@@ -29,7 +29,13 @@ mixin _$MediaState {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)
         success,
     required TResult Function(String message) error,
   }) =>
@@ -47,7 +53,13 @@ mixin _$MediaState {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)?
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)?
         success,
     TResult? Function(String message)? error,
   }) =>
@@ -65,7 +77,13 @@ mixin _$MediaState {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)?
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
@@ -171,7 +189,13 @@ class _$MediaIdleImpl implements MediaIdle {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)
         success,
     required TResult Function(String message) error,
   }) {
@@ -192,7 +216,13 @@ class _$MediaIdleImpl implements MediaIdle {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)?
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)?
         success,
     TResult? Function(String message)? error,
   }) {
@@ -213,7 +243,13 @@ class _$MediaIdleImpl implements MediaIdle {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)?
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
@@ -318,7 +354,13 @@ class _$MediaLoadingImpl implements MediaLoading {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)
         success,
     required TResult Function(String message) error,
   }) {
@@ -339,7 +381,13 @@ class _$MediaLoadingImpl implements MediaLoading {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)?
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)?
         success,
     TResult? Function(String message)? error,
   }) {
@@ -360,7 +408,13 @@ class _$MediaLoadingImpl implements MediaLoading {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)?
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
@@ -428,7 +482,13 @@ abstract class _$$MediaSuccessImplCopyWith<$Res> {
       String? currentJobId,
       String? currentStatus,
       int currentProgress,
-      String? downloadUrl});
+      String? downloadUrl,
+      bool fileDownloadLoading,
+      int fileDownloadProgress,
+      String? fileDownloadError,
+      String? downloadedFilename,
+      String? savedFilePath,
+      String? savedDirectory});
 
   $MediaMetadataCopyWith<$Res> get metadata;
   $MediaFormatCopyWith<$Res>? get selectedFormat;
@@ -456,6 +516,12 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
     Object? currentStatus = freezed,
     Object? currentProgress = null,
     Object? downloadUrl = freezed,
+    Object? fileDownloadLoading = null,
+    Object? fileDownloadProgress = null,
+    Object? fileDownloadError = freezed,
+    Object? downloadedFilename = freezed,
+    Object? savedFilePath = freezed,
+    Object? savedDirectory = freezed,
   }) {
     return _then(_$MediaSuccessImpl(
       metadata: null == metadata
@@ -493,6 +559,30 @@ class __$$MediaSuccessImplCopyWithImpl<$Res>
       downloadUrl: freezed == downloadUrl
           ? _value.downloadUrl
           : downloadUrl // ignore: cast_nullable_to_non_nullable
+              as String?,
+      fileDownloadLoading: null == fileDownloadLoading
+          ? _value.fileDownloadLoading
+          : fileDownloadLoading // ignore: cast_nullable_to_non_nullable
+              as bool,
+      fileDownloadProgress: null == fileDownloadProgress
+          ? _value.fileDownloadProgress
+          : fileDownloadProgress // ignore: cast_nullable_to_non_nullable
+              as int,
+      fileDownloadError: freezed == fileDownloadError
+          ? _value.fileDownloadError
+          : fileDownloadError // ignore: cast_nullable_to_non_nullable
+              as String?,
+      downloadedFilename: freezed == downloadedFilename
+          ? _value.downloadedFilename
+          : downloadedFilename // ignore: cast_nullable_to_non_nullable
+              as String?,
+      savedFilePath: freezed == savedFilePath
+          ? _value.savedFilePath
+          : savedFilePath // ignore: cast_nullable_to_non_nullable
+              as String?,
+      savedDirectory: freezed == savedDirectory
+          ? _value.savedDirectory
+          : savedDirectory // ignore: cast_nullable_to_non_nullable
               as String?,
     ));
   }
@@ -534,7 +624,13 @@ class _$MediaSuccessImpl implements MediaSuccess {
       this.currentJobId,
       this.currentStatus,
       this.currentProgress = 0,
-      this.downloadUrl});
+      this.downloadUrl,
+      this.fileDownloadLoading = false,
+      this.fileDownloadProgress = 0,
+      this.fileDownloadError,
+      this.downloadedFilename,
+      this.savedFilePath,
+      this.savedDirectory});
 
   @override
   final MediaMetadata metadata;
@@ -557,10 +653,24 @@ class _$MediaSuccessImpl implements MediaSuccess {
   final int currentProgress;
   @override
   final String? downloadUrl;
+  @override
+  @JsonKey()
+  final bool fileDownloadLoading;
+  @override
+  @JsonKey()
+  final int fileDownloadProgress;
+  @override
+  final String? fileDownloadError;
+  @override
+  final String? downloadedFilename;
+  @override
+  final String? savedFilePath;
+  @override
+  final String? savedDirectory;
 
   @override
   String toString() {
-    return 'MediaState.success(metadata: $metadata, selectedFormat: $selectedFormat, downloadLoading: $downloadLoading, downloadSuccess: $downloadSuccess, downloadError: $downloadError, currentJobId: $currentJobId, currentStatus: $currentStatus, currentProgress: $currentProgress, downloadUrl: $downloadUrl)';
+    return 'MediaState.success(metadata: $metadata, selectedFormat: $selectedFormat, downloadLoading: $downloadLoading, downloadSuccess: $downloadSuccess, downloadError: $downloadError, currentJobId: $currentJobId, currentStatus: $currentStatus, currentProgress: $currentProgress, downloadUrl: $downloadUrl, fileDownloadLoading: $fileDownloadLoading, fileDownloadProgress: $fileDownloadProgress, fileDownloadError: $fileDownloadError, downloadedFilename: $downloadedFilename, savedFilePath: $savedFilePath, savedDirectory: $savedDirectory)';
   }
 
   @override
@@ -585,7 +695,19 @@ class _$MediaSuccessImpl implements MediaSuccess {
             (identical(other.currentProgress, currentProgress) ||
                 other.currentProgress == currentProgress) &&
             (identical(other.downloadUrl, downloadUrl) ||
-                other.downloadUrl == downloadUrl));
+                other.downloadUrl == downloadUrl) &&
+            (identical(other.fileDownloadLoading, fileDownloadLoading) ||
+                other.fileDownloadLoading == fileDownloadLoading) &&
+            (identical(other.fileDownloadProgress, fileDownloadProgress) ||
+                other.fileDownloadProgress == fileDownloadProgress) &&
+            (identical(other.fileDownloadError, fileDownloadError) ||
+                other.fileDownloadError == fileDownloadError) &&
+            (identical(other.downloadedFilename, downloadedFilename) ||
+                other.downloadedFilename == downloadedFilename) &&
+            (identical(other.savedFilePath, savedFilePath) ||
+                other.savedFilePath == savedFilePath) &&
+            (identical(other.savedDirectory, savedDirectory) ||
+                other.savedDirectory == savedDirectory));
   }
 
   @override
@@ -599,7 +721,13 @@ class _$MediaSuccessImpl implements MediaSuccess {
       currentJobId,
       currentStatus,
       currentProgress,
-      downloadUrl);
+      downloadUrl,
+      fileDownloadLoading,
+      fileDownloadProgress,
+      fileDownloadError,
+      downloadedFilename,
+      savedFilePath,
+      savedDirectory);
 
   /// Create a copy of MediaState
   /// with the given fields replaced by the non-null parameter values.
@@ -623,7 +751,13 @@ class _$MediaSuccessImpl implements MediaSuccess {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)
         success,
     required TResult Function(String message) error,
   }) {
@@ -636,7 +770,13 @@ class _$MediaSuccessImpl implements MediaSuccess {
         currentJobId,
         currentStatus,
         currentProgress,
-        downloadUrl);
+        downloadUrl,
+        fileDownloadLoading,
+        fileDownloadProgress,
+        fileDownloadError,
+        downloadedFilename,
+        savedFilePath,
+        savedDirectory);
   }
 
   @override
@@ -653,7 +793,13 @@ class _$MediaSuccessImpl implements MediaSuccess {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)?
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)?
         success,
     TResult? Function(String message)? error,
   }) {
@@ -666,7 +812,13 @@ class _$MediaSuccessImpl implements MediaSuccess {
         currentJobId,
         currentStatus,
         currentProgress,
-        downloadUrl);
+        downloadUrl,
+        fileDownloadLoading,
+        fileDownloadProgress,
+        fileDownloadError,
+        downloadedFilename,
+        savedFilePath,
+        savedDirectory);
   }
 
   @override
@@ -683,7 +835,13 @@ class _$MediaSuccessImpl implements MediaSuccess {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)?
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),
@@ -698,7 +856,13 @@ class _$MediaSuccessImpl implements MediaSuccess {
           currentJobId,
           currentStatus,
           currentProgress,
-          downloadUrl);
+          downloadUrl,
+          fileDownloadLoading,
+          fileDownloadProgress,
+          fileDownloadError,
+          downloadedFilename,
+          savedFilePath,
+          savedDirectory);
     }
     return orElse();
   }
@@ -751,7 +915,13 @@ abstract class MediaSuccess implements MediaState {
       final String? currentJobId,
       final String? currentStatus,
       final int currentProgress,
-      final String? downloadUrl}) = _$MediaSuccessImpl;
+      final String? downloadUrl,
+      final bool fileDownloadLoading,
+      final int fileDownloadProgress,
+      final String? fileDownloadError,
+      final String? downloadedFilename,
+      final String? savedFilePath,
+      final String? savedDirectory}) = _$MediaSuccessImpl;
 
   MediaMetadata get metadata;
   MediaFormat? get selectedFormat;
@@ -762,6 +932,12 @@ abstract class MediaSuccess implements MediaState {
   String? get currentStatus;
   int get currentProgress;
   String? get downloadUrl;
+  bool get fileDownloadLoading;
+  int get fileDownloadProgress;
+  String? get fileDownloadError;
+  String? get downloadedFilename;
+  String? get savedFilePath;
+  String? get savedDirectory;
 
   /// Create a copy of MediaState
   /// with the given fields replaced by the non-null parameter values.
@@ -849,7 +1025,13 @@ class _$MediaErrorImpl implements MediaError {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)
         success,
     required TResult Function(String message) error,
   }) {
@@ -870,7 +1052,13 @@ class _$MediaErrorImpl implements MediaError {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)?
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)?
         success,
     TResult? Function(String message)? error,
   }) {
@@ -891,7 +1079,13 @@ class _$MediaErrorImpl implements MediaError {
             String? currentJobId,
             String? currentStatus,
             int currentProgress,
-            String? downloadUrl)?
+            String? downloadUrl,
+            bool fileDownloadLoading,
+            int fileDownloadProgress,
+            String? fileDownloadError,
+            String? downloadedFilename,
+            String? savedFilePath,
+            String? savedDirectory)?
         success,
     TResult Function(String message)? error,
     required TResult orElse(),

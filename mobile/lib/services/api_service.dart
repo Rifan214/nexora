@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -22,6 +24,29 @@ class ApiService {
     Map<String, dynamic>? data,
   }) async {
     return _sendJson(() => _dio.post<Object?>(path, data: data));
+  }
+
+  Future<void> downloadFile(
+    String path, {
+    required Object savePath,
+    ProgressCallback? onReceiveProgress,
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      await _dio.download(
+        path,
+        savePath,
+        onReceiveProgress: onReceiveProgress,
+        cancelToken: cancelToken,
+        deleteOnError: true,
+      );
+    } on DioException catch (error) {
+      throw ApiException(_messageForDioException(error));
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw const ApiException('Unable to download the file.');
+    }
   }
 
   Future<Map<String, dynamic>> _sendJson(
@@ -50,6 +75,10 @@ class ApiService {
   }
 
   String _messageForDioException(DioException error) {
+    if (error.error is FileSystemException) {
+      return 'Unable to write the downloaded file.';
+    }
+
     switch (error.type) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:

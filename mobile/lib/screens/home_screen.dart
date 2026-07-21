@@ -144,9 +144,9 @@ class _MediaStatus extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return mediaState.when(
-      idle: () => const SizedBox.shrink(),
-      loading: () {
+    return mediaState.map(
+      idle: (_) => const SizedBox.shrink(),
+      loading: (_) {
         return const Center(
           child: SizedBox(
             width: 24,
@@ -155,34 +155,33 @@ class _MediaStatus extends ConsumerWidget {
           ),
         );
       },
-      success: (
-        metadata,
-        selectedFormat,
-        downloadLoading,
-        downloadSuccess,
-        downloadError,
-        currentJobId,
-        currentStatus,
-        currentProgress,
-        _,
-      ) {
+      success: (state) {
+        final mediaController = ref.read(mediaProvider.notifier);
         return _MetadataSummary(
-          metadata: metadata,
-          selectedFormat: selectedFormat,
-          downloadLoading: downloadLoading,
-          downloadSuccess: downloadSuccess,
-          downloadError: downloadError,
-          currentJobId: currentJobId,
-          currentStatus: currentStatus,
-          currentProgress: currentProgress,
-          onFormatSelected: ref.read(mediaProvider.notifier).selectFormat,
-          onDownloadPressed: ref.read(mediaProvider.notifier).createDownloadJob,
+          metadata: state.metadata,
+          selectedFormat: state.selectedFormat,
+          downloadLoading: state.downloadLoading,
+          downloadSuccess: state.downloadSuccess,
+          downloadError: state.downloadError,
+          currentJobId: state.currentJobId,
+          currentStatus: state.currentStatus,
+          currentProgress: state.currentProgress,
+          fileDownloadLoading: state.fileDownloadLoading,
+          fileDownloadProgress: state.fileDownloadProgress,
+          fileDownloadError: state.fileDownloadError,
+          downloadedFilename: state.downloadedFilename,
+          savedFilePath: state.savedFilePath,
+          savedDirectory: state.savedDirectory,
+          onFormatSelected: mediaController.selectFormat,
+          onDownloadPressed: mediaController.createDownloadJob,
+          onFileDownloadPressed: mediaController.downloadCompletedFile,
+          onOpenFilePressed: mediaController.openDownloadedFile,
         );
       },
-      error: (message) {
+      error: (state) {
         return _StatusMessage(
           title: '\u274C Metadata Error',
-          message: message,
+          message: state.message,
         );
       },
     );
@@ -199,8 +198,16 @@ class _MetadataSummary extends StatelessWidget {
     required this.currentJobId,
     required this.currentStatus,
     required this.currentProgress,
+    required this.fileDownloadLoading,
+    required this.fileDownloadProgress,
+    required this.fileDownloadError,
+    required this.downloadedFilename,
+    required this.savedFilePath,
+    required this.savedDirectory,
     required this.onFormatSelected,
     required this.onDownloadPressed,
+    required this.onFileDownloadPressed,
+    required this.onOpenFilePressed,
   });
 
   final MediaMetadata metadata;
@@ -211,8 +218,16 @@ class _MetadataSummary extends StatelessWidget {
   final String? currentJobId;
   final String? currentStatus;
   final int currentProgress;
+  final bool fileDownloadLoading;
+  final int fileDownloadProgress;
+  final String? fileDownloadError;
+  final String? downloadedFilename;
+  final String? savedFilePath;
+  final String? savedDirectory;
   final ValueChanged<MediaFormat> onFormatSelected;
   final VoidCallback onDownloadPressed;
+  final VoidCallback onFileDownloadPressed;
+  final VoidCallback onOpenFilePressed;
 
   @override
   Widget build(BuildContext context) {
@@ -290,6 +305,14 @@ class _MetadataSummary extends StatelessWidget {
             status: currentStatus,
             progress: currentProgress,
             error: downloadError,
+            fileDownloadLoading: fileDownloadLoading,
+            fileDownloadProgress: fileDownloadProgress,
+            fileDownloadError: fileDownloadError,
+            downloadedFilename: downloadedFilename,
+            savedFilePath: savedFilePath,
+            savedDirectory: savedDirectory,
+            onFileDownloadPressed: onFileDownloadPressed,
+            onOpenFilePressed: onOpenFilePressed,
           ),
         ] else if (downloadError != null && downloadError!.isNotEmpty) ...[
           const SizedBox(height: 16),
@@ -342,11 +365,27 @@ class _DownloadProgressStatus extends StatelessWidget {
     required this.status,
     required this.progress,
     required this.error,
+    required this.fileDownloadLoading,
+    required this.fileDownloadProgress,
+    required this.fileDownloadError,
+    required this.downloadedFilename,
+    required this.savedFilePath,
+    required this.savedDirectory,
+    required this.onFileDownloadPressed,
+    required this.onOpenFilePressed,
   });
 
   final String? status;
   final int progress;
   final String? error;
+  final bool fileDownloadLoading;
+  final int fileDownloadProgress;
+  final String? fileDownloadError;
+  final String? downloadedFilename;
+  final String? savedFilePath;
+  final String? savedDirectory;
+  final VoidCallback onFileDownloadPressed;
+  final VoidCallback onOpenFilePressed;
 
   @override
   Widget build(BuildContext context) {
@@ -354,9 +393,15 @@ class _DownloadProgressStatus extends StatelessWidget {
     final clampedProgress = _clampProgress(progress);
 
     if (normalizedStatus == 'completed') {
-      return const _StatusMessage(
-        title: '\u2705 Download Complete',
-        message: 'Ready to download.',
+      return _CompletedDownloadSection(
+        fileDownloadLoading: fileDownloadLoading,
+        fileDownloadProgress: fileDownloadProgress,
+        fileDownloadError: fileDownloadError,
+        downloadedFilename: downloadedFilename,
+        savedFilePath: savedFilePath,
+        savedDirectory: savedDirectory,
+        onFileDownloadPressed: onFileDownloadPressed,
+        onOpenFilePressed: onOpenFilePressed,
       );
     }
 
@@ -423,6 +468,127 @@ class _DownloadProgressStatus extends StatelessWidget {
       return fallback;
     }
     return trimmedValue;
+  }
+}
+
+class _CompletedDownloadSection extends StatelessWidget {
+  const _CompletedDownloadSection({
+    required this.fileDownloadLoading,
+    required this.fileDownloadProgress,
+    required this.fileDownloadError,
+    required this.downloadedFilename,
+    required this.savedFilePath,
+    required this.savedDirectory,
+    required this.onFileDownloadPressed,
+    required this.onOpenFilePressed,
+  });
+
+  final bool fileDownloadLoading;
+  final int fileDownloadProgress;
+  final String? fileDownloadError;
+  final String? downloadedFilename;
+  final String? savedFilePath;
+  final String? savedDirectory;
+  final VoidCallback onFileDownloadPressed;
+  final VoidCallback onOpenFilePressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasSavedFile = downloadedFilename != null &&
+        downloadedFilename!.isNotEmpty &&
+        savedFilePath != null &&
+        savedFilePath!.isNotEmpty;
+    final filename = downloadedFilename ?? '';
+    final savedLocation = _fallback(savedDirectory, savedFilePath ?? '');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _StatusMessage(
+          title: '\u2705 Download Complete',
+          message: 'Ready to download.',
+        ),
+        const SizedBox(height: 12),
+        if (fileDownloadLoading)
+          _FileTransferProgress(progress: fileDownloadProgress)
+        else if (!hasSavedFile)
+          FilledButton(
+            onPressed: onFileDownloadPressed,
+            child: const Text('Download File'),
+          ),
+        if (hasSavedFile) ...[
+          const SizedBox(height: 12),
+          _StatusMessage(
+            title: '\u2705 File downloaded successfully',
+            message: 'Filename:\n$filename\n\nSaved location:\n$savedLocation',
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton(
+            onPressed: onOpenFilePressed,
+            child: const Text('Open File'),
+          ),
+        ],
+        if (fileDownloadError != null && fileDownloadError!.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _StatusMessage(
+            title: '\u274C File Download Error',
+            message: fileDownloadError!,
+          ),
+        ],
+      ],
+    );
+  }
+
+  static String _fallback(String? value, String fallback) {
+    final trimmedValue = value?.trim();
+    if (trimmedValue == null || trimmedValue.isEmpty) {
+      return fallback;
+    }
+    return trimmedValue;
+  }
+}
+
+class _FileTransferProgress extends StatelessWidget {
+  const _FileTransferProgress({required this.progress});
+
+  final int progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final clampedProgress = _clampProgress(progress);
+    final hasKnownProgress = clampedProgress > 0;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Saving file',
+          style: textTheme.bodyMedium,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          hasKnownProgress ? '$clampedProgress%' : 'Starting...',
+          style: textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        LinearProgressIndicator(
+          value: hasKnownProgress ? clampedProgress / 100 : null,
+        ),
+      ],
+    );
+  }
+
+  int _clampProgress(int value) {
+    if (value < 0) {
+      return 0;
+    }
+
+    if (value > 100) {
+      return 100;
+    }
+
+    return value;
   }
 }
 
