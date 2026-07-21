@@ -64,7 +64,7 @@ class DownloadsContent extends StatelessWidget {
                       ? const NexoraStatePanel(
                           title: 'No active downloads',
                           message:
-                              'New download jobs will appear here while they are processing.',
+                              'New download jobs will appear here while media is downloading or saving.',
                           icon: Icons.downloading_outlined,
                         )
                       : Column(
@@ -92,7 +92,9 @@ class DownloadsContent extends StatelessWidget {
 
     final normalizedStatus = state.currentStatus?.trim().toLowerCase();
     final isActive = state.currentJobId != null &&
-        (normalizedStatus == 'pending' || normalizedStatus == 'processing');
+        (normalizedStatus == 'pending' ||
+            normalizedStatus == 'processing' ||
+            state.fileDownloadLoading);
     return isActive ? <MediaSuccess>[state] : const <MediaSuccess>[];
   }
 
@@ -204,8 +206,15 @@ class _DownloadDetails extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final progress = _clampProgress(download.currentProgress);
-    final status = _formatStatus(download.currentStatus);
+    final isSavingToDevice = download.fileDownloadLoading;
+    final progress = _clampProgress(
+      isSavingToDevice
+          ? download.fileDownloadProgress
+          : download.currentProgress,
+    );
+    final status = isSavingToDevice
+        ? 'Saving to device'
+        : _formatStatus(download.currentStatus);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -228,7 +237,10 @@ class _DownloadDetails extends StatelessWidget {
         const SizedBox(height: AppSpacing.lg),
         Row(
           children: [
-            _DownloadStatusBadge(status: status),
+            _DownloadStatusBadge(
+              status: status,
+              isSavingToDevice: isSavingToDevice,
+            ),
             const Spacer(),
             Text(
               '$progress%',
@@ -240,7 +252,9 @@ class _DownloadDetails extends StatelessWidget {
         ),
         const SizedBox(height: AppSpacing.sm),
         Semantics(
-          label: 'Download progress: $progress percent',
+          label:
+              '${isSavingToDevice ? 'File transfer' : 'Download'} progress: '
+              '$progress percent',
           child: ClipRRect(
             borderRadius: AppRadii.pill,
             child: LinearProgressIndicator(
@@ -291,9 +305,13 @@ class _DownloadDetails extends StatelessWidget {
 }
 
 class _DownloadStatusBadge extends StatelessWidget {
-  const _DownloadStatusBadge({required this.status});
+  const _DownloadStatusBadge({
+    required this.status,
+    required this.isSavingToDevice,
+  });
 
   final String status;
+  final bool isSavingToDevice;
 
   @override
   Widget build(BuildContext context) {
@@ -313,7 +331,7 @@ class _DownloadStatusBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            Icons.downloading_rounded,
+            isSavingToDevice ? Icons.save_rounded : Icons.downloading_rounded,
             color: colorScheme.primary,
             size: AppSpacing.md,
           ),

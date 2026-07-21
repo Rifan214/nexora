@@ -70,8 +70,12 @@ class HistoryContent extends StatelessWidget {
   }
 
   List<MediaSuccess> _completedDownloads(MediaState state) {
-    if (state is! MediaSuccess ||
-        state.currentStatus?.toLowerCase() != 'completed') {
+    if (state is! MediaSuccess) {
+      return const <MediaSuccess>[];
+    }
+
+    final hasSavedFile = state.savedFilePath?.trim().isNotEmpty == true;
+    if (state.currentStatus?.toLowerCase() != 'completed' || !hasSavedFile) {
       return const <MediaSuccess>[];
     }
 

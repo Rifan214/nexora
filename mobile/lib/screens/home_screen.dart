@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
@@ -28,6 +30,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   final _urlController = TextEditingController();
   var _selectedDestinationIndex = NexoraNavigationBar.downloadIndex;
+  String? _automaticFileDownloadJobId;
 
   @override
   void initState() {
@@ -44,6 +47,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<MediaState>(mediaProvider, (_, next) {
+      _scheduleCompletedFileDownload(next);
+    });
+
     final healthState = ref.watch(healthProvider);
     final mediaState = ref.watch(mediaProvider);
     final isCheckingHealth = healthState.isLoading;
@@ -137,6 +144,52 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
 
     ref.read(mediaProvider.notifier).getMediaInfo(_urlController.text);
+  }
+
+  void _scheduleCompletedFileDownload(MediaState state) {
+    if (state is! MediaSuccess) {
+      return;
+    }
+
+    final jobId = state.currentJobId?.trim();
+    if (jobId == null ||
+        jobId.isEmpty ||
+        _automaticFileDownloadJobId == jobId ||
+        !_canAutomaticallySaveCompletedFile(state, jobId)) {
+      return;
+    }
+
+    _automaticFileDownloadJobId = jobId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      final latestState = ref.read(mediaProvider);
+      if (!_canAutomaticallySaveCompletedFile(latestState, jobId)) {
+        return;
+      }
+
+      unawaited(ref.read(mediaProvider.notifier).downloadCompletedFile());
+    });
+  }
+
+  bool _canAutomaticallySaveCompletedFile(
+    MediaState state,
+    String expectedJobId,
+  ) {
+    if (state is! MediaSuccess) {
+      return false;
+    }
+
+    final hasSavedFile = state.savedFilePath?.trim().isNotEmpty == true;
+    final hasFileDownloadError =
+        state.fileDownloadError?.trim().isNotEmpty == true;
+    return state.currentJobId?.trim() == expectedJobId &&
+        state.currentStatus?.trim().toLowerCase() == 'completed' &&
+        !state.fileDownloadLoading &&
+        !hasSavedFile &&
+        !hasFileDownloadError;
   }
 
   void _onUrlChanged() {
@@ -578,7 +631,6 @@ class _MediaStatus extends ConsumerWidget {
           onVideoQualitySelected: mediaController.selectVideoQuality,
           onVideoDownloadPressed: mediaController.createVideoDownloadJob,
           onAudioDownloadPressed: mediaController.createAudioDownloadJob,
-          onFileDownloadPressed: mediaController.downloadCompletedFile,
           onOpenFilePressed: mediaController.openDownloadedFile,
         );
       },
@@ -614,7 +666,6 @@ class _MetadataSummary extends StatelessWidget {
     required this.onVideoQualitySelected,
     required this.onVideoDownloadPressed,
     required this.onAudioDownloadPressed,
-    required this.onFileDownloadPressed,
     required this.onOpenFilePressed,
   });
 
@@ -637,7 +688,6 @@ class _MetadataSummary extends StatelessWidget {
   final ValueChanged<VideoQuality> onVideoQualitySelected;
   final VoidCallback onVideoDownloadPressed;
   final VoidCallback onAudioDownloadPressed;
-  final VoidCallback onFileDownloadPressed;
   final VoidCallback onOpenFilePressed;
 
   @override
@@ -722,7 +772,6 @@ class _MetadataSummary extends StatelessWidget {
             savedFilePath: savedFilePath,
             savedDirectory: savedDirectory,
             fileOpenLoading: fileOpenLoading,
-            onFileDownloadPressed: onFileDownloadPressed,
             onOpenFilePressed: onOpenFilePressed,
           ),
         ] else if (downloadError != null && downloadError!.isNotEmpty) ...[
@@ -899,7 +948,6 @@ class _DownloadProgressStatus extends StatelessWidget {
     required this.savedFilePath,
     required this.savedDirectory,
     required this.fileOpenLoading,
-    required this.onFileDownloadPressed,
     required this.onOpenFilePressed,
   });
 
@@ -913,7 +961,6 @@ class _DownloadProgressStatus extends StatelessWidget {
   final String? savedFilePath;
   final String? savedDirectory;
   final bool fileOpenLoading;
-  final VoidCallback onFileDownloadPressed;
   final VoidCallback onOpenFilePressed;
 
   @override
@@ -930,7 +977,6 @@ class _DownloadProgressStatus extends StatelessWidget {
         savedFilePath: savedFilePath,
         savedDirectory: savedDirectory,
         fileOpenLoading: fileOpenLoading,
-        onFileDownloadPressed: onFileDownloadPressed,
         onOpenFilePressed: onOpenFilePressed,
       );
     }
@@ -952,6 +998,7 @@ class _DownloadProgressStatus extends StatelessWidget {
     }
 
     final textTheme = Theme.of(context).textTheme;
+    final statusLabel = _downloadStatusLabel(normalizedStatus);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -960,7 +1007,7 @@ class _DownloadProgressStatus extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                'Status: ${_formatStatus(normalizedStatus)}',
+                statusLabel,
                 style: textTheme.bodyMedium,
               ),
             ),
@@ -1004,6 +1051,17 @@ class _DownloadProgressStatus extends StatelessWidget {
     }).join(' ');
   }
 
+  String _downloadStatusLabel(String status) {
+    switch (status) {
+      case 'pending':
+        return 'Preparing download...';
+      case 'processing':
+        return 'Downloading...';
+      default:
+        return _formatStatus(status);
+    }
+  }
+
   static String _fallback(String? value, String fallback) {
     final trimmedValue = value?.trim();
     if (trimmedValue == null || trimmedValue.isEmpty) {
@@ -1022,7 +1080,6 @@ class _CompletedDownloadSection extends StatelessWidget {
     required this.savedFilePath,
     required this.savedDirectory,
     required this.fileOpenLoading,
-    required this.onFileDownloadPressed,
     required this.onOpenFilePressed,
   });
 
@@ -1033,7 +1090,6 @@ class _CompletedDownloadSection extends StatelessWidget {
   final String? savedFilePath;
   final String? savedDirectory;
   final bool fileOpenLoading;
-  final VoidCallback onFileDownloadPressed;
   final VoidCallback onOpenFilePressed;
 
   @override
@@ -1042,31 +1098,27 @@ class _CompletedDownloadSection extends StatelessWidget {
         downloadedFilename!.isNotEmpty &&
         savedFilePath != null &&
         savedFilePath!.isNotEmpty;
+    final hasFileDownloadError =
+        fileDownloadError != null && fileDownloadError!.isNotEmpty;
     final filename = downloadedFilename ?? '';
     final savedLocation = _fallback(savedDirectory, savedFilePath ?? '');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const _StatusMessage(
-          title: 'Download Complete',
-          message: 'Ready to download.',
-          tone: NexoraStateTone.success,
-        ),
-        const SizedBox(height: AppSpacing.sm),
         if (fileDownloadLoading)
           _FileTransferProgress(progress: fileDownloadProgress)
-        else if (!hasSavedFile)
-          FilledButton.icon(
-            onPressed: onFileDownloadPressed,
-            icon: const Icon(Icons.download_rounded),
-            label: const Text('Download File'),
+        else if (!hasSavedFile && !hasFileDownloadError)
+          const NexoraStatePanel(
+            title: 'Saving to device',
+            message: 'Preparing the completed file for device storage.',
+            isLoading: true,
           ),
         if (hasSavedFile) ...[
-          const SizedBox(height: AppSpacing.sm),
           _StatusMessage(
-            title: 'File downloaded successfully',
-            message: 'Filename:\n$filename\n\nSaved location:\n$savedLocation',
+            title: 'Completed',
+            message:
+                'File saved to your device.\n\nFilename:\n$filename\n\nSaved location:\n$savedLocation',
             tone: NexoraStateTone.success,
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -1076,8 +1128,7 @@ class _CompletedDownloadSection extends StatelessWidget {
             label: Text(fileOpenLoading ? 'Opening...' : 'Open File'),
           ),
         ],
-        if (fileDownloadError != null && fileDownloadError!.isNotEmpty) ...[
-          const SizedBox(height: AppSpacing.sm),
+        if (hasFileDownloadError) ...[
           _StatusMessage(
             title: 'File Download Error',
             message: fileDownloadError!,
@@ -1112,7 +1163,7 @@ class _FileTransferProgress extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Saving file',
+          'Saving to device',
           style: textTheme.bodyMedium,
         ),
         const SizedBox(height: AppSpacing.xxs),
@@ -1120,7 +1171,9 @@ class _FileTransferProgress extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                hasKnownProgress ? 'Saving to device' : 'Starting...',
+                hasKnownProgress
+                    ? 'Downloading completed file'
+                    : 'Starting file transfer...',
                 style: textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
