@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/theme/app_tokens.dart';
 import '../models/media_download_type.dart';
 import '../models/media_state.dart';
+import 'download_progress_status.dart';
 import 'media_card_parts.dart';
 import 'nexora_brand.dart';
 import 'nexora_state_panel.dart';
@@ -94,7 +95,7 @@ class DownloadsContent extends StatelessWidget {
     final isActive = state.currentJobId != null &&
         (normalizedStatus == 'pending' ||
             normalizedStatus == 'processing' ||
-            state.fileDownloadLoading);
+            _isSavingToDevice(state));
     return isActive ? <MediaSuccess>[state] : const <MediaSuccess>[];
   }
 
@@ -206,15 +207,18 @@ class _DownloadDetails extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final isSavingToDevice = download.fileDownloadLoading;
+    final isSavingToDevice = _isSavingToDevice(download);
     final progress = _clampProgress(
       isSavingToDevice
           ? download.fileDownloadProgress
           : download.currentProgress,
     );
-    final status = isSavingToDevice
-        ? 'Saving to device'
-        : _formatStatus(download.currentStatus);
+    final hasKnownProgress = !isSavingToDevice || progress > 0;
+    final status = friendlyDownloadStatus(
+      backendStatus: download.currentStatus,
+      backendProgress: download.currentProgress,
+      isSavingToDevice: isSavingToDevice,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -242,23 +246,24 @@ class _DownloadDetails extends StatelessWidget {
               isSavingToDevice: isSavingToDevice,
             ),
             const Spacer(),
-            Text(
-              '$progress%',
-              style: textTheme.titleMedium?.copyWith(
-                color: colorScheme.primary,
+            if (hasKnownProgress)
+              Text(
+                '$progress%',
+                style: textTheme.titleMedium?.copyWith(
+                  color: colorScheme.primary,
+                ),
               ),
-            ),
           ],
         ),
         const SizedBox(height: AppSpacing.sm),
         Semantics(
-          label:
-              '${isSavingToDevice ? 'File transfer' : 'Download'} progress: '
-              '$progress percent',
+          label: hasKnownProgress
+              ? '$status $progress percent'
+              : status,
           child: ClipRRect(
             borderRadius: AppRadii.pill,
             child: LinearProgressIndicator(
-              value: progress / 100,
+              value: hasKnownProgress ? progress / 100 : null,
               minHeight: AppSpacing.xs,
             ),
           ),
@@ -287,21 +292,19 @@ class _DownloadDetails extends StatelessWidget {
     return value;
   }
 
-  String _formatStatus(String? value) {
-    final normalizedValue = value?.trim();
-    if (normalizedValue == null || normalizedValue.isEmpty) {
-      return 'Pending';
-    }
+}
 
-    final words = normalizedValue.replaceAll('_', ' ').split(' ');
-    return words.map((word) {
-      if (word.isEmpty) {
-        return word;
-      }
-
-      return '${word[0].toUpperCase()}${word.substring(1)}';
-    }).join(' ');
+bool _isSavingToDevice(MediaSuccess state) {
+  if (state.fileDownloadLoading) {
+    return true;
   }
+
+  final hasSavedFile = state.savedFilePath?.trim().isNotEmpty == true;
+  final hasFileDownloadError =
+      state.fileDownloadError?.trim().isNotEmpty == true;
+  return state.currentStatus?.trim().toLowerCase() == 'completed' &&
+      !hasSavedFile &&
+      !hasFileDownloadError;
 }
 
 class _DownloadStatusBadge extends StatelessWidget {

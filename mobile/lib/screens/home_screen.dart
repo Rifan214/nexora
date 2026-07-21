@@ -10,6 +10,7 @@ import '../models/media_metadata.dart';
 import '../models/media_state.dart';
 import '../providers/health_provider.dart';
 import '../providers/media_provider.dart';
+import '../widgets/download_progress_status.dart';
 import '../widgets/downloads_content.dart';
 import '../widgets/history_content.dart';
 import '../widgets/nexora_brand.dart';
@@ -998,7 +999,11 @@ class _DownloadProgressStatus extends StatelessWidget {
     }
 
     final textTheme = Theme.of(context).textTheme;
-    final statusLabel = _downloadStatusLabel(normalizedStatus);
+    final statusLabel = friendlyDownloadStatus(
+      backendStatus: status,
+      backendProgress: clampedProgress,
+      isSavingToDevice: false,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1038,28 +1043,6 @@ class _DownloadProgressStatus extends StatelessWidget {
     }
 
     return value;
-  }
-
-  String _formatStatus(String value) {
-    final words = value.replaceAll('_', ' ').split(' ');
-    return words.map((word) {
-      if (word.isEmpty) {
-        return word;
-      }
-
-      return '${word[0].toUpperCase()}${word.substring(1)}';
-    }).join(' ');
-  }
-
-  String _downloadStatusLabel(String status) {
-    switch (status) {
-      case 'pending':
-        return 'Preparing download...';
-      case 'processing':
-        return 'Downloading...';
-      default:
-        return _formatStatus(status);
-    }
   }
 
   static String _fallback(String? value, String fallback) {
@@ -1110,8 +1093,8 @@ class _CompletedDownloadSection extends StatelessWidget {
           _FileTransferProgress(progress: fileDownloadProgress)
         else if (!hasSavedFile && !hasFileDownloadError)
           const NexoraStatePanel(
-            title: 'Saving to device',
-            message: 'Preparing the completed file for device storage.',
+            title: 'Saving to device...',
+            message: 'Preparing your download for device storage.',
             isLoading: true,
           ),
         if (hasSavedFile) ...[
@@ -1158,22 +1141,20 @@ class _FileTransferProgress extends StatelessWidget {
     final clampedProgress = _clampProgress(progress);
     final hasKnownProgress = clampedProgress > 0;
     final textTheme = Theme.of(context).textTheme;
+    final statusLabel = friendlyDownloadStatus(
+      backendStatus: 'completed',
+      backendProgress: 100,
+      isSavingToDevice: true,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Saving to device',
-          style: textTheme.bodyMedium,
-        ),
-        const SizedBox(height: AppSpacing.xxs),
         Row(
           children: [
             Expanded(
               child: Text(
-                hasKnownProgress
-                    ? 'Downloading completed file'
-                    : 'Starting file transfer...',
+                statusLabel,
                 style: textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
