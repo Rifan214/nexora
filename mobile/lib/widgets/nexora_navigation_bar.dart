@@ -10,6 +10,7 @@ class NexoraNavigationBar extends StatelessWidget {
   }) : assert(selectedIndex >= 0 && selectedIndex < _labels.length);
 
   static const downloadIndex = 0;
+  static const downloadsIndex = 1;
   static const _downloadLabel = 'Download';
   static const _downloadsLabel = 'Downloads';
   static const _historyLabel = 'History';

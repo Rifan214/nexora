@@ -8,6 +8,7 @@ import '../models/media_metadata.dart';
 import '../models/media_state.dart';
 import '../providers/health_provider.dart';
 import '../providers/media_provider.dart';
+import '../widgets/downloads_content.dart';
 import '../widgets/nexora_brand.dart';
 import '../widgets/nexora_navigation_bar.dart';
 
@@ -23,6 +24,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   final _urlController = TextEditingController();
+  var _selectedDestinationIndex = NexoraNavigationBar.downloadIndex;
 
   @override
   void initState() {
@@ -45,6 +47,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final hasMediaUrl = _urlController.text.trim().isNotEmpty;
     final isMediaBusy = _isMediaBusy(mediaState);
     final canRequestMetadata = hasMediaUrl && !isMediaBusy;
+
+    if (_selectedDestinationIndex == NexoraNavigationBar.downloadsIndex) {
+      return _buildScaffold(DownloadsContent(mediaState: mediaState));
+    }
 
     if (mediaState is MediaIdle) {
       return _buildScaffold(
@@ -98,7 +104,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return Scaffold(
       body: SafeArea(child: body),
       bottomNavigationBar: NexoraNavigationBar(
-        selectedIndex: NexoraNavigationBar.downloadIndex,
+        selectedIndex: _selectedDestinationIndex,
         onDestinationSelected: _onDestinationSelected,
       ),
     );
@@ -151,7 +157,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _onDestinationSelected(int index) {
-    if (index == NexoraNavigationBar.downloadIndex) {
+    if (index == _selectedDestinationIndex) {
+      return;
+    }
+
+    if (index == NexoraNavigationBar.downloadIndex ||
+        index == NexoraNavigationBar.downloadsIndex) {
+      setState(() {
+        _selectedDestinationIndex = index;
+      });
       return;
     }
 
