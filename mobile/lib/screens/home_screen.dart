@@ -1,12 +1,16 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 
+import '../core/theme/app_tokens.dart';
 import '../models/health_check_result.dart';
 import '../models/media_metadata.dart';
 import '../models/media_state.dart';
 import '../providers/health_provider.dart';
 import '../providers/media_provider.dart';
+import '../widgets/nexora_brand.dart';
+import '../widgets/nexora_navigation_bar.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -36,71 +40,53 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
     final healthState = ref.watch(healthProvider);
     final mediaState = ref.watch(mediaProvider);
     final isCheckingHealth = healthState.isLoading;
     final hasMediaUrl = _urlController.text.trim().isNotEmpty;
     final isMediaBusy = _isMediaBusy(mediaState);
     final canRequestMetadata = hasMediaUrl && !isMediaBusy;
+
+    if (mediaState is MediaIdle) {
+      return _buildScaffold(
+        _HomeReadyContent(
+          urlController: _urlController,
+          canAnalyze: canRequestMetadata,
+          onPaste: _pasteUrl,
+          onAnalyze: () => _getMetadata(canRequestMetadata),
+        ),
+      );
+    }
+
     final metadataButtonLabel = mediaState is MediaLoading
         ? 'Loading...'
         : isMediaBusy
             ? 'Please wait...'
             : 'Get Metadata';
 
+    return _buildScaffold(
+      _LegacyWorkflowContent(
+        urlController: _urlController,
+        healthState: healthState,
+        isCheckingHealth: isCheckingHealth,
+        isMediaBusy: isMediaBusy,
+        canRequestMetadata: canRequestMetadata,
+        metadataButtonLabel: metadataButtonLabel,
+        mediaState: mediaState,
+        onCheckBackend: () {
+          ref.read(healthProvider.notifier).checkBackend();
+        },
+        onGetMetadata: () => _getMetadata(canRequestMetadata),
+      ),
+    );
+  }
+
+  Widget _buildScaffold(Widget body) {
     return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'Nexora',
-                    style: textTheme.headlineMedium,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    onPressed: isCheckingHealth
-                        ? null
-                        : () {
-                            ref.read(healthProvider.notifier).checkBackend();
-                          },
-                    child: Text(isCheckingHealth ? 'Checking...' : 'Check Backend'),
-                  ),
-                  const SizedBox(height: 16),
-                  _HealthStatus(healthState: healthState),
-                  const SizedBox(height: 32),
-                  TextField(
-                    controller: _urlController,
-                    keyboardType: TextInputType.url,
-                    textInputAction: TextInputAction.search,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      labelText: 'Media URL',
-                    ),
-                    enabled: !isMediaBusy,
-                    onSubmitted: (_) => _getMetadata(canRequestMetadata),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton(
-                    onPressed:
-                        canRequestMetadata ? () => _getMetadata(canRequestMetadata) : null,
-                    child: Text(metadataButtonLabel),
-                  ),
-                  const SizedBox(height: 16),
-                  _MediaStatus(mediaState: mediaState),
-                ],
-              ),
-            ),
-          ),
-        ),
+      body: SafeArea(child: body),
+      bottomNavigationBar: NexoraNavigationBar(
+        selectedIndex: NexoraNavigationBar.downloadIndex,
+        onDestinationSelected: _onDestinationSelected,
       ),
     );
   }
@@ -115,6 +101,46 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   void _onUrlChanged() {
     setState(() {});
+  }
+
+  Future<void> _pasteUrl() async {
+    try {
+      final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+      final url = clipboardData?.text?.trim();
+      if (!mounted) {
+        return;
+      }
+
+      if (url == null || url.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Clipboard is empty.')),
+        );
+        return;
+      }
+
+      _urlController.value = TextEditingValue(
+        text: url,
+        selection: TextSelection.collapsed(offset: url.length),
+      );
+    } on PlatformException {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to read the clipboard.')),
+      );
+    }
+  }
+
+  void _onDestinationSelected(int index) {
+    if (index == NexoraNavigationBar.downloadIndex) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Coming soon.')),
+    );
   }
 
   bool _isMediaBusy(MediaState state) {
@@ -132,6 +158,215 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         state.fileOpenLoading ||
         normalizedStatus == 'pending' ||
         normalizedStatus == 'processing';
+  }
+}
+
+class _HomeReadyContent extends StatelessWidget {
+  const _HomeReadyContent({
+    required this.urlController,
+    required this.canAnalyze,
+    required this.onPaste,
+    required this.onAnalyze,
+  });
+
+  final TextEditingController urlController;
+  final bool canAnalyze;
+  final Future<void> Function() onPaste;
+  final VoidCallback onAnalyze;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxHeight < 760;
+        final heroTopSpacing = isCompact
+            ? AppSpacing.heroTopCompact
+            : AppSpacing.heroTop;
+        final panelTopSpacing = isCompact
+            ? AppSpacing.panelTopCompact
+            : AppSpacing.panelTop;
+
+        return SingleChildScrollView(
+          padding: AppSpacing.pageHorizontal,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: AppSizes.contentMaxWidth,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: AppSpacing.md),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: NexoraBrand(),
+                  ),
+                  SizedBox(height: heroTopSpacing),
+                  Column(
+                    children: [
+                      Card(
+                        child: SizedBox.square(
+                          dimension: AppSizes.heroIconContainer,
+                          child: Icon(
+                            Icons.bolt_rounded,
+                            color: colorScheme.primary,
+                            size: 64,
+                            semanticLabel: 'Ready to fetch media',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.xl),
+                      Text(
+                        'Ready to fetch.',
+                        style: textTheme.headlineLarge,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 280),
+                        child: Text(
+                          'Paste a supported URL to begin downloading high-quality media.',
+                          style: textTheme.bodyLarge?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: panelTopSpacing),
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxWidth: AppSizes.actionPanelMaxWidth,
+                      ),
+                      child: Card(
+                        shape: const RoundedRectangleBorder(
+                          borderRadius: AppRadii.actionPanel,
+                        ),
+                        child: Padding(
+                          padding: AppSpacing.actionPanel,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              TextField(
+                                controller: urlController,
+                                keyboardType: TextInputType.url,
+                                textInputAction: TextInputAction.search,
+                                autocorrect: false,
+                                enableSuggestions: false,
+                                onSubmitted: (_) {
+                                  if (canAnalyze) {
+                                    onAnalyze();
+                                  }
+                                },
+                                decoration: InputDecoration(
+                                  hintText: 'Paste media URL here...',
+                                  prefixIcon: const Icon(Icons.link_rounded),
+                                  suffixIcon: IconButton(
+                                    tooltip: 'Paste from clipboard',
+                                    onPressed: () {
+                                      onPaste();
+                                    },
+                                    icon: const Icon(Icons.content_paste_rounded),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: AppSpacing.md),
+                              FilledButton.icon(
+                                onPressed: canAnalyze ? onAnalyze : null,
+                                icon: const Icon(Icons.download_rounded),
+                                label: const Text('Analyze'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.xl),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _LegacyWorkflowContent extends StatelessWidget {
+  const _LegacyWorkflowContent({
+    required this.urlController,
+    required this.healthState,
+    required this.isCheckingHealth,
+    required this.isMediaBusy,
+    required this.canRequestMetadata,
+    required this.metadataButtonLabel,
+    required this.mediaState,
+    required this.onCheckBackend,
+    required this.onGetMetadata,
+  });
+
+  final TextEditingController urlController;
+  final AsyncValue<HealthCheckResult?> healthState;
+  final bool isCheckingHealth;
+  final bool isMediaBusy;
+  final bool canRequestMetadata;
+  final String metadataButtonLabel;
+  final MediaState mediaState;
+  final VoidCallback onCheckBackend;
+  final VoidCallback onGetMetadata;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: AppSizes.actionPanelMaxWidth),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Nexora',
+                style: textTheme.headlineMedium,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppSpacing.md),
+              FilledButton(
+                onPressed: isCheckingHealth ? null : onCheckBackend,
+                child: Text(isCheckingHealth ? 'Checking...' : 'Check Backend'),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _HealthStatus(healthState: healthState),
+              const SizedBox(height: AppSpacing.xxl),
+              TextField(
+                controller: urlController,
+                keyboardType: TextInputType.url,
+                textInputAction: TextInputAction.search,
+                decoration: const InputDecoration(labelText: 'Media URL'),
+                enabled: !isMediaBusy,
+                onSubmitted: (_) => onGetMetadata(),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              FilledButton(
+                onPressed: canRequestMetadata ? onGetMetadata : null,
+                child: Text(metadataButtonLabel),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _MediaStatus(mediaState: mediaState),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Nexora - Splash Screen</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-surface": "#191c23",
+                        "surface-container-highest": "#e0e2ec",
+                        "inverse-primary": "#adc7ff",
+                        "on-tertiary": "#ffffff",
+                        "on-secondary-container": "#006573",
+                        "tertiary-container": "#24883f",
+                        "on-secondary-fixed-variant": "#004e59",
+                        "outline": "#727785",
+                        "on-tertiary-container": "#000601",
+                        "surface-dim": "#d8d9e3",
+                        "surface-container-low": "#f2f3fd",
+                        "tertiary-fixed-dim": "#7adb87",
+                        "surface-container-lowest": "#ffffff",
+                        "primary-container": "#1a73e8",
+                        "on-surface-variant": "#414754",
+                        "primary-fixed-dim": "#adc7ff",
+                        "on-tertiary-fixed-variant": "#00531f",
+                        "surface-tint": "#005bc0",
+                        "on-secondary": "#ffffff",
+                        "background": "#f9f9ff",
+                        "tertiary": "#006d2b",
+                        "surface-variant": "#e0e2ec",
+                        "surface-container-high": "#e6e8f2",
+                        "on-background": "#191c23",
+                        "on-primary-container": "#ffffff",
+                        "surface-bright": "#f9f9ff",
+                        "surface": "#f9f9ff",
+                        "primary-fixed": "#d8e2ff",
+                        "surface-container": "#ecedf7",
+                        "outline-variant": "#c1c6d6",
+                        "inverse-surface": "#2d3038",
+                        "on-primary-fixed-variant": "#004493",
+                        "primary": "#005bbf",
+                        "inverse-on-surface": "#eff0fa",
+                        "secondary-fixed-dim": "#44d8f1",
+                        "on-secondary-fixed": "#001f25",
+                        "error-container": "#ffdad6",
+                        "secondary-fixed": "#a1efff",
+                        "tertiary-fixed": "#96f8a1",
+                        "on-primary-fixed": "#001a41",
+                        "secondary": "#006876",
+                        "secondary-container": "#58e6ff",
+                        "error": "#ba1a1a",
+                        "on-error": "#ffffff",
+                        "on-primary": "#ffffff",
+                        "on-error-container": "#93000a",
+                        "on-tertiary-fixed": "#002108"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "margin-mobile": "20px",
+                        "gutter": "16px",
+                        "margin-desktop": "40px",
+                        "base": "8px",
+                        "touch-target": "48px"
+                    },
+                    "fontFamily": {
+                        "title-md": ["Inter"],
+                        "label-md": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "headline-lg-mobile": ["Inter"],
+                        "display-lg": ["Inter"]
+                    },
+                    "fontSize": {
+                        "title-md": ["18px", { "lineHeight": "24px", "fontWeight": "600" }],
+                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "700" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "headline-lg-mobile": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .spinner {
+            animation: rotate 2s linear infinite;
+        }
+        .path {
+            stroke: currentColor;
+            stroke-linecap: round;
+            animation: dash 1.5s ease-in-out infinite;
+        }
+        @keyframes rotate {
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+        @keyframes dash {
+            0% {
+                stroke-dasharray: 1, 150;
+                stroke-dashoffset: 0;
+            }
+            50% {
+                stroke-dasharray: 90, 150;
+                stroke-dashoffset: -35;
+            }
+            100% {
+                stroke-dasharray: 90, 150;
+                stroke-dashoffset: -124;
+            }
+        }
+    </style>
+</head>
+<body class="bg-background min-h-screen flex flex-col items-center justify-center relative overflow-hidden font-body-md text-on-background">
+<!-- Main Splash Content -->
+<main class="flex-1 flex flex-col items-center justify-center w-full z-10 px-margin-mobile">
+<!-- Logo Container -->
+<div class="flex flex-col items-center justify-center transform transition-transform duration-1000 scale-100 hover:scale-105">
+<img alt="Nexora Logo" class="w-48 h-48 md:w-64 md:h-64 object-contain drop-shadow-xl mb-8" src="https://lh3.googleusercontent.com/aida/AP1WRLuahVo5Fahq_1OKzEptSBcWlYdsSLa5EVeLLmBr6QK0Cacdp7dF47NUEpaqGQVIMIBKJU4AQSvCgXx8WylALZJF1OuBbGRuxcbPpfbmlryryj7FzGawNGyilMCyFqFLCBv8WvyMohiwgPfWDicbVyo13dCbKboOdL8U9ppSQfY8LioIjANoVunC5y7MJ9fZy9a8GYt5jBTVfaxsTZpK5xIHABjT7HGbvA1YKlQMAwMH-Kg_SPdfyeBxRqBX"/>
+<h1 class="font-display-lg text-display-lg text-primary tracking-tight">Nexora</h1>
+</div>
+</main>
+<!-- Bottom Loading Indicator -->
+<div class="absolute bottom-16 left-0 w-full flex justify-center pb-margin-mobile">
+<svg class="spinner w-10 h-10 text-primary" viewbox="0 0 50 50">
+<circle class="path" cx="25" cy="25" fill="none" r="20" stroke-width="4"></circle>
+</svg>
+</div>
+<!-- Ambient Background Effects (Subtle) -->
+<div class="absolute inset-0 pointer-events-none overflow-hidden z-0">
+<div class="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-primary-fixed-dim opacity-20 blur-[100px]"></div>
+<div class="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-secondary-fixed-dim opacity-20 blur-[100px]"></div>
+</div>
+</body></html>

@@ -79,6 +79,11 @@ void main() {
     await tester.pumpWidget(const NexoraApp());
 
     expect(find.text('Nexora'), findsOneWidget);
-    expect(find.text('Check Backend'), findsOneWidget);
+    expect(find.text('Ready to fetch.'), findsOneWidget);
+    expect(find.text('Analyze'), findsOneWidget);
+    expect(find.text('Download'), findsOneWidget);
+    expect(find.text('Downloads'), findsOneWidget);
+    expect(find.text('History'), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
   });
 }
