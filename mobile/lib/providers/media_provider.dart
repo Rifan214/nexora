@@ -5,11 +5,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_exception.dart';
+import '../models/completed_file_download.dart';
+import '../models/download_history_item.dart';
 import '../models/job_update.dart';
 import '../models/media_download_type.dart';
 import '../models/media_metadata.dart';
 import '../models/media_state.dart';
 import '../repositories/media_repository.dart';
+import 'history_provider.dart';
 
 final mediaProvider = NotifierProvider<MediaController, MediaState>(
   MediaController.new,
@@ -257,6 +260,7 @@ class MediaController extends Notifier<MediaState> {
         savedDirectory: savedFile.savedDirectory,
         fileOpenLoading: false,
       );
+      await _recordCompletedDownload(current, savedFile);
     } on ApiException catch (error) {
       _markFileDownloadFailed(cancelToken, error.message);
     } catch (_) {
@@ -420,6 +424,43 @@ class MediaController extends Notifier<MediaState> {
     if (current != null) {
       state = current.copyWith(fileDownloadError: message);
     }
+  }
+
+  Future<void> _recordCompletedDownload(
+    MediaSuccess download,
+    CompletedFileDownload savedFile,
+  ) async {
+    final createdAt = DateTime.now();
+    final title = download.metadata.title.trim();
+    final thumbnailUrl = download.metadata.thumbnailUrl?.trim();
+    final item = DownloadHistoryItem(
+      id: '${createdAt.microsecondsSinceEpoch}-${savedFile.savedPath.hashCode}',
+      title: title.isEmpty ? savedFile.filename : title,
+      thumbnailUrl:
+          thumbnailUrl == null || thumbnailUrl.isEmpty ? null : thumbnailUrl,
+      mediaType: download.currentMediaType ?? MediaDownloadType.video,
+      selectedQuality: _historyQuality(download),
+      localFilePath: savedFile.savedPath,
+      createdAt: createdAt,
+      durationSeconds: download.metadata.durationSeconds,
+    );
+
+    try {
+      await ref.read(downloadHistoryProvider.future);
+      await ref.read(downloadHistoryProvider.notifier).addCompletedDownload(item);
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('Unable to save download history: $error');
+      }
+    }
+  }
+
+  String? _historyQuality(MediaSuccess download) {
+    if (download.currentMediaType == MediaDownloadType.audio) {
+      return 'MP3';
+    }
+
+    return download.selectedVideoQuality?.label;
   }
 
   Future<void> _closeJobSubscription() async {

@@ -1,11 +1,39 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:nexora/main.dart';
+import 'package:nexora/models/download_history_item.dart';
 import 'package:nexora/models/download_job.dart';
 import 'package:nexora/models/media_download_type.dart';
 import 'package:nexora/models/media_metadata.dart';
 
 void main() {
+  test('round trips locally persisted download history fields', () {
+    final createdAt = DateTime(2026, 7, 21, 10, 30);
+    final historyItem = DownloadHistoryItem(
+      id: 'history-item-1',
+      title: 'Example video',
+      thumbnailUrl: 'https://example.com/thumbnail.jpg',
+      mediaType: MediaDownloadType.video,
+      selectedQuality: '1080p Full HD',
+      localFilePath: '/downloads/example-video.mp4',
+      createdAt: createdAt,
+      durationSeconds: 125,
+    );
+
+    final restoredItem = DownloadHistoryItem.fromDatabase(
+      historyItem.toDatabase(),
+    );
+
+    expect(restoredItem.id, historyItem.id);
+    expect(restoredItem.title, historyItem.title);
+    expect(restoredItem.thumbnailUrl, historyItem.thumbnailUrl);
+    expect(restoredItem.mediaType, MediaDownloadType.video);
+    expect(restoredItem.selectedQuality, historyItem.selectedQuality);
+    expect(restoredItem.localFilePath, historyItem.localFilePath);
+    expect(restoredItem.createdAt, createdAt);
+    expect(restoredItem.durationSeconds, 125);
+  });
+
   test('parses final media metadata responses', () {
     final videoQualities = [144, 240, 360, 480, 720, 1080, 1440, 2160]
         .map(

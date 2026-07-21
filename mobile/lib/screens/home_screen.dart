@@ -64,7 +64,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
 
     if (_selectedDestinationIndex == NexoraNavigationBar.historyIndex) {
-      return _buildScaffold(HistoryContent(mediaState: mediaState));
+      return _buildScaffold(const HistoryContent());
     }
 
     if (_selectedDestinationIndex == NexoraNavigationBar.settingsIndex) {
