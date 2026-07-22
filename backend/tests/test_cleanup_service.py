@@ -41,6 +41,69 @@ def test_cleanup_removes_expired_completed_job_when_file_is_missing() -> None:
     assert manager.get_job(job.job_id) is None
 
 
+def test_completed_file_gets_short_retention_after_response_is_sent() -> None:
+    manager = JobManager(download_expiration=timedelta(minutes=30))
+    job = manager.create_job(
+        media_url="https://www.youtube.com/watch?v=served-file",
+        platform="youtube",
+        title="Served file",
+    )
+    manager.mark_completed(job.job_id)
+    file_path = get_temp_storage_dir() / f"{job.job_id}.mp4"
+    file_path.write_bytes(b"served-media")
+    cleanup_service = CleanupService(temp_file_retention=timedelta(minutes=12))
+    app = create_app()
+    app.dependency_overrides[get_job_manager] = lambda: manager
+    app.dependency_overrides[get_cleanup_service] = lambda: cleanup_service
+
+    before_request = datetime.now(timezone.utc)
+    try:
+        response = TestClient(app).get(f"/files/{job.job_id}")
+
+        assert response.status_code == 200
+        scheduled_job = manager.get_job(job.job_id)
+        assert scheduled_job is not None
+        assert scheduled_job.expires_at is not None
+        assert scheduled_job.expires_at > before_request + timedelta(minutes=11)
+        assert scheduled_job.expires_at <= datetime.now(timezone.utc) + timedelta(minutes=12, seconds=1)
+    finally:
+        app.dependency_overrides.clear()
+        file_path.unlink(missing_ok=True)
+
+
+def test_failed_download_removes_all_job_artifacts_immediately() -> None:
+    manager = JobManager()
+    job = manager.create_job(
+        media_url="https://www.youtube.com/watch?v=failed-file",
+        platform="youtube",
+    )
+    manager.mark_failed(job.job_id, error_message="Download failed")
+    file_paths = [
+        get_temp_storage_dir() / f"{job.job_id}.mp4.part",
+        get_temp_storage_dir() / f"{job.job_id}.f399.mp4",
+        get_temp_storage_dir() / f"{job.job_id}.ytdl",
+        get_temp_storage_dir() / f"{job.job_id}.info.json",
+    ]
+    for file_path in file_paths:
+        file_path.write_bytes(b"partial-media")
+
+    try:
+        removed_count = CleanupService(failed_download_retention=timedelta(minutes=3)).cleanup_failed_download(
+            job.job_id,
+            job_manager=manager,
+        )
+
+        assert removed_count == len(file_paths)
+        assert all(not file_path.exists() for file_path in file_paths)
+        failed_job = manager.get_job(job.job_id)
+        assert failed_job is not None
+        assert failed_job.status.value == "failed"
+        assert failed_job.expires_at is not None
+    finally:
+        for file_path in file_paths:
+            file_path.unlink(missing_ok=True)
+
+
 def test_cleanup_leaves_active_jobs_and_files_untouched() -> None:
     manager = JobManager(download_expiration=timedelta(minutes=30))
     past = datetime.now(timezone.utc) - timedelta(minutes=1)

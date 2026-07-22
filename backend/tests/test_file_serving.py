@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -55,6 +56,27 @@ def test_files_endpoint_downloads_completed_job() -> None:
         assert response.headers["content-disposition"] == 'attachment; filename="Endpoint Video.mp4"'
     finally:
         app.dependency_overrides.clear()
+        file_path.unlink(missing_ok=True)
+
+
+def test_direct_file_service_also_schedules_backend_cleanup() -> None:
+    manager = JobManager()
+    job = manager.create_job(
+        media_url="https://www.youtube.com/watch?v=direct-service",
+        platform="youtube",
+    )
+    manager.mark_completed(job.job_id)
+    file_path = get_temp_storage_dir() / f"{job.job_id}.mp4"
+    file_path.write_bytes(b"media")
+    try:
+        response = DownloadFileService().create_file_response(job.job_id, job_manager=manager)
+
+        assert response.background is not None
+        asyncio.run(response.background())
+        scheduled_job = manager.get_job(job.job_id)
+        assert scheduled_job is not None
+        assert scheduled_job.expires_at is not None
+    finally:
         file_path.unlink(missing_ok=True)
 
 

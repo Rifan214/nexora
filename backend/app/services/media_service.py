@@ -12,6 +12,7 @@ from app.core.exceptions import APIError
 from app.models.job import DownloadJob
 from app.models.media import AudioOption, MediaMetadata
 from app.models.requests import MediaDownloadRequest
+from app.services.cleanup_service import get_cleanup_service
 from app.services.job_manager import build_job_download_url, get_job_manager
 from app.services.quality_selector import QualitySelector
 from app.utils.platforms import detect_platform_from_url
@@ -139,23 +140,28 @@ class MediaService:
             job_manager.update_progress(job_id, 0)
             initial_platform = detect_platform_from_url(url)
             if initial_platform != "youtube":
-                job_manager.mark_failed(
+                error_message = (
+                    f"Platform '{initial_platform}' is not supported in V1"
+                )
+                self._mark_download_failed(
                     job_id,
-                    error_message=f"Platform '{initial_platform}' is not supported in V1",
+                    error_message=error_message,
+                    job_manager=job_manager,
                 )
                 logger.warning(
                     "Download failed job_id=%s error=%s",
                     job_id,
-                    f"Platform '{initial_platform}' is not supported in V1",
+                    error_message,
                 )
                 return
 
             extracted_info = self._extract_info(url)
             detected_platform = self._detect_platform(extracted_info)
             if detected_platform != "youtube":
-                job_manager.mark_failed(
+                self._mark_download_failed(
                     job_id,
                     error_message=f"Platform '{detected_platform}' is not supported in V1",
+                    job_manager=job_manager,
                 )
                 return
 
@@ -196,11 +202,11 @@ class MediaService:
             logger.info("Download completed job_id=%s download_url=%s", job_id, download_url)
         except YoutubeDLError as exc:
             error_message = self._describe_download_error(exc)
-            job_manager.mark_failed(job_id, error_message=error_message)
+            self._mark_download_failed(job_id, error_message=error_message, job_manager=job_manager)
             logger.warning("Download failed job_id=%s error=%s", job_id, error_message)
         except (OSError, FileNotFoundError, PermissionError) as exc:
             error_message = f"Filesystem error: {exc}"
-            job_manager.mark_failed(job_id, error_message=error_message)
+            self._mark_download_failed(job_id, error_message=error_message, job_manager=job_manager)
             logger.warning("Download failed job_id=%s error=%s", job_id, error_message)
         except Exception as exc:
             error_message = "An unexpected error occurred while downloading the media"
@@ -208,7 +214,16 @@ class MediaService:
                 logger.exception("Download failed job_id=%s", job_id)
             else:
                 logger.warning("Download failed job_id=%s error=%s", job_id, error_message)
+            self._mark_download_failed(job_id, error_message=error_message, job_manager=job_manager)
+
+    @staticmethod
+    def _mark_download_failed(job_id, *, error_message: str, job_manager) -> None:
+        try:
             job_manager.mark_failed(job_id, error_message=error_message)
+        finally:
+            # Cleanup is deliberately best-effort so a cleanup failure cannot
+            # hide the original download error or stop the worker.
+            get_cleanup_service().cleanup_failed_download(job_id, job_manager=job_manager)
 
     def _build_progress_hook(self, job_id, job_manager):
         last_progress = {"value": -1}

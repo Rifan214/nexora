@@ -6,7 +6,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 
-from app.api.dependencies import run_lazy_cleanup
+from app.api.dependencies import get_cleanup_service, run_lazy_cleanup
+from app.services.cleanup_service import CleanupService
 from app.services.download_file_service import DownloadFileService
 from app.services.job_manager import JobManager, get_job_manager
 
@@ -41,6 +42,11 @@ def get_download_file_service() -> DownloadFileService:
 def serve_download_file(
     job_id: UUID,
     job_manager: JobManager = Depends(get_job_manager),
+    cleanup_service: CleanupService = Depends(get_cleanup_service),
     download_file_service: DownloadFileService = Depends(get_download_file_service),
 ) -> FileResponse:
-    return download_file_service.create_file_response(job_id, job_manager=job_manager)
+    return download_file_service.create_file_response(
+        job_id,
+        job_manager=job_manager,
+        cleanup_service=cleanup_service,
+    )

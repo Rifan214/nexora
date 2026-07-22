@@ -71,6 +71,28 @@ The request fields `format_id` and `type` remain temporarily accepted for legacy
 
 Adaptive video/audio selectors and MP3 conversion require yt-dlp's normal FFmpeg support. Deployments must make FFmpeg available to yt-dlp; this backend does not install or configure FFmpeg.
 
+## Backend Storage Cleanup
+
+Completed files have a safety expiration for downloads that are never requested. Once
+`GET /files/{job_id}` finishes sending a file, the backend replaces that safety
+expiration with the shorter post-transfer retention window. Existing lazy cleanup
+runs on `GET /jobs/{job_id}`, `GET /files/{job_id}`, and `POST /media/download`;
+no external scheduler is required.
+
+Configure the windows in `.env`:
+
+```text
+DOWNLOAD_EXPIRATION_MINUTES=30
+TEMP_FILE_RETENTION_MINUTES=15
+FAILED_DOWNLOAD_RETENTION_MINUTES=0
+```
+
+`TEMP_FILE_RETENTION_MINUTES` controls how long a successfully served backend file
+remains available for a retry. Failed-download artifacts are deleted immediately;
+`FAILED_DOWNLOAD_RETENTION_MINUTES` controls how long the failed job's error record
+remains available before lazy cleanup removes it. A value of `0` makes that record
+eligible for removal on the next lazy-cleanup request.
+
 ## Real-Time Job Progress
 
 WebSocket progress updates are available at:

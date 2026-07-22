@@ -1,19 +1,13 @@
 from __future__ import annotations
 
 import logging
-from functools import lru_cache
 
 from fastapi import Depends
 
-from app.services.cleanup_service import CleanupService
+from app.services.cleanup_service import CleanupService, get_cleanup_service
 from app.services.job_manager import JobManager, get_job_manager
 
 logger = logging.getLogger(__name__)
-
-
-@lru_cache
-def get_cleanup_service() -> CleanupService:
-    return CleanupService()
 
 
 def run_lazy_cleanup(

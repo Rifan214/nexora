@@ -195,6 +195,44 @@ def test_background_download_marks_yt_dlp_failures_as_failed(
     assert failed_job.error_message == expected_message
 
 
+def test_background_download_removes_partial_artifacts_after_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeYoutubeDL.instances = []
+    FakeYoutubeDL.download_error = DownloadError("unable to download video data")
+    monkeypatch.setattr(media_service_module, "YoutubeDL", FakeYoutubeDL)
+
+    service = MediaService()
+    request = MediaDownloadRequest(
+        url="https://www.youtube.com/watch?v=partial-artifact",
+        format_id="18",
+        type="video",
+    )
+    job = get_job_manager().create_job(
+        media_url=request.url,
+        platform="youtube",
+        format_id=request.format_id,
+        output_type=request.type,
+    )
+    partial_files = [
+        get_temp_storage_dir() / f"{job.job_id}.mp4.part",
+        get_temp_storage_dir() / f"{job.job_id}.f18.mp4",
+    ]
+    for partial_file in partial_files:
+        partial_file.write_bytes(b"partial")
+
+    try:
+        service._download_job_background(job.job_id, request.url, request.format_id, request.type)
+
+        assert all(not partial_file.exists() for partial_file in partial_files)
+        failed_job = get_job_manager().get_job(job.job_id)
+        assert failed_job is not None
+        assert failed_job.status is JobStatus.failed
+    finally:
+        for partial_file in partial_files:
+            partial_file.unlink(missing_ok=True)
+
+
 def test_background_audio_download_reports_a_missing_ffmpeg(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeYoutubeDL.instances = []
     FakeYoutubeDL.download_error = DownloadError("Postprocessing: ffmpeg not found")

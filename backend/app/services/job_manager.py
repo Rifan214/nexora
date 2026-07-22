@@ -132,6 +132,9 @@ class JobManager:
                 "status": JobStatus.completed,
                 "progress": 100,
                 "download_url": completed_download_url,
+                # Safety cap for completed files that are never requested.
+                # The file endpoint replaces this with the shorter post-transfer
+                # retention window after the response body has been sent.
                 "expires_at": now + self._download_expiration,
                 "error_message": None,
                 "updated_at": now,
@@ -150,6 +153,24 @@ class JobManager:
             }
         )
         return self._store_updated_job(updated_job)
+
+    def schedule_expiration(self, job_id: UUID, *, expires_at: datetime) -> DownloadJob | None:
+        """Update cleanup timing without changing the public job state."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+
+            updated_job = job.model_copy(
+                update={
+                    "expires_at": expires_at,
+                    "updated_at": _utcnow(),
+                }
+            )
+            self._jobs[job_id] = updated_job
+
+        logger.info("Job expiration scheduled job_id=%s expires_at=%s", job_id, expires_at)
+        return updated_job
 
     def remove_job(self, job_id: UUID) -> bool:
         with self._lock:
