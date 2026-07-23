@@ -32,6 +32,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   final _urlController = TextEditingController();
   var _selectedDestinationIndex = NexoraNavigationBar.downloadIndex;
   String? _automaticFileDownloadJobId;
+  final _shownCompletionNotificationKeys = <String>{};
 
   @override
   void initState() {
@@ -50,6 +51,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     ref.listen<MediaState>(mediaProvider, (_, next) {
       _scheduleCompletedFileDownload(next);
+      _scheduleCompletionNotification(next);
     });
 
     final healthState = ref.watch(healthProvider);
@@ -199,6 +201,145 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         !state.fileDownloadLoading &&
         !hasSavedFile &&
         !hasFileDownloadError;
+  }
+
+  void _scheduleCompletionNotification(MediaState state) {
+    final notificationKey = _completionNotificationKey(state);
+    if (notificationKey == null ||
+        _shownCompletionNotificationKeys.contains(notificationKey)) {
+      return;
+    }
+
+    _shownCompletionNotificationKeys.add(notificationKey);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      final latestState = ref.read(mediaProvider);
+      if (_completionNotificationKey(latestState) != notificationKey ||
+          latestState is! MediaSuccess) {
+        return;
+      }
+
+      _showCompletionSnackBar(latestState);
+    });
+  }
+
+  String? _completionNotificationKey(MediaState state) {
+    if (state is! MediaSuccess) {
+      return null;
+    }
+
+    final savedFilePath = state.savedFilePath?.trim();
+    if (savedFilePath == null || savedFilePath.isEmpty) {
+      return null;
+    }
+
+    final jobId = state.currentJobId?.trim();
+    if (jobId != null && jobId.isNotEmpty) {
+      return '$jobId:$savedFilePath';
+    }
+
+    return savedFilePath;
+  }
+
+  void _showCompletionSnackBar(MediaSuccess state) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final filename = _snackBarFilename(state);
+    final messenger = ScaffoldMessenger.of(context);
+
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 9),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.check_circle_rounded,
+                    color: colorScheme.inversePrimary,
+                    size: AppSpacing.xl,
+                    semanticLabel: 'Download complete',
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Download Complete',
+                          style: textTheme.titleSmall?.copyWith(
+                            color: colorScheme.onInverseSurface,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.xxs),
+                        Text(
+                          '"$filename" has been saved successfully.',
+                          style: textTheme.bodyMedium?.copyWith(
+                            color: colorScheme.onInverseSurface,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  spacing: AppSpacing.xs,
+                  children: [
+                    TextButton(
+                      onPressed: () {
+                        messenger.hideCurrentSnackBar();
+                      },
+                      style: TextButton.styleFrom(
+                        foregroundColor: colorScheme.inversePrimary,
+                      ),
+                      child: const Text('Dismiss'),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: () {
+                        messenger.hideCurrentSnackBar();
+                        ref.read(mediaProvider.notifier).openDownloadedFile();
+                      },
+                      icon: const Icon(Icons.open_in_new_rounded),
+                      label: const Text('Open File'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+  }
+
+  String _snackBarFilename(MediaSuccess state) {
+    final downloadedFilename = state.downloadedFilename?.trim();
+    if (downloadedFilename != null && downloadedFilename.isNotEmpty) {
+      return downloadedFilename;
+    }
+
+    final savedFilePath = state.savedFilePath?.trim();
+    if (savedFilePath == null || savedFilePath.isEmpty) {
+      return 'Download';
+    }
+
+    final normalizedPath = savedFilePath.replaceAll('\\', '/');
+    final pathSegments = normalizedPath.split('/');
+    final fallbackFilename =
+        pathSegments.isEmpty ? savedFilePath : pathSegments.last;
+    return fallbackFilename.trim().isEmpty ? 'Download' : fallbackFilename;
   }
 
   void _onUrlChanged() {
