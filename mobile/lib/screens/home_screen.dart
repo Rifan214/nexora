@@ -60,7 +60,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final canRequestMetadata = hasMediaUrl && !isMediaBusy;
 
     if (_selectedDestinationIndex == NexoraNavigationBar.downloadsIndex) {
-      return _buildScaffold(DownloadsContent(mediaState: mediaState));
+      final mediaController = ref.read(mediaProvider.notifier);
+      return _buildScaffold(
+        DownloadsContent(
+          mediaState: mediaState,
+          onCancelDownload: () {
+            unawaited(mediaController.cancelCurrentDownload());
+          },
+        ),
+      );
     }
 
     if (_selectedDestinationIndex == NexoraNavigationBar.historyIndex) {
@@ -265,7 +273,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         state.fileDownloadLoading ||
         state.fileOpenLoading ||
         normalizedStatus == 'pending' ||
-        normalizedStatus == 'processing';
+        normalizedStatus == 'processing' ||
+        normalizedStatus == 'cancelling';
   }
 }
 
@@ -789,7 +798,9 @@ class _MetadataSummary extends StatelessWidget {
 
   bool _isActiveStatus(String? status) {
     final normalizedStatus = status?.toLowerCase();
-    return normalizedStatus == 'pending' || normalizedStatus == 'processing';
+    return normalizedStatus == 'pending' ||
+        normalizedStatus == 'processing' ||
+        normalizedStatus == 'cancelling';
   }
 
   bool _isCompletedStatus(String? status) {
@@ -987,6 +998,14 @@ class _DownloadProgressStatus extends StatelessWidget {
         title: 'Download Failed',
         message: _fallback(error, 'Download failed.'),
         tone: NexoraStateTone.error,
+      );
+    }
+
+    if (normalizedStatus == 'cancelled') {
+      return const NexoraStatePanel(
+        title: 'Download Cancelled',
+        message: 'The download was cancelled.',
+        icon: Icons.cancel_outlined,
       );
     }
 

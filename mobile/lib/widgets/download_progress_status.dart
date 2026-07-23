@@ -22,6 +22,14 @@ String friendlyDownloadStatus({
         : 'Downloading media...';
   }
 
+  if (normalizedStatus == 'cancelling') {
+    return 'Cancelling...';
+  }
+
+  if (normalizedStatus == 'cancelled') {
+    return 'Cancelled';
+  }
+
   if (normalizedStatus == 'completed') {
     return 'Saving to device...';
   }

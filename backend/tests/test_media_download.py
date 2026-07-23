@@ -9,6 +9,7 @@ from yt_dlp.utils import DownloadCancelled, DownloadError
 import app.services.media_service as media_service_module
 from app.models.job import JobStatus
 from app.models.requests import MediaDownloadRequest
+from app.services.download_process_manager import get_download_process_manager
 from app.services.job_manager import get_job_manager
 from app.services.media_service import MediaService
 from app.utils.storage import get_temp_storage_dir
@@ -17,8 +18,10 @@ from app.utils.storage import get_temp_storage_dir
 @pytest.fixture(autouse=True)
 def clear_job_manager() -> None:
     get_job_manager.cache_clear()
+    get_download_process_manager.cache_clear()
     yield
     get_job_manager.cache_clear()
+    get_download_process_manager.cache_clear()
 
 
 class FakeYoutubeDL:

@@ -89,6 +89,38 @@ def test_websocket_receives_failed_update() -> None:
             }
 
 
+def test_websocket_sends_cancelled_update_then_closes() -> None:
+    manager = JobManager()
+    websocket_manager = WebSocketManager()
+    manager.add_update_listener(websocket_manager.broadcast_job_update)
+    job = manager.create_job(media_url="https://www.youtube.com/watch?v=cancelled", platform="youtube")
+    app = _create_test_app(manager=manager, websocket_manager=websocket_manager)
+
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/ws/jobs/{job.job_id}") as websocket:
+            websocket.receive_json()
+
+            manager.mark_cancelling(job.job_id)
+            assert websocket.receive_json()["status"] == JobStatus.cancelling.value
+
+            manager.mark_cancelled(job.job_id)
+            cancelled_message = websocket.receive_json()
+            assert cancelled_message == {
+                "job_id": str(job.job_id),
+                "status": JobStatus.cancelled.value,
+                "progress": 0,
+                "download_url": None,
+                "error": None,
+            }
+
+            with pytest.raises(WebSocketDisconnect) as disconnect:
+                websocket.receive_json()
+
+            assert disconnect.value.code == status.WS_1000_NORMAL_CLOSURE
+
+        assert _eventually(lambda: websocket_manager.active_connection_count(job.job_id) == 0)
+
+
 def test_multiple_websocket_clients_receive_same_job_update() -> None:
     manager = JobManager()
     websocket_manager = WebSocketManager()

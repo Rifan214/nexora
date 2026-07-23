@@ -116,3 +116,14 @@ Messages are JSON job snapshots:
 ```
 
 REST polling with `GET /jobs/{job_id}` remains supported as a fallback.
+
+Active downloads can be cancelled with:
+
+```text
+POST /jobs/{job_id}/cancel
+```
+
+The endpoint returns the current public job state. Active jobs first report
+`cancelling` and then publish `cancelled` over the existing WebSocket. Completed
+jobs are left untouched; cancelled and failed artifacts are removed from temporary
+storage and are never eligible for local download history.

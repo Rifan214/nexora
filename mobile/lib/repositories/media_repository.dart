@@ -118,6 +118,37 @@ class MediaRepository {
     return job;
   }
 
+  Future<JobUpdate> cancelDownloadJob(String jobId) async {
+    final trimmedJobId = jobId.trim();
+    if (trimmedJobId.isEmpty) {
+      throw const ApiException('Invalid job id.');
+    }
+
+    final response = await _apiService.postJson(
+      ApiPaths.cancelJob(trimmedJobId),
+    );
+    final success = response['success'] == true;
+    if (!success) {
+      final error = response['error'];
+      final details = error is Map ? error['details'] : null;
+      final message = details is String && details.trim().isNotEmpty
+          ? details.trim()
+          : response['message'];
+      throw ApiException(
+        message is String && message.trim().isNotEmpty
+            ? message.trim()
+            : 'Unable to cancel the download.',
+      );
+    }
+
+    final rawData = response['data'];
+    if (rawData is! Map) {
+      throw const ApiException('Invalid cancellation response from server.');
+    }
+
+    return JobUpdate.fromJson(Map<String, dynamic>.from(rawData));
+  }
+
   Stream<JobUpdate> listenToJob(String jobId) {
     final trimmedJobId = jobId.trim();
     if (trimmedJobId.isEmpty) {

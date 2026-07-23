@@ -94,7 +94,10 @@ class JobManager:
                 "updated_at": _utcnow(),
             }
         )
-        return self._store_updated_job(updated_job)
+        return self._store_updated_job(
+            updated_job,
+            expected_statuses={JobStatus.pending, JobStatus.processing},
+        )
 
     def update_job_metadata(
         self,
@@ -116,7 +119,10 @@ class JobManager:
                 "updated_at": _utcnow(),
             }
         )
-        return self._store_updated_job(updated_job)
+        return self._store_updated_job(
+            updated_job,
+            expected_statuses={JobStatus.pending, JobStatus.processing},
+        )
 
     def mark_completed(self, job_id: UUID, *, download_url: str | None = None) -> DownloadJob:
         job = self._get_required_job(job_id)
@@ -140,7 +146,10 @@ class JobManager:
                 "updated_at": now,
             }
         )
-        return self._store_updated_job(updated_job)
+        return self._store_updated_job(
+            updated_job,
+            expected_statuses={JobStatus.pending, JobStatus.processing},
+        )
 
     def mark_failed(self, job_id: UUID, *, error_message: str) -> DownloadJob:
         job = self._get_required_job(job_id)
@@ -152,7 +161,55 @@ class JobManager:
                 "updated_at": _utcnow(),
             }
         )
-        return self._store_updated_job(updated_job)
+        return self._store_updated_job(
+            updated_job,
+            expected_statuses={JobStatus.pending, JobStatus.processing},
+        )
+
+    def mark_cancelling(self, job_id: UUID) -> DownloadJob:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise KeyError(job_id)
+            if job.status in {JobStatus.completed, JobStatus.cancelling, JobStatus.cancelled}:
+                return job
+            if job.status in {JobStatus.failed, JobStatus.expired}:
+                raise ValueError(f"Job '{job.job_id}' cannot be cancelled")
+
+            updated_job = job.model_copy(
+                update={
+                    "status": JobStatus.cancelling,
+                    "error_message": None,
+                    "updated_at": _utcnow(),
+                }
+            )
+            self._jobs[job_id] = updated_job
+
+        self._publish_job_update(updated_job)
+        return updated_job
+
+    def mark_cancelled(self, job_id: UUID) -> DownloadJob:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise KeyError(job_id)
+            if job.status in {JobStatus.completed, JobStatus.cancelled}:
+                return job
+            if job.status in {JobStatus.failed, JobStatus.expired}:
+                raise ValueError(f"Job '{job.job_id}' cannot be cancelled")
+
+            updated_job = job.model_copy(
+                update={
+                    "status": JobStatus.cancelled,
+                    "download_url": None,
+                    "error_message": None,
+                    "updated_at": _utcnow(),
+                }
+            )
+            self._jobs[job_id] = updated_job
+
+        self._publish_job_update(updated_job)
+        return updated_job
 
     def schedule_expiration(self, job_id: UUID, *, expires_at: datetime) -> DownloadJob | None:
         """Update cleanup timing without changing the public job state."""
@@ -186,13 +243,26 @@ class JobManager:
             raise KeyError(job_id)
         return job
 
-    def _store_updated_job(self, job: DownloadJob) -> DownloadJob:
+    def _store_updated_job(
+        self,
+        job: DownloadJob,
+        *,
+        expected_statuses: set[JobStatus] | None = None,
+    ) -> DownloadJob:
         with self._lock:
+            current_job = self._jobs.get(job.job_id)
+            if current_job is None:
+                raise KeyError(job.job_id)
+            if expected_statuses is not None and current_job.status not in expected_statuses:
+                raise ValueError(f"Job '{job.job_id}' is not active")
             self._jobs[job.job_id] = job
 
+        self._publish_job_update(job)
+        return job
+
+    def _publish_job_update(self, job: DownloadJob) -> None:
         logger.info("Job updated job_id=%s status=%s progress=%s", job.job_id, job.status, job.progress)
         self._notify_update_listeners(job)
-        return job
 
     def _notify_update_listeners(self, job: DownloadJob) -> None:
         with self._lock:
@@ -205,7 +275,13 @@ class JobManager:
                 logger.exception("Job update listener failed job_id=%s", job.job_id)
 
     def _assert_active(self, job: DownloadJob) -> None:
-        if job.status in {JobStatus.completed, JobStatus.failed, JobStatus.expired}:
+        if job.status in {
+            JobStatus.cancelling,
+            JobStatus.completed,
+            JobStatus.failed,
+            JobStatus.cancelled,
+            JobStatus.expired,
+        }:
             raise ValueError(f"Job '{job.job_id}' is not active")
 
     def _expire_if_needed(self, job: DownloadJob) -> DownloadJob:

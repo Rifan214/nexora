@@ -12,9 +12,11 @@ class DownloadsContent extends StatelessWidget {
   const DownloadsContent({
     super.key,
     required this.mediaState,
+    required this.onCancelDownload,
   });
 
   final MediaState mediaState;
+  final VoidCallback onCancelDownload;
 
   @override
   Widget build(BuildContext context) {
@@ -71,7 +73,10 @@ class DownloadsContent extends StatelessWidget {
                       : Column(
                           children: [
                             for (final download in activeDownloads) ...[
-                              _ActiveDownloadCard(download: download),
+                              _ActiveDownloadCard(
+                                download: download,
+                                onCancelDownload: onCancelDownload,
+                              ),
                               const SizedBox(height: AppSpacing.xl),
                             ],
                           ],
@@ -95,6 +100,7 @@ class DownloadsContent extends StatelessWidget {
     final isActive = state.currentJobId != null &&
         (normalizedStatus == 'pending' ||
             normalizedStatus == 'processing' ||
+            normalizedStatus == 'cancelling' ||
             _isSavingToDevice(state));
     return isActive ? <MediaSuccess>[state] : const <MediaSuccess>[];
   }
@@ -143,9 +149,13 @@ class _DownloadCountBadge extends StatelessWidget {
 }
 
 class _ActiveDownloadCard extends StatelessWidget {
-  const _ActiveDownloadCard({required this.download});
+  const _ActiveDownloadCard({
+    required this.download,
+    required this.onCancelDownload,
+  });
 
   final MediaSuccess download;
+  final VoidCallback onCancelDownload;
 
   @override
   Widget build(BuildContext context) {
@@ -160,7 +170,10 @@ class _ActiveDownloadCard extends StatelessWidget {
               mediaType: download.currentMediaType,
             );
             final details = _DownloadDetails(download: download);
-            final cancelAction = const _UnavailableCancelAction();
+            final cancelAction = _CancelDownloadAction(
+              status: download.currentStatus,
+              onCancel: onCancelDownload,
+            );
 
             if (useVerticalLayout) {
               return Column(
@@ -352,21 +365,38 @@ class _DownloadStatusBadge extends StatelessWidget {
   }
 }
 
-class _UnavailableCancelAction extends StatelessWidget {
-  const _UnavailableCancelAction();
+class _CancelDownloadAction extends StatelessWidget {
+  const _CancelDownloadAction({
+    required this.status,
+    required this.onCancel,
+  });
+
+  final String? status;
+  final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
+    final normalizedStatus = status?.trim().toLowerCase();
+    final isCancelling = normalizedStatus == 'cancelling';
+    final isCancellable = normalizedStatus == 'pending' ||
+        normalizedStatus == 'processing';
+
     return Semantics(
       button: true,
-      enabled: false,
-      label: 'Cancel download unavailable',
+      enabled: isCancellable,
+      label: isCancelling ? 'Cancelling download' : 'Cancel download',
       child: TextButton.icon(
-        onPressed: null,
-        icon: const Icon(Icons.cancel_outlined),
-        label: const Text('Cancel'),
+        onPressed: isCancellable ? onCancel : null,
+        icon: isCancelling
+            ? const SizedBox(
+                width: AppSpacing.md,
+                height: AppSpacing.md,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.cancel_outlined),
+        label: Text(isCancelling ? 'Cancelling...' : 'Cancel'),
         style: TextButton.styleFrom(
           disabledForegroundColor: colorScheme.error.withAlpha(144),
           minimumSize: const Size(0, AppSizes.touchTarget),

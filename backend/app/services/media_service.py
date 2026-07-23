@@ -3,17 +3,22 @@ from __future__ import annotations
 import logging
 import threading
 from typing import Any
+from uuid import UUID
 
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError, ExtractorError, YoutubeDLError
 
 from app.core.config import get_settings
 from app.core.exceptions import APIError
-from app.models.job import DownloadJob
+from app.models.job import DownloadJob, JobStatus
 from app.models.media import AudioOption, MediaMetadata
 from app.models.requests import MediaDownloadRequest
 from app.services.cleanup_service import get_cleanup_service
-from app.services.job_manager import build_job_download_url, get_job_manager
+from app.services.download_process_manager import (
+    DownloadProcessManager,
+    get_download_process_manager,
+)
+from app.services.job_manager import JobManager, build_job_download_url, get_job_manager
 from app.services.quality_selector import QualitySelector
 from app.utils.platforms import detect_platform_from_url
 from app.utils.storage import build_download_outtmpl, find_downloaded_file, get_temp_storage_dir
@@ -30,9 +35,10 @@ _AUDIO_MP3_POSTPROCESSOR = {
 
 
 class MediaService:
-    def __init__(self) -> None:
+    def __init__(self, *, process_manager: DownloadProcessManager | None = None) -> None:
         self._settings = get_settings()
         self._quality_selector = QualitySelector()
+        self._process_manager = process_manager or get_download_process_manager()
 
     def get_metadata(self, url: str) -> MediaMetadata:
         normalized_url = validate_http_url(url)
@@ -130,13 +136,36 @@ class MediaService:
             daemon=True,
             name=f"nexora-download-{job.job_id}",
         )
-        worker.start()
+        self._process_manager.register_job(job.job_id, worker=worker)
+        try:
+            worker.start()
+        except RuntimeError as exc:
+            self._process_manager.finish_job(job.job_id)
+            self._mark_download_failed(
+                job.job_id,
+                error_message="Unable to start the download worker",
+                job_manager=job_manager,
+            )
+            raise APIError(
+                code="DOWNLOAD_START_ERROR",
+                message="Unable to start download",
+                details="The backend could not start the download worker",
+                status_code=500,
+            ) from exc
         return job
 
-    def _download_job_background(self, job_id, url: str, format_selector: str, output_type: str) -> None:
+    def _download_job_background(
+        self,
+        job_id: UUID,
+        url: str,
+        format_selector: str,
+        output_type: str,
+    ) -> None:
         job_manager = get_job_manager()
+        self._process_manager.register_job(job_id, worker=threading.current_thread())
 
         try:
+            self._process_manager.raise_if_cancelled(job_id)
             job_manager.update_progress(job_id, 0)
             initial_platform = detect_platform_from_url(url)
             if initial_platform != "youtube":
@@ -155,7 +184,10 @@ class MediaService:
                 )
                 return
 
-            extracted_info = self._extract_info(url)
+            self._process_manager.raise_if_cancelled(job_id)
+            with self._process_manager.worker_context(job_id):
+                extracted_info = self._extract_info(url)
+            self._process_manager.raise_if_cancelled(job_id)
             detected_platform = self._detect_platform(extracted_info)
             if detected_platform != "youtube":
                 self._mark_download_failed(
@@ -186,9 +218,15 @@ class MediaService:
                 job_manager=job_manager,
             )
 
-            with YoutubeDL(ydl_options) as youtube_dl:
-                downloaded_info = youtube_dl.extract_info(url, download=True)
+            with self._process_manager.worker_context(job_id):
+                with YoutubeDL(ydl_options) as youtube_dl:
+                    self._process_manager.attach_downloader(job_id, youtube_dl)
+                    try:
+                        downloaded_info = youtube_dl.extract_info(url, download=True)
+                    finally:
+                        self._process_manager.detach_downloader(job_id, youtube_dl)
 
+            self._process_manager.raise_if_cancelled(job_id)
             if not downloaded_info:
                 raise FileNotFoundError("yt-dlp did not return download metadata")
 
@@ -196,39 +234,84 @@ class MediaService:
             if downloaded_file is None or not downloaded_file.is_file():
                 raise FileNotFoundError("Downloaded file was not found in storage/temp")
 
+            self._process_manager.raise_if_cancelled(job_id)
             download_url = build_job_download_url(job_id)
 
             job_manager.mark_completed(job_id, download_url=download_url)
             logger.info("Download completed job_id=%s download_url=%s", job_id, download_url)
         except YoutubeDLError as exc:
-            error_message = self._describe_download_error(exc)
-            self._mark_download_failed(job_id, error_message=error_message, job_manager=job_manager)
-            logger.warning("Download failed job_id=%s error=%s", job_id, error_message)
-        except (OSError, FileNotFoundError, PermissionError) as exc:
-            error_message = f"Filesystem error: {exc}"
-            self._mark_download_failed(job_id, error_message=error_message, job_manager=job_manager)
-            logger.warning("Download failed job_id=%s error=%s", job_id, error_message)
-        except Exception as exc:
-            error_message = "An unexpected error occurred while downloading the media"
-            if self._settings.debug:
-                logger.exception("Download failed job_id=%s", job_id)
-            else:
+            if not self._finalize_cancelled_if_requested(job_id, job_manager=job_manager):
+                error_message = self._describe_download_error(exc)
+                self._mark_download_failed(job_id, error_message=error_message, job_manager=job_manager)
                 logger.warning("Download failed job_id=%s error=%s", job_id, error_message)
-            self._mark_download_failed(job_id, error_message=error_message, job_manager=job_manager)
+        except (OSError, FileNotFoundError, PermissionError) as exc:
+            if not self._finalize_cancelled_if_requested(job_id, job_manager=job_manager):
+                error_message = f"Filesystem error: {exc}"
+                self._mark_download_failed(job_id, error_message=error_message, job_manager=job_manager)
+                logger.warning("Download failed job_id=%s error=%s", job_id, error_message)
+        except Exception as exc:
+            if not self._finalize_cancelled_if_requested(job_id, job_manager=job_manager):
+                error_message = "An unexpected error occurred while downloading the media"
+                if self._settings.debug:
+                    logger.exception("Download failed job_id=%s", job_id)
+                else:
+                    logger.warning("Download failed job_id=%s error=%s", job_id, error_message)
+                self._mark_download_failed(job_id, error_message=error_message, job_manager=job_manager)
+        finally:
+            self._process_manager.finish_job(job_id)
 
-    @staticmethod
-    def _mark_download_failed(job_id, *, error_message: str, job_manager) -> None:
+    def _mark_download_failed(
+        self,
+        job_id: UUID,
+        *,
+        error_message: str,
+        job_manager: JobManager,
+    ) -> None:
+        marked_failed = False
         try:
             job_manager.mark_failed(job_id, error_message=error_message)
+            marked_failed = True
+        except ValueError:
+            if self._finalize_cancelled_if_requested(job_id, job_manager=job_manager):
+                return
+            raise
         finally:
             # Cleanup is deliberately best-effort so a cleanup failure cannot
             # hide the original download error or stop the worker.
-            get_cleanup_service().cleanup_failed_download(job_id, job_manager=job_manager)
+            if marked_failed:
+                get_cleanup_service().cleanup_failed_download(job_id, job_manager=job_manager)
+
+    def _finalize_cancelled_if_requested(
+        self,
+        job_id: UUID,
+        *,
+        job_manager: JobManager,
+    ) -> bool:
+        job = job_manager.get_job(job_id)
+        if job is not None and job.status in {
+            JobStatus.completed,
+            JobStatus.failed,
+            JobStatus.expired,
+        }:
+            return False
+
+        cancellation_requested = self._process_manager.is_cancellation_requested(job_id) or (
+            job is not None and job.status in {JobStatus.cancelling, JobStatus.cancelled}
+        )
+        if not cancellation_requested:
+            return False
+
+        if job is not None and job.status in {JobStatus.pending, JobStatus.processing}:
+            job_manager.mark_cancelling(job_id)
+        get_cleanup_service().cleanup_cancelled_download(job_id, job_manager=job_manager)
+        logger.info("Download cancelled job_id=%s", job_id)
+        return True
 
     def _build_progress_hook(self, job_id, job_manager):
         last_progress = {"value": -1}
 
         def hook(payload: dict[str, Any]) -> None:
+            self._process_manager.raise_if_cancelled(job_id)
             status = payload.get("status")
             if status != "downloading":
                 if status == "finished":
@@ -252,6 +335,12 @@ class MediaService:
 
         return hook
 
+    def _build_postprocessor_hook(self, job_id: UUID):
+        def hook(_: dict[str, Any]) -> None:
+            self._process_manager.raise_if_cancelled(job_id)
+
+        return hook
+
     def _build_download_options(
         self,
         *,
@@ -272,6 +361,7 @@ class MediaService:
             "outtmpl": output_template,
             "paths": {"home": str(temp_dir)},
             "progress_hooks": [self._build_progress_hook(job_id, job_manager)],
+            "postprocessor_hooks": [self._build_postprocessor_hook(job_id)],
         }
         if output_type == "audio":
             # yt-dlp chooses its best audio stream, then FFmpeg produces a
@@ -317,7 +407,14 @@ class MediaService:
         }
 
         with YoutubeDL(ydl_options) as youtube_dl:
-            extracted_info = youtube_dl.extract_info(url, download=False)
+            active_job_id = self._process_manager.current_job_id()
+            if active_job_id is not None:
+                self._process_manager.attach_downloader(active_job_id, youtube_dl)
+            try:
+                extracted_info = youtube_dl.extract_info(url, download=False)
+            finally:
+                if active_job_id is not None:
+                    self._process_manager.detach_downloader(active_job_id, youtube_dl)
 
         if not isinstance(extracted_info, dict):
             raise APIError(

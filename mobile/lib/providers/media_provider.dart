@@ -95,6 +95,62 @@ class MediaController extends Notifier<MediaState> {
     return _createDownloadJob(MediaDownloadType.audio);
   }
 
+  Future<void> cancelCurrentDownload() async {
+    final current = _successState;
+    final jobId = current?.currentJobId?.trim();
+    final status = current?.currentStatus?.trim().toLowerCase();
+    if (current == null ||
+        jobId == null ||
+        jobId.isEmpty ||
+        current.downloadLoading ||
+        current.fileDownloadLoading ||
+        current.fileOpenLoading ||
+        status == 'cancelling' ||
+        !_isActiveStatus(status)) {
+      return;
+    }
+
+    state = current.copyWith(
+      currentStatus: 'cancelling',
+      downloadError: null,
+    );
+
+    try {
+      final update = await ref
+          .read(mediaRepositoryProvider)
+          .cancelDownloadJob(jobId);
+      if (update.jobId.toLowerCase() != jobId.toLowerCase()) {
+        throw const ApiException('Invalid cancellation response from server.');
+      }
+
+      final latest = _successState;
+      if (latest != null) {
+        _handleJobUpdate(update);
+      }
+    } on ApiException catch (error) {
+      final latest = _successState;
+      if (latest == null ||
+          _isTerminalStatus(latest.currentStatus)) {
+        return;
+      }
+
+      state = latest.copyWith(
+        currentStatus: status,
+        downloadError: error.message,
+      );
+    } catch (_) {
+      final latest = _successState;
+      if (latest == null || _isTerminalStatus(latest.currentStatus)) {
+        return;
+      }
+
+      state = latest.copyWith(
+        currentStatus: status,
+        downloadError: 'Unable to cancel the download.',
+      );
+    }
+  }
+
   Future<void> _createDownloadJob(MediaDownloadType mediaType) async {
     final current = _successState;
     if (current == null ||
@@ -335,6 +391,11 @@ class MediaController extends Notifier<MediaState> {
       return;
     }
 
+    if (_isTerminalStatus(current.currentStatus) &&
+        !_isTerminalStatus(update.status)) {
+      return;
+    }
+
     state = current.copyWith(
       downloadError: update.isFailed ? update.error ?? 'Download failed.' : null,
       currentJobId: update.jobId,
@@ -522,12 +583,16 @@ class MediaController extends Notifier<MediaState> {
 
   bool _isActiveStatus(String? status) {
     final normalizedStatus = status?.toLowerCase();
-    return normalizedStatus == 'pending' || normalizedStatus == 'processing';
+    return normalizedStatus == 'pending' ||
+        normalizedStatus == 'processing' ||
+        normalizedStatus == 'cancelling';
   }
 
   bool _isTerminalStatus(String? status) {
     final normalizedStatus = status?.toLowerCase();
-    return normalizedStatus == 'completed' || normalizedStatus == 'failed';
+    return normalizedStatus == 'completed' ||
+        normalizedStatus == 'failed' ||
+        normalizedStatus == 'cancelled';
   }
 
   bool _isCompletedStatus(String? status) {

@@ -127,11 +127,61 @@ class CleanupService:
             logger.exception("Failed download cleanup error job_id=%s", job_id)
             return 0
 
+    def cleanup_cancelled_download(
+        self,
+        job_id: UUID,
+        *,
+        job_manager: JobManager,
+    ) -> DownloadJob | None:
+        """Remove cancellation artifacts before publishing the terminal state."""
+        logger.info("Cleanup started job_id=%s reason=cancelled_download", job_id)
+        job: DownloadJob | None = None
+        try:
+            job = job_manager.get_job(job_id)
+            if job is not None and job.status not in {
+                JobStatus.cancelling,
+                JobStatus.cancelled,
+            }:
+                logger.warning(
+                    "Cancelled file cleanup skipped job_id=%s reason=job_not_cancelling status=%s",
+                    job_id,
+                    job.status,
+                )
+                return job
+
+            removed_count, deletion_failed = self._remove_storage_files(
+                job_id,
+                reason="cancelled",
+            )
+            if job is None:
+                return None
+
+            cancelled_job = job_manager.mark_cancelled(job_id)
+            job_manager.schedule_expiration(
+                job_id,
+                expires_at=_utcnow() + self._failed_download_retention,
+            )
+            logger.info(
+                "Cancelled download cleanup completed job_id=%s removed_files=%s",
+                job_id,
+                removed_count,
+            )
+            if deletion_failed:
+                logger.warning("Cancelled download cleanup incomplete job_id=%s", job_id)
+            return cancelled_job
+        except Exception:
+            logger.exception("Cancelled download cleanup error job_id=%s", job_id)
+            return job
+
     @staticmethod
     def _is_expired_download_job(job: DownloadJob, now: datetime) -> bool:
         if job.status is JobStatus.expired:
             return True
-        if job.status not in {JobStatus.completed, JobStatus.failed}:
+        if job.status not in {
+            JobStatus.completed,
+            JobStatus.failed,
+            JobStatus.cancelled,
+        }:
             return False
         return job.expires_at is not None and job.expires_at <= now
 

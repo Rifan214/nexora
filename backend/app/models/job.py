@@ -10,8 +10,10 @@ from pydantic import BaseModel, Field
 class JobStatus(str, Enum):
     pending = "pending"
     processing = "processing"
+    cancelling = "cancelling"
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
     expired = "expired"
 
 

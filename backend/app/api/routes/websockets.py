@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
 
+from app.models.job import JobStatus
 from app.services.job_manager import JobManager, get_job_manager
 from app.services.websocket_manager import (
     JobWebSocketConnection,
@@ -34,6 +35,12 @@ async def job_updates_websocket(
     connection = await websocket_manager.connect(job_id=job_id, websocket=websocket)
     try:
         await websocket_manager.send_job_update(connection, job)
+        if job.status is JobStatus.cancelled:
+            await websocket.close(
+                code=status.WS_1000_NORMAL_CLOSURE,
+                reason="Download cancelled",
+            )
+            return
         await _relay_job_updates(connection, websocket_manager)
     except WebSocketDisconnect:
         pass
@@ -68,4 +75,11 @@ async def _relay_job_updates(
                 return
 
         if update_task in done_tasks:
-            await websocket_manager.send_message(connection, update_task.result())
+            message = update_task.result()
+            await websocket_manager.send_message(connection, message)
+            if message["status"] == JobStatus.cancelled.value:
+                await connection.websocket.close(
+                    code=status.WS_1000_NORMAL_CLOSURE,
+                    reason="Download cancelled",
+                )
+                return

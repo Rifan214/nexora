@@ -17,7 +17,9 @@ class JobUpdate {
 
   bool get isCompleted => status == 'completed';
   bool get isFailed => status == 'failed';
-  bool get isTerminal => isCompleted || isFailed;
+  bool get isCancelling => status == 'cancelling';
+  bool get isCancelled => status == 'cancelled';
+  bool get isTerminal => isCompleted || isFailed || isCancelled;
 
   factory JobUpdate.fromJson(Map<String, dynamic> json) {
     final jobId = _readString(json['job_id']);
@@ -32,7 +34,7 @@ class JobUpdate {
       status: status,
       progress: _readProgress(json['progress']),
       downloadUrl: _readOptionalString(json['download_url']),
-      error: _readOptionalString(json['error']),
+      error: _readOptionalString(json['error'] ?? json['error_message']),
     );
   }
 
