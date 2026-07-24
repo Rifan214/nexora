@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -64,8 +65,10 @@ class HistoryContent extends ConsumerWidget {
                               download: download,
                               onDelete: () {
                                 unawaited(
-                                  historyController.deleteHistoryItem(
-                                    download.id,
+                                  _confirmAndDeleteHistoryItem(
+                                    context,
+                                    historyController,
+                                    download,
                                   ),
                                 );
                               },
@@ -101,6 +104,99 @@ class HistoryContent extends ConsumerWidget {
       data: (downloads) => downloads.isEmpty ? 'empty' : 'history',
       loading: () => 'loading',
       error: (_, __) => 'error',
+    );
+  }
+
+  Future<void> _confirmAndDeleteHistoryItem(
+    BuildContext context,
+    DownloadHistoryController historyController,
+    DownloadHistoryItem download,
+  ) async {
+    final deleteOption = await showDialog<_HistoryDeleteOption>(
+      context: context,
+      builder: (context) => const _HistoryDeleteDialog(),
+    );
+
+    if (deleteOption == null) {
+      return;
+    }
+
+    await historyController.deleteHistoryItem(download.id);
+
+    if (deleteOption == _HistoryDeleteOption.historyAndFile) {
+      await _deleteLocalFileIfPresent(download.localFilePath);
+    }
+  }
+
+  Future<void> _deleteLocalFileIfPresent(String path) async {
+    try {
+      final fileType = await FileSystemEntity.type(path, followLinks: false);
+      if (fileType == FileSystemEntityType.file) {
+        await File(path).delete();
+      }
+    } on FileSystemException {
+      // A missing or inaccessible local file must not prevent history cleanup.
+    }
+  }
+}
+
+enum _HistoryDeleteOption { historyOnly, historyAndFile }
+
+class _HistoryDeleteDialog extends StatefulWidget {
+  const _HistoryDeleteDialog();
+
+  @override
+  State<_HistoryDeleteDialog> createState() => _HistoryDeleteDialogState();
+}
+
+class _HistoryDeleteDialogState extends State<_HistoryDeleteDialog> {
+  _HistoryDeleteOption _selectedOption = _HistoryDeleteOption.historyOnly;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return AlertDialog(
+      icon: Icon(Icons.delete_outline_rounded, color: colorScheme.error),
+      title: const Text('Delete this download?'),
+      content: RadioGroup<_HistoryDeleteOption>(
+        groupValue: _selectedOption,
+        onChanged: (option) {
+          if (option != null) {
+            setState(() => _selectedOption = option);
+          }
+        },
+        child: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Choose what to remove.'),
+            SizedBox(height: AppSpacing.sm),
+            RadioListTile<_HistoryDeleteOption>(
+              contentPadding: EdgeInsets.zero,
+              value: _HistoryDeleteOption.historyOnly,
+              title: Text('History only'),
+              subtitle: Text('Keep the downloaded file on this device.'),
+            ),
+            RadioListTile<_HistoryDeleteOption>(
+              contentPadding: EdgeInsets.zero,
+              value: _HistoryDeleteOption.historyAndFile,
+              title: Text('History and downloaded file'),
+              subtitle: Text('Remove the saved file from this device.'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_selectedOption),
+          child: const Text('Delete'),
+        ),
+      ],
     );
   }
 }
