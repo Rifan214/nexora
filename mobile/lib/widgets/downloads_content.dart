@@ -170,10 +170,12 @@ class _ActiveDownloadCard extends StatelessWidget {
               mediaType: download.currentMediaType,
             );
             final details = _DownloadDetails(download: download);
-            final cancelAction = _CancelDownloadAction(
-              status: download.currentStatus,
-              onCancel: onCancelDownload,
-            );
+            final action = _isSavingToDevice(download)
+                ? const _SavingToDeviceAction()
+                : _CancelDownloadAction(
+                    status: download.currentStatus,
+                    onCancel: onCancelDownload,
+                  );
 
             if (useVerticalLayout) {
               return Column(
@@ -185,7 +187,7 @@ class _ActiveDownloadCard extends StatelessWidget {
                   const SizedBox(height: AppSpacing.sm),
                   Align(
                     alignment: Alignment.centerRight,
-                    child: cancelAction,
+                    child: action,
                   ),
                 ],
               );
@@ -201,7 +203,7 @@ class _ActiveDownloadCard extends StatelessWidget {
                 const SizedBox(width: AppSpacing.md),
                 Expanded(child: details),
                 const SizedBox(width: AppSpacing.sm),
-                cancelAction,
+                action,
               ],
             );
           },
@@ -401,6 +403,32 @@ class _CancelDownloadAction extends StatelessWidget {
           disabledForegroundColor: colorScheme.error.withAlpha(144),
           minimumSize: const Size(0, AppSizes.touchTarget),
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+        ),
+      ),
+    );
+  }
+}
+
+class _SavingToDeviceAction extends StatelessWidget {
+  const _SavingToDeviceAction();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Semantics(
+      enabled: false,
+      label: 'Saving file to device',
+      child: ExcludeSemantics(
+        child: TextButton.icon(
+          onPressed: null,
+          icon: const Icon(Icons.save_rounded),
+          label: const Text('Saving...'),
+          style: TextButton.styleFrom(
+            disabledForegroundColor: colorScheme.primary.withAlpha(144),
+            minimumSize: const Size(0, AppSizes.touchTarget),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          ),
         ),
       ),
     );
