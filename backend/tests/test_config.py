@@ -26,3 +26,9 @@ def test_file_cleanup_retention_is_read_from_environment(monkeypatch: pytest.Mon
 
     assert settings.temp_file_retention_minutes == 12
     assert settings.failed_download_retention_minutes == 3
+
+
+def test_cleanup_interval_is_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLEANUP_INTERVAL_MINUTES", "9")
+
+    assert get_settings().cleanup_interval_minutes == 9

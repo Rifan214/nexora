@@ -28,6 +28,11 @@ class Settings(BaseSettings):
         ge=0,
         alias="FAILED_DOWNLOAD_RETENTION_MINUTES",
     )
+    cleanup_interval_minutes: int = Field(
+        default=5,
+        ge=1,
+        alias="CLEANUP_INTERVAL_MINUTES",
+    )
 
     @property
     def cors_origin_list(self) -> list[str]:

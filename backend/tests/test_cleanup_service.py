@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import os
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -8,7 +11,8 @@ from app.api.dependencies import get_cleanup_service
 from app.api.routes.media import get_media_service
 from app.main import create_app
 from app.models.requests import MediaDownloadRequest
-from app.services.cleanup_service import CleanupService
+from app.services.cleanup_service import CleanupService, CleanupWorker
+from app.services.download_process_manager import DownloadProcessManager
 from app.services.job_manager import JobManager, get_job_manager
 from app.utils.storage import get_temp_storage_dir
 
@@ -132,6 +136,98 @@ def test_cleanup_leaves_active_jobs_and_files_untouched() -> None:
         completed_file.unlink(missing_ok=True)
 
 
+def test_cleanup_worker_removes_stale_artifacts_and_preserves_active_files(
+    monkeypatch,
+) -> None:
+    storage_dir = _create_test_storage_dir()
+    monkeypatch.setattr("app.services.cleanup_service.get_temp_storage_dir", lambda: storage_dir)
+    manager = JobManager()
+    process_manager = DownloadProcessManager()
+    active_job = manager.create_job(
+        media_url="https://www.youtube.com/watch?v=active-artifact",
+        platform="youtube",
+    )
+    process_manager.register_job(active_job.job_id)
+
+    active_file = storage_dir / f"{active_job.job_id}.mp4.part"
+    stale_video = storage_dir / "2e198a17-fd24-4988-a720-a5bf6e7f15b2.mp4"
+    stale_part = storage_dir / "925ee23d-5ea4-41dc-8c24-93b064ad9d87.webm.part"
+    stale_ytdl = storage_dir / "a84587ae-df09-4b9b-a818-a3fd50f64b2f.ytdl"
+    stale_metadata = storage_dir / "bf9de4fb-7a20-4260-b438-75a3fda64697.info.json"
+    storage_marker = storage_dir / ".gitkeep"
+    try:
+        for file_path in [
+            active_file,
+            stale_video,
+            stale_part,
+            stale_ytdl,
+            stale_metadata,
+            storage_marker,
+        ]:
+            file_path.write_bytes(b"temporary-data")
+
+        old_timestamp = (datetime.now(timezone.utc) - timedelta(minutes=31)).timestamp()
+        for file_path in [
+            active_file,
+            stale_video,
+            stale_part,
+            stale_ytdl,
+            stale_metadata,
+            storage_marker,
+        ]:
+            os.utime(file_path, (old_timestamp, old_timestamp))
+
+        worker = CleanupWorker(
+            cleanup_service=CleanupService(
+                download_expiration=timedelta(minutes=30),
+                temp_file_retention=timedelta(minutes=15),
+                failed_download_retention=timedelta(minutes=0),
+            ),
+            job_manager=manager,
+            process_manager=process_manager,
+            interval=timedelta(minutes=5),
+        )
+
+        worker.run_once()
+
+        assert active_file.exists()
+        assert not stale_video.exists()
+        assert not stale_part.exists()
+        assert not stale_ytdl.exists()
+        assert not stale_metadata.exists()
+        assert storage_marker.exists()
+    finally:
+        active_file.unlink(missing_ok=True)
+        storage_marker.unlink(missing_ok=True)
+        storage_dir.rmdir()
+
+
+def test_cleanup_worker_runs_an_immediate_startup_pass(monkeypatch) -> None:
+    storage_dir = _create_test_storage_dir()
+    monkeypatch.setattr("app.services.cleanup_service.get_temp_storage_dir", lambda: storage_dir)
+    stale_part = storage_dir / "9f1bf076-dd9b-4f49-a676-0f0e04b51adb.mp4.part"
+    try:
+        stale_part.write_bytes(b"partial-download")
+
+        worker = CleanupWorker(
+            cleanup_service=CleanupService(failed_download_retention=timedelta(minutes=0)),
+            job_manager=JobManager(),
+            process_manager=DownloadProcessManager(),
+            interval=timedelta(minutes=5),
+        )
+
+        async def start_and_stop_worker() -> None:
+            await worker.start()
+            await worker.stop()
+
+        asyncio.run(start_and_stop_worker())
+
+        assert not stale_part.exists()
+    finally:
+        stale_part.unlink(missing_ok=True)
+        storage_dir.rmdir()
+
+
 def test_jobs_endpoint_runs_lazy_cleanup_before_returning_job() -> None:
     manager = JobManager(download_expiration=timedelta(minutes=30))
     expired_job = _create_expired_completed_job(manager)
@@ -229,6 +325,12 @@ def _create_expired_completed_job(manager: JobManager):
     expired_job = completed_job.model_copy(update={"expires_at": datetime.now(timezone.utc) - timedelta(minutes=1)})
     manager._jobs[job.job_id] = expired_job
     return expired_job
+
+
+def _create_test_storage_dir():
+    storage_dir = get_temp_storage_dir() / f"cleanup-test-{uuid4()}"
+    storage_dir.mkdir()
+    return storage_dir
 
 
 class _FakeMediaService:
