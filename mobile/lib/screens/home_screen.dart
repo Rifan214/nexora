@@ -5,10 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 
 import '../core/theme/app_tokens.dart';
-import '../models/health_check_result.dart';
 import '../models/media_metadata.dart';
 import '../models/media_state.dart';
-import '../providers/health_provider.dart';
 import '../providers/media_provider.dart';
 import '../widgets/download_progress_status.dart';
 import '../widgets/downloads_content.dart';
@@ -54,9 +52,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       _scheduleCompletionNotification(next);
     });
 
-    final healthState = ref.watch(healthProvider);
     final mediaState = ref.watch(mediaProvider);
-    final isCheckingHealth = healthState.isLoading;
     final hasMediaUrl = _urlController.text.trim().isNotEmpty;
     final isMediaBusy = _isMediaBusy(mediaState);
     final canRequestMetadata = hasMediaUrl && !isMediaBusy;
@@ -81,50 +77,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       return _buildScaffold(const SettingsContent());
     }
 
-    if (mediaState is MediaIdle) {
+    if (mediaState is! MediaSuccess) {
       return _buildScaffold(
         _HomeReadyContent(
           urlController: _urlController,
+          isInputEnabled: !isMediaBusy,
           canAnalyze: canRequestMetadata,
           onPaste: _pasteUrl,
           onAnalyze: () => _getMetadata(canRequestMetadata),
+          statusContent: mediaState is MediaIdle
+              ? null
+              : _MediaStatus(mediaState: mediaState),
         ),
       );
     }
-
-    if (mediaState is MediaSuccess) {
-      return _buildScaffold(
-        _MetadataLoadedContent(
-          urlController: _urlController,
-          isInputEnabled: !isMediaBusy,
-          canAnalyze: canRequestMetadata,
-          showClearAction: hasMediaUrl,
-          onClearUrl: _clearUrl,
-          onAnalyze: () => _getMetadata(canRequestMetadata),
-          metadataContent: _MediaStatus(mediaState: mediaState),
-        ),
-      );
-    }
-
-    final metadataButtonLabel = mediaState is MediaLoading
-        ? 'Loading...'
-        : isMediaBusy
-            ? 'Please wait...'
-            : 'Get Metadata';
 
     return _buildScaffold(
-      _LegacyWorkflowContent(
+      _MetadataLoadedContent(
         urlController: _urlController,
-        healthState: healthState,
-        isCheckingHealth: isCheckingHealth,
-        isMediaBusy: isMediaBusy,
-        canRequestMetadata: canRequestMetadata,
-        metadataButtonLabel: metadataButtonLabel,
-        mediaState: mediaState,
-        onCheckBackend: () {
-          ref.read(healthProvider.notifier).checkBackend();
-        },
-        onGetMetadata: () => _getMetadata(canRequestMetadata),
+        isInputEnabled: !isMediaBusy,
+        canAnalyze: canRequestMetadata,
+        showClearAction: hasMediaUrl,
+        onClearUrl: _clearUrl,
+        onAnalyze: () => _getMetadata(canRequestMetadata),
+        metadataContent: _MediaStatus(mediaState: mediaState),
       ),
     );
   }
@@ -422,15 +398,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 class _HomeReadyContent extends StatelessWidget {
   const _HomeReadyContent({
     required this.urlController,
+    required this.isInputEnabled,
     required this.canAnalyze,
     required this.onPaste,
     required this.onAnalyze,
+    this.statusContent,
   });
 
   final TextEditingController urlController;
+  final bool isInputEnabled;
   final bool canAnalyze;
   final Future<void> Function() onPaste;
   final VoidCallback onAnalyze;
+  final Widget? statusContent;
 
   @override
   Widget build(BuildContext context) {
@@ -512,6 +492,7 @@ class _HomeReadyContent extends StatelessWidget {
                             children: [
                               TextField(
                                 controller: urlController,
+                                enabled: isInputEnabled,
                                 keyboardType: TextInputType.url,
                                 textInputAction: TextInputAction.search,
                                 autocorrect: false,
@@ -526,9 +507,11 @@ class _HomeReadyContent extends StatelessWidget {
                                   prefixIcon: const Icon(Icons.link_rounded),
                                   suffixIcon: IconButton(
                                     tooltip: 'Paste from clipboard',
-                                    onPressed: () {
-                                      onPaste();
-                                    },
+                                    onPressed: isInputEnabled
+                                        ? () {
+                                            onPaste();
+                                          }
+                                        : null,
                                     icon: const Icon(Icons.content_paste_rounded),
                                   ),
                                 ),
@@ -545,6 +528,10 @@ class _HomeReadyContent extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (statusContent != null) ...[
+                    const SizedBox(height: AppSpacing.xl),
+                    statusContent!,
+                  ],
                   const SizedBox(height: AppSpacing.xl),
                 ],
               ),
@@ -623,124 +610,6 @@ class _MetadataLoadedContent extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _LegacyWorkflowContent extends StatelessWidget {
-  const _LegacyWorkflowContent({
-    required this.urlController,
-    required this.healthState,
-    required this.isCheckingHealth,
-    required this.isMediaBusy,
-    required this.canRequestMetadata,
-    required this.metadataButtonLabel,
-    required this.mediaState,
-    required this.onCheckBackend,
-    required this.onGetMetadata,
-  });
-
-  final TextEditingController urlController;
-  final AsyncValue<HealthCheckResult?> healthState;
-  final bool isCheckingHealth;
-  final bool isMediaBusy;
-  final bool canRequestMetadata;
-  final String metadataButtonLabel;
-  final MediaState mediaState;
-  final VoidCallback onCheckBackend;
-  final VoidCallback onGetMetadata;
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: AppSpacing.pageHorizontal,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: AppSizes.contentMaxWidth),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: AppSpacing.md),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: NexoraBrand(),
-              ),
-              const SizedBox(height: AppSpacing.xxl),
-              FilledButton.icon(
-                onPressed: isCheckingHealth ? null : onCheckBackend,
-                icon: const Icon(Icons.health_and_safety_outlined),
-                label: Text(isCheckingHealth ? 'Checking...' : 'Check Backend'),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              _HealthStatus(healthState: healthState),
-              const SizedBox(height: AppSpacing.xxl),
-              TextField(
-                controller: urlController,
-                keyboardType: TextInputType.url,
-                textInputAction: TextInputAction.search,
-                decoration: const InputDecoration(labelText: 'Media URL'),
-                enabled: !isMediaBusy,
-                onSubmitted: (_) => onGetMetadata(),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              FilledButton.icon(
-                onPressed: canRequestMetadata ? onGetMetadata : null,
-                icon: const Icon(Icons.search_rounded),
-                label: Text(metadataButtonLabel),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              _MediaStatus(mediaState: mediaState),
-              const SizedBox(height: AppSpacing.xxl),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HealthStatus extends StatelessWidget {
-  const _HealthStatus({required this.healthState});
-
-  final AsyncValue<HealthCheckResult?> healthState;
-
-  @override
-  Widget build(BuildContext context) {
-    return healthState.when(
-      data: (result) {
-        if (result == null) {
-          return const SizedBox.shrink();
-        }
-
-        return _StatusMessage(
-          title: result.isHealthy ? 'Backend Online' : 'Backend Offline',
-          message: result.serverMessage,
-          tone: result.isHealthy ? NexoraStateTone.success : NexoraStateTone.error,
-        );
-      },
-      error: (error, _) {
-        return _StatusMessage(
-          title: 'Backend Offline',
-          message: _readErrorMessage(error),
-          tone: NexoraStateTone.error,
-        );
-      },
-      loading: () {
-        return const NexoraStatePanel(
-          title: 'Checking backend',
-          message: 'Contacting Nexora services.',
-          isLoading: true,
-        );
-      },
-    );
-  }
-
-  String _readErrorMessage(Object error) {
-    if (error is String && error.trim().isNotEmpty) {
-      return error.trim();
-    }
-
-    return 'Unable to contact the backend.';
   }
 }
 
