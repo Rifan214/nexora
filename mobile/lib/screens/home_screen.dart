@@ -230,71 +230,63 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          duration: const Duration(seconds: 9),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.check_circle_rounded,
-                    color: colorScheme.inversePrimary,
-                    size: AppSpacing.xl,
-                    semanticLabel: 'Download complete',
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+          margin: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            0,
+            AppSpacing.lg,
+            AppSpacing.md,
+          ),
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          backgroundColor: colorScheme.surfaceContainerHigh,
+          elevation: 2,
+          shape: const RoundedRectangleBorder(borderRadius: AppRadii.input),
+          content: Semantics(
+            liveRegion: true,
+            label: 'Downloaded $filename',
+            child: Row(
+              children: [
+                Container(
+                  width: AppSizes.touchTarget,
+                  height: AppSizes.touchTarget,
+                  decoration: BoxDecoration(
+                    color: colorScheme.tertiaryContainer,
+                    borderRadius: AppRadii.input,
                   ),
-                  const SizedBox(width: AppSpacing.sm),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Download Complete',
-                          style: textTheme.titleSmall?.copyWith(
-                            color: colorScheme.onInverseSurface,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.xxs),
-                        Text(
-                          '"$filename" has been saved successfully.',
-                          style: textTheme.bodyMedium?.copyWith(
-                            color: colorScheme.onInverseSurface,
-                          ),
-                        ),
-                      ],
-                    ),
+                  child: Icon(
+                    Icons.check_rounded,
+                    color: colorScheme.onTertiaryContainer,
+                    semanticLabel: 'Downloaded',
                   ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Wrap(
-                  spacing: AppSpacing.xs,
-                  children: [
-                    TextButton(
-                      onPressed: () {
-                        messenger.hideCurrentSnackBar();
-                      },
-                      style: TextButton.styleFrom(
-                        foregroundColor: colorScheme.inversePrimary,
-                      ),
-                      child: const Text('Dismiss'),
-                    ),
-                    FilledButton.tonalIcon(
-                      onPressed: () {
-                        messenger.hideCurrentSnackBar();
-                        ref.read(mediaProvider.notifier).openDownloadedFile();
-                      },
-                      icon: const Icon(Icons.open_in_new_rounded),
-                      label: const Text('Open File'),
-                    ),
-                  ],
                 ),
-              ),
-            ],
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Downloaded',
+                        style: textTheme.labelMedium?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.xxs),
+                      Text(
+                        filename,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.titleMedium?.copyWith(
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );
