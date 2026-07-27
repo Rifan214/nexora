@@ -12,6 +12,7 @@ import '../widgets/download_progress_status.dart';
 import '../widgets/downloads_content.dart';
 import '../widgets/history_content.dart';
 import '../widgets/nexora_brand.dart';
+import '../widgets/nexora_floating_notification.dart';
 import '../widgets/nexora_navigation_bar.dart';
 import '../widgets/nexora_state_panel.dart';
 import '../widgets/settings_content.dart';
@@ -221,73 +222,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _showCompletionSnackBar(MediaSuccess state) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
     final filename = _snackBarFilename(state);
     final messenger = ScaffoldMessenger.of(context);
 
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-          margin: const EdgeInsets.fromLTRB(
-            AppSpacing.lg,
-            0,
-            AppSpacing.lg,
-            AppSpacing.md,
-          ),
-          padding: const EdgeInsets.all(AppSpacing.sm),
-          backgroundColor: colorScheme.surfaceContainerHigh,
-          elevation: 2,
-          shape: const RoundedRectangleBorder(borderRadius: AppRadii.input),
-          content: Semantics(
-            liveRegion: true,
-            label: 'Downloaded $filename',
-            child: Row(
-              children: [
-                Container(
-                  width: AppSizes.touchTarget,
-                  height: AppSizes.touchTarget,
-                  decoration: BoxDecoration(
-                    color: colorScheme.tertiaryContainer,
-                    borderRadius: AppRadii.input,
-                  ),
-                  child: Icon(
-                    Icons.check_rounded,
-                    color: colorScheme.onTertiaryContainer,
-                    semanticLabel: 'Downloaded',
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Downloaded',
-                        style: textTheme.labelMedium?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.xxs),
-                      Text(
-                        filename,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: textTheme.titleMedium?.copyWith(
-                          color: colorScheme.onSurface,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+        buildNexoraFloatingNotification(
+          context,
+          title: 'Downloaded',
+          message: filename,
+          semanticLabel: 'Downloaded $filename',
         ),
       );
   }

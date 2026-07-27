@@ -11,6 +11,7 @@ import '../models/media_metadata.dart';
 import '../providers/history_provider.dart';
 import 'media_card_parts.dart';
 import 'nexora_brand.dart';
+import 'nexora_floating_notification.dart';
 import 'nexora_state_panel.dart';
 
 class HistoryContent extends ConsumerWidget {
@@ -67,6 +68,7 @@ class HistoryContent extends ConsumerWidget {
                                 unawaited(
                                   _confirmAndDeleteHistoryItem(
                                     context,
+                                    ref,
                                     historyController,
                                     download,
                                   ),
@@ -109,6 +111,7 @@ class HistoryContent extends ConsumerWidget {
 
   Future<void> _confirmAndDeleteHistoryItem(
     BuildContext context,
+    WidgetRef ref,
     DownloadHistoryController historyController,
     DownloadHistoryItem download,
   ) async {
@@ -123,9 +126,27 @@ class HistoryContent extends ConsumerWidget {
 
     await historyController.deleteHistoryItem(download.id);
 
+    final updatedHistory = ref.read(downloadHistoryProvider).valueOrNull;
+    if (updatedHistory == null ||
+        updatedHistory.any((item) => item.id == download.id)) {
+      return;
+    }
+
     if (deleteOption == _HistoryDeleteOption.historyAndFile) {
       await _deleteLocalFileIfPresent(download.localFilePath);
     }
+
+    if (!context.mounted) {
+      return;
+    }
+
+    final message = deleteOption == _HistoryDeleteOption.historyAndFile
+        ? 'Download removed'
+        : 'History removed';
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(buildNexoraFloatingNotification(context, title: message));
   }
 
   Future<void> _deleteLocalFileIfPresent(String path) async {
