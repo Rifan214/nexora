@@ -79,7 +79,3 @@ Use the backend machine's LAN address instead of `10.0.2.2` when running on a ph
 - Download queue management
 - Additional supported platforms
 - Retry controls for failed downloads
-
-## License
-
-MIT License. Add a `LICENSE` file before distribution.
