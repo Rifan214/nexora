@@ -64,7 +64,7 @@ SnackBar buildNexoraFloatingNotification(
                 if (hasMessage) ...[
                   const SizedBox(height: AppSpacing.xxs),
                   Text(
-                    notificationMessage!,
+                    notificationMessage,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.titleMedium?.copyWith(

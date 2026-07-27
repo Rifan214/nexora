@@ -89,7 +89,7 @@ abstract final class AppTheme {
     final inputFillColor = colorScheme.brightness == Brightness.light
         ? _lightInputFill
         : colorScheme.surfaceContainerHigh;
-    final inputBorder = OutlineInputBorder(
+    const inputBorder = OutlineInputBorder(
       borderRadius: AppRadii.input,
       borderSide: BorderSide.none,
     );

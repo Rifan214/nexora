@@ -41,16 +41,10 @@ backend/storage/*
 !backend/storage/.gitkeep
 
 !backend/storage/temp/
-!backend/storage/downloads/
-!backend/storage/thumbnails/
 
 backend/storage/temp/*
-backend/storage/downloads/*
-backend/storage/thumbnails/*
 
 !backend/storage/temp/.gitkeep
-!backend/storage/downloads/.gitkeep
-!backend/storage/thumbnails/.gitkeep
 
 # ==========================================================
 # Logs
