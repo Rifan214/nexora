@@ -9,6 +9,7 @@ import '../models/download_history_item.dart';
 import '../models/media_download_type.dart';
 import '../models/media_metadata.dart';
 import '../providers/history_provider.dart';
+import '../repositories/media_repository.dart';
 import 'media_card_parts.dart';
 import 'nexora_brand.dart';
 import 'nexora_floating_notification.dart';
@@ -64,6 +65,11 @@ class HistoryContent extends ConsumerWidget {
                           for (final download in downloads) ...[
                             _HistoryDownloadCard(
                               download: download,
+                              onOpen: () {
+                                unawaited(
+                                  _openHistoryFile(ref, download.localFilePath),
+                                );
+                              },
                               onDelete: () {
                                 unawaited(
                                   _confirmAndDeleteHistoryItem(
@@ -159,6 +165,14 @@ class HistoryContent extends ConsumerWidget {
       // A missing or inaccessible local file must not prevent history cleanup.
     }
   }
+
+  Future<void> _openHistoryFile(WidgetRef ref, String path) async {
+    try {
+      await ref.read(mediaRepositoryProvider).openDownloadedFile(path);
+    } catch (_) {
+      // The card only enables tapping after confirming that the file exists.
+    }
+  }
 }
 
 enum _HistoryDeleteOption { historyOnly, historyAndFile }
@@ -176,6 +190,12 @@ class _HistoryDeleteDialogState extends State<_HistoryDeleteDialog> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final actionStyle = FilledButton.styleFrom(
+      minimumSize: const Size(0, AppSizes.touchTarget),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      textStyle: textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+    );
 
     return AlertDialog(
       icon: Icon(Icons.delete_outline_rounded, color: colorScheme.error),
@@ -209,12 +229,22 @@ class _HistoryDeleteDialogState extends State<_HistoryDeleteDialog> {
         ),
       ),
       actions: [
-        TextButton(
+        FilledButton(
           onPressed: () => Navigator.of(context).pop(),
+          style: actionStyle.copyWith(
+            backgroundColor: WidgetStatePropertyAll(
+              colorScheme.surfaceContainerHigh,
+            ),
+            foregroundColor: WidgetStatePropertyAll(colorScheme.onSurface),
+          ),
           child: const Text('Cancel'),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(_selectedOption),
+          style: actionStyle.copyWith(
+            backgroundColor: WidgetStatePropertyAll(colorScheme.error),
+            foregroundColor: WidgetStatePropertyAll(colorScheme.onError),
+          ),
           child: const Text('Delete'),
         ),
       ],
@@ -225,10 +255,12 @@ class _HistoryDeleteDialogState extends State<_HistoryDeleteDialog> {
 class _HistoryDownloadCard extends StatefulWidget {
   const _HistoryDownloadCard({
     required this.download,
+    required this.onOpen,
     required this.onDelete,
   });
 
   final DownloadHistoryItem download;
+  final VoidCallback onOpen;
   final VoidCallback onDelete;
 
   @override
@@ -272,77 +304,93 @@ class _HistoryDownloadCardState extends State<_HistoryDownloadCard> {
         final isFileMissing =
             snapshot.connectionState == ConnectionState.done &&
             snapshot.data != true;
-        return _buildCard(context, isFileMissing: isFileMissing);
+        final isFileAvailable =
+            snapshot.connectionState == ConnectionState.done &&
+            snapshot.data == true;
+        return _buildCard(
+          context,
+          isFileMissing: isFileMissing,
+          isFileAvailable: isFileAvailable,
+        );
       },
     );
   }
 
-  Widget _buildCard(BuildContext context, {required bool isFileMissing}) {
+  Widget _buildCard(
+    BuildContext context, {
+    required bool isFileMissing,
+    required bool isFileAvailable,
+  }) {
     final textTheme = Theme.of(context).textTheme;
     final mediaTypeLabel = _mediaTypeLabel(widget.download);
     final qualityLabel = widget.download.selectedQuality;
 
     return Card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          NexoraMediaThumbnail(
-            metadata: _thumbnailMetadata(widget.download),
-            mediaType: widget.download.mediaType,
-          ),
-          Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        widget.download.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: textTheme.titleLarge,
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Remove from history',
-                      onPressed: widget.onDelete,
-                      icon: const Icon(Icons.delete_outline_rounded),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                const Divider(),
-                const SizedBox(height: AppSpacing.sm),
-                Wrap(
-                  spacing: AppSpacing.xs,
-                  runSpacing: AppSpacing.xs,
-                  children: [
-                    MediaBadge(
-                      label: mediaTypeLabel,
-                      tone: MediaBadgeTone.neutral,
-                    ),
-                    if (qualityLabel != null && qualityLabel != mediaTypeLabel)
-                      MediaBadge(label: qualityLabel),
-                    const MediaBadge(
-                      label: 'Completed',
-                      tone: MediaBadgeTone.success,
-                      icon: Icons.check_circle_rounded,
-                    ),
-                    if (isFileMissing)
-                      const MediaBadge(
-                        label: 'File Missing',
-                        tone: MediaBadgeTone.error,
-                        icon: Icons.error_outline_rounded,
-                      ),
-                  ],
-                ),
-              ],
+      child: InkWell(
+        onTap: isFileAvailable ? widget.onOpen : null,
+        borderRadius: AppRadii.card,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            NexoraMediaThumbnail(
+              metadata: _thumbnailMetadata(widget.download),
+              mediaType: widget.download.mediaType,
             ),
-          ),
-        ],
+            Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.download.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: textTheme.titleLarge,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Remove from history',
+                        color: Theme.of(context).colorScheme.error,
+                        onPressed: widget.onDelete,
+                        icon: const Icon(Icons.delete_outline_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  const Divider(),
+                  const SizedBox(height: AppSpacing.sm),
+                  Wrap(
+                    spacing: AppSpacing.xs,
+                    runSpacing: AppSpacing.xs,
+                    children: [
+                      MediaBadge(
+                        label: mediaTypeLabel,
+                        tone: MediaBadgeTone.neutral,
+                      ),
+                      if (qualityLabel != null && qualityLabel != mediaTypeLabel)
+                        MediaBadge(label: qualityLabel),
+                      const MediaBadge(
+                        label: 'Completed',
+                        tone: MediaBadgeTone.success,
+                        icon: Icons.check_circle_rounded,
+                      ),
+                      if (isFileMissing)
+                        const MediaBadge(
+                          label: 'File Missing',
+                          tone: MediaBadgeTone.error,
+                          icon: Icons.error_outline_rounded,
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
