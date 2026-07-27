@@ -201,7 +201,7 @@ class _HistoryDeleteDialogState extends State<_HistoryDeleteDialog> {
   }
 }
 
-class _HistoryDownloadCard extends StatelessWidget {
+class _HistoryDownloadCard extends StatefulWidget {
   const _HistoryDownloadCard({
     required this.download,
     required this.onDelete,
@@ -211,18 +211,63 @@ class _HistoryDownloadCard extends StatelessWidget {
   final VoidCallback onDelete;
 
   @override
+  State<_HistoryDownloadCard> createState() => _HistoryDownloadCardState();
+}
+
+class _HistoryDownloadCardState extends State<_HistoryDownloadCard> {
+  late Future<bool> _fileExists;
+
+  @override
+  void initState() {
+    super.initState();
+    _fileExists = _checkFileExists();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HistoryDownloadCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.download.localFilePath != widget.download.localFilePath) {
+      _fileExists = _checkFileExists();
+    }
+  }
+
+  Future<bool> _checkFileExists() async {
+    try {
+      return await FileSystemEntity.type(
+            widget.download.localFilePath,
+            followLinks: false,
+          ) ==
+          FileSystemEntityType.file;
+    } on FileSystemException {
+      return false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _fileExists,
+      builder: (context, snapshot) {
+        final isFileMissing =
+            snapshot.connectionState == ConnectionState.done &&
+            snapshot.data != true;
+        return _buildCard(context, isFileMissing: isFileMissing);
+      },
+    );
+  }
+
+  Widget _buildCard(BuildContext context, {required bool isFileMissing}) {
     final textTheme = Theme.of(context).textTheme;
-    final mediaTypeLabel = _mediaTypeLabel(download);
-    final qualityLabel = download.selectedQuality;
+    final mediaTypeLabel = _mediaTypeLabel(widget.download);
+    final qualityLabel = widget.download.selectedQuality;
 
     return Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           NexoraMediaThumbnail(
-            metadata: _thumbnailMetadata(download),
-            mediaType: download.mediaType,
+            metadata: _thumbnailMetadata(widget.download),
+            mediaType: widget.download.mediaType,
           ),
           Padding(
             padding: const EdgeInsets.all(AppSpacing.md),
@@ -234,7 +279,7 @@ class _HistoryDownloadCard extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        download.title,
+                        widget.download.title,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: textTheme.titleLarge,
@@ -242,7 +287,7 @@ class _HistoryDownloadCard extends StatelessWidget {
                     ),
                     IconButton(
                       tooltip: 'Remove from history',
-                      onPressed: onDelete,
+                      onPressed: widget.onDelete,
                       icon: const Icon(Icons.delete_outline_rounded),
                     ),
                   ],
@@ -265,6 +310,12 @@ class _HistoryDownloadCard extends StatelessWidget {
                       tone: MediaBadgeTone.success,
                       icon: Icons.check_circle_rounded,
                     ),
+                    if (isFileMissing)
+                      const MediaBadge(
+                        label: 'File Missing',
+                        tone: MediaBadgeTone.error,
+                        icon: Icons.error_outline_rounded,
+                      ),
                   ],
                 ),
               ],

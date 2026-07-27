@@ -8,6 +8,7 @@ enum MediaBadgeTone {
   primary,
   neutral,
   success,
+  error,
 }
 
 class NexoraMediaThumbnail extends StatelessWidget {
@@ -129,6 +130,8 @@ class MediaBadge extends StatelessWidget {
         return colorScheme.surfaceContainerHigh;
       case MediaBadgeTone.success:
         return colorScheme.tertiaryContainer;
+      case MediaBadgeTone.error:
+        return colorScheme.errorContainer;
     }
   }
 
@@ -140,6 +143,8 @@ class MediaBadge extends StatelessWidget {
         return colorScheme.onSurfaceVariant;
       case MediaBadgeTone.success:
         return colorScheme.onTertiaryContainer;
+      case MediaBadgeTone.error:
+        return colorScheme.onErrorContainer;
     }
   }
 }
