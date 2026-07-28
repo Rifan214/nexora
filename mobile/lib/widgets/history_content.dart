@@ -25,6 +25,8 @@ class HistoryContent extends ConsumerStatefulWidget {
 class _HistoryContentState extends ConsumerState<HistoryContent> {
   final _searchController = TextEditingController();
   var _searchQuery = '';
+  var _mediaFilter = _HistoryMediaFilter.all;
+  var _sortOrder = _HistorySortOrder.newestFirst;
 
   @override
   void dispose() {
@@ -37,7 +39,11 @@ class _HistoryContentState extends ConsumerState<HistoryContent> {
     final historyState = ref.watch(downloadHistoryProvider);
     final historyController = ref.read(downloadHistoryProvider.notifier);
     final textTheme = Theme.of(context).textTheme;
-    final filter = _HistoryFilter(query: _searchQuery);
+    final historyPipeline = _HistoryViewPipeline(
+      query: _searchQuery,
+      mediaFilter: _mediaFilter,
+      sortOrder: _sortOrder,
+    );
 
     return SingleChildScrollView(
       padding: AppSpacing.pageHorizontal,
@@ -53,9 +59,33 @@ class _HistoryContentState extends ConsumerState<HistoryContent> {
                 child: NexoraBrand(),
               ),
               const SizedBox(height: AppSpacing.xxl),
-              Text(
-                'Recent Downloads',
-                style: textTheme.headlineMedium,
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Recent Downloads',
+                      style: textTheme.headlineMedium,
+                    ),
+                  ),
+                  PopupMenuButton<_HistorySortOrder>(
+                    tooltip: 'Sort history',
+                    icon: const Icon(Icons.sort_rounded),
+                    initialValue: _sortOrder,
+                    onSelected: (sortOrder) {
+                      setState(() => _sortOrder = sortOrder);
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: _HistorySortOrder.newestFirst,
+                        child: Text('Newest first'),
+                      ),
+                      PopupMenuItem(
+                        value: _HistorySortOrder.oldestFirst,
+                        child: Text('Oldest first'),
+                      ),
+                    ],
+                  ),
+                ],
               ),
               const SizedBox(height: AppSpacing.lg),
               SearchBar(
@@ -73,6 +103,13 @@ class _HistoryContentState extends ConsumerState<HistoryContent> {
                       ],
                 onChanged: (value) {
                   setState(() => _searchQuery = value);
+                },
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _HistoryFilterBar(
+                selectedFilter: _mediaFilter,
+                onSelected: (filter) {
+                  setState(() => _mediaFilter = filter);
                 },
               ),
               const SizedBox(height: AppSpacing.xl),
@@ -93,18 +130,18 @@ class _HistoryContentState extends ConsumerState<HistoryContent> {
                         );
                       }
 
-                      final filteredDownloads = filter.apply(downloads);
-                      if (filteredDownloads.isEmpty) {
+                      final visibleDownloads = historyPipeline.apply(downloads);
+                      if (visibleDownloads.isEmpty) {
                         return const NexoraStatePanel(
-                          title: 'No downloads found.',
-                          message: 'Try a different search term.',
+                          title: 'No matching downloads found.',
+                          message: 'Try a different search or filter.',
                           icon: Icons.search_off_rounded,
                         );
                       }
 
                       return Column(
                         children: [
-                          for (final download in filteredDownloads) ...[
+                          for (final download in visibleDownloads) ...[
                             _HistoryDownloadCard(
                               download: download,
                               onOpen: () {
@@ -222,29 +259,98 @@ class _HistoryContentState extends ConsumerState<HistoryContent> {
   }
 }
 
-class _HistoryFilter {
-  const _HistoryFilter({required this.query});
+enum _HistoryMediaFilter { all, videos, audio }
+
+enum _HistorySortOrder { newestFirst, oldestFirst }
+
+class _HistoryViewPipeline {
+  const _HistoryViewPipeline({
+    required this.query,
+    required this.mediaFilter,
+    required this.sortOrder,
+  });
 
   final String query;
+  final _HistoryMediaFilter mediaFilter;
+  final _HistorySortOrder sortOrder;
 
   List<DownloadHistoryItem> apply(List<DownloadHistoryItem> downloads) {
     final normalizedQuery = query.trim().toLowerCase();
-    if (normalizedQuery.isEmpty) {
-      return downloads;
-    }
-
-    return [
-      for (final download in downloads)
-        if (_matches(download, normalizedQuery)) download,
+    final searched = normalizedQuery.isEmpty
+        ? downloads
+        : [
+            for (final download in downloads)
+              if (_matchesSearch(download, normalizedQuery)) download,
+          ];
+    final filtered = [
+      for (final download in searched)
+        if (_matchesMediaFilter(download)) download,
     ];
+    final sorted = List<DownloadHistoryItem>.of(filtered);
+    sorted.sort(_compareByCreatedAt);
+    return sorted;
   }
 
-  bool _matches(DownloadHistoryItem download, String query) {
+  bool _matchesMediaFilter(DownloadHistoryItem download) {
+    return switch (mediaFilter) {
+      _HistoryMediaFilter.all => true,
+      _HistoryMediaFilter.videos => download.mediaType == MediaDownloadType.video,
+      _HistoryMediaFilter.audio => download.mediaType == MediaDownloadType.audio,
+    };
+  }
+
+  bool _matchesSearch(DownloadHistoryItem download, String query) {
     // The current local history schema persists the title only. Keep matching
     // centralized so future persisted uploader or source URL fields can join
     // this local-only filter without changing the History UI.
     return download.title.toLowerCase().contains(query);
   }
+
+  int _compareByCreatedAt(DownloadHistoryItem left, DownloadHistoryItem right) {
+    final comparison = left.createdAt.compareTo(right.createdAt);
+    return sortOrder == _HistorySortOrder.newestFirst
+        ? -comparison
+        : comparison;
+  }
+}
+
+class _HistoryFilterBar extends StatelessWidget {
+  const _HistoryFilterBar({
+    required this.selectedFilter,
+    required this.onSelected,
+  });
+
+  final _HistoryMediaFilter selectedFilter;
+  final ValueChanged<_HistoryMediaFilter> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final filter in _HistoryMediaFilter.values) ...[
+            ChoiceChip(
+              label: Text(_historyFilterLabel(filter)),
+              selected: selectedFilter == filter,
+              onSelected: (_) => onSelected(filter),
+              showCheckmark: false,
+            ),
+            if (filter != _HistoryMediaFilter.values.last)
+              const SizedBox(width: AppSpacing.sm),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+String _historyFilterLabel(_HistoryMediaFilter filter) {
+  return switch (filter) {
+    _HistoryMediaFilter.all => 'All',
+    _HistoryMediaFilter.videos => 'Videos',
+    _HistoryMediaFilter.audio => 'Audio',
+  };
 }
 
 enum _HistoryDeleteOption { historyOnly, historyAndFile }
