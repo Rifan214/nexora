@@ -71,6 +71,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           },
           onClearCompleted: downloadsController.clearCompletedDownloads,
           onClearFailed: downloadsController.clearFailedDownloads,
+          onRetryFailedDownload: _retryFailedDownload,
         ),
       );
     }
@@ -138,6 +139,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
 
     ref.read(mediaProvider.notifier).getMediaInfo(_urlController.text);
+  }
+
+  Future<void> _retryFailedDownload(String jobId) async {
+    final message = await ref
+        .read(activeDownloadsProvider.notifier)
+        .retryFailedDownload(jobId);
+    if (message == null || !mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _scheduleCompletionNotifications(List<TrackedDownload> downloads) {
@@ -526,35 +540,61 @@ class _MediaStatus extends ConsumerWidget {
           ref.watch(activeDownloadsProvider),
           state.currentJobId,
         );
+        final hasDetachedSession =
+            state.currentJobId?.trim().isNotEmpty == true &&
+            activeDownload == null;
         return _MetadataSummary(
           metadata: state.metadata,
           selectedVideoQuality: state.selectedVideoQuality,
           isAudioSelected: state.currentMediaType?.name == 'audio',
           downloadLoading: state.downloadLoading,
-          downloadSuccess: state.downloadSuccess,
-          downloadError: activeDownload?.error ?? state.downloadError,
-          currentJobId: state.currentJobId,
-          currentStatus: activeDownload?.status ?? state.currentStatus,
-          currentProgress: activeDownload?.progress ?? state.currentProgress,
+          downloadSuccess: hasDetachedSession ? false : state.downloadSuccess,
+          downloadError: hasDetachedSession
+              ? null
+              : activeDownload?.error ?? state.downloadError,
+          currentJobId: hasDetachedSession ? null : state.currentJobId,
+          currentStatus: hasDetachedSession
+              ? null
+              : activeDownload?.status ?? state.currentStatus,
+          currentProgress: hasDetachedSession
+              ? 0
+              : activeDownload?.progress ?? state.currentProgress,
           fileDownloadLoading:
-              activeDownload?.fileDownloadLoading ?? state.fileDownloadLoading,
+              hasDetachedSession
+                  ? false
+                  : activeDownload?.fileDownloadLoading ??
+                      state.fileDownloadLoading,
           fileDownloadProgress: activeDownload?.fileDownloadProgress ??
-              state.fileDownloadProgress,
+              (hasDetachedSession ? 0 : state.fileDownloadProgress),
           fileDownloadError:
-              activeDownload?.fileDownloadError ?? state.fileDownloadError,
+              hasDetachedSession
+                  ? null
+                  : activeDownload?.fileDownloadError ?? state.fileDownloadError,
           downloadedFilename:
-              activeDownload?.downloadedFilename ?? state.downloadedFilename,
-          savedFilePath: activeDownload?.savedFilePath ?? state.savedFilePath,
-          savedDirectory: activeDownload?.savedDirectory ?? state.savedDirectory,
+              hasDetachedSession
+                  ? null
+                  : activeDownload?.downloadedFilename ?? state.downloadedFilename,
+          savedFilePath: hasDetachedSession
+              ? null
+              : activeDownload?.savedFilePath ?? state.savedFilePath,
+          savedDirectory: hasDetachedSession
+              ? null
+              : activeDownload?.savedDirectory ?? state.savedDirectory,
           fileOpenLoading:
-              activeDownload?.fileOpenLoading ?? state.fileOpenLoading,
+              hasDetachedSession
+                  ? false
+                  : activeDownload?.fileOpenLoading ?? state.fileOpenLoading,
           onVideoQualitySelected: mediaController.selectVideoQuality,
           onVideoDownloadPressed: mediaController.createVideoDownloadJob,
           onAudioDownloadPressed: mediaController.createAudioDownloadJob,
           onOpenFilePressed: activeDownload == null
-              ? mediaController.openDownloadedFile
+              ? () {}
               : () => unawaited(
-                    downloadController.openDownloadedFile(activeDownload.jobId),
+                    _openCompletedFile(
+                      context,
+                      downloadController,
+                      activeDownload.jobId,
+                    ),
                   ),
         );
       },
@@ -567,6 +607,21 @@ class _MediaStatus extends ConsumerWidget {
       },
     );
   }
+}
+
+Future<void> _openCompletedFile(
+  BuildContext context,
+  ActiveDownloadsController downloadController,
+  String jobId,
+) async {
+  final message = await downloadController.openDownloadedFile(jobId);
+  if (message == null || !context.mounted) {
+    return;
+  }
+
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text(message)));
 }
 
 TrackedDownload? _downloadForJob(

@@ -18,6 +18,7 @@ class TrackedDownload {
     this.savedFilePath,
     this.savedDirectory,
     this.fileOpenLoading = false,
+    this.isRetrying = false,
   });
 
   static const _unset = Object();
@@ -37,6 +38,7 @@ class TrackedDownload {
   final String? savedFilePath;
   final String? savedDirectory;
   final bool fileOpenLoading;
+  final bool isRetrying;
 
   bool get isSavingToDevice {
     if (fileDownloadLoading) {
@@ -46,6 +48,10 @@ class TrackedDownload {
     return status == 'completed' &&
         savedFilePath?.trim().isNotEmpty != true &&
         fileDownloadError?.trim().isNotEmpty != true;
+  }
+
+  bool get isFinalized {
+    return status == 'completed' && savedFilePath?.trim().isNotEmpty == true;
   }
 
   bool get isActive {
@@ -68,6 +74,7 @@ class TrackedDownload {
     Object? savedFilePath = _unset,
     Object? savedDirectory = _unset,
     bool? fileOpenLoading,
+    bool? isRetrying,
   }) {
     return TrackedDownload(
       jobId: jobId,
@@ -95,6 +102,7 @@ class TrackedDownload {
           ? this.savedDirectory
           : savedDirectory as String?,
       fileOpenLoading: fileOpenLoading ?? this.fileOpenLoading,
+      isRetrying: isRetrying ?? this.isRetrying,
     );
   }
 }

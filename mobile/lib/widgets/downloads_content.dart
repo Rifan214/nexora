@@ -15,12 +15,14 @@ class DownloadsContent extends StatelessWidget {
     required this.onCancelDownload,
     required this.onClearCompleted,
     required this.onClearFailed,
+    required this.onRetryFailedDownload,
   });
 
   final List<TrackedDownload> downloads;
   final ValueChanged<String> onCancelDownload;
   final VoidCallback onClearCompleted;
   final VoidCallback onClearFailed;
+  final Future<void> Function(String jobId) onRetryFailedDownload;
 
   @override
   Widget build(BuildContext context) {
@@ -80,6 +82,7 @@ class DownloadsContent extends StatelessWidget {
                         onCancelDownload: onCancelDownload,
                         onClearCompleted: onClearCompleted,
                         onClearFailed: onClearFailed,
+                        onRetryFailedDownload: onRetryFailedDownload,
                       )
                     : const NexoraStatePanel(
                         title: 'No active downloads',
@@ -133,6 +136,7 @@ class _DownloadSections extends StatelessWidget {
     required this.onCancelDownload,
     required this.onClearCompleted,
     required this.onClearFailed,
+    required this.onRetryFailedDownload,
   });
 
   final List<TrackedDownload> downloading;
@@ -142,6 +146,7 @@ class _DownloadSections extends StatelessWidget {
   final ValueChanged<String> onCancelDownload;
   final VoidCallback onClearCompleted;
   final VoidCallback onClearFailed;
+  final Future<void> Function(String jobId) onRetryFailedDownload;
 
   @override
   Widget build(BuildContext context) {
@@ -161,6 +166,7 @@ class _DownloadSections extends StatelessWidget {
                   download: download,
                   section: _DownloadSectionType.downloading,
                   onCancelDownload: onCancelDownload,
+                  onRetryFailedDownload: onRetryFailedDownload,
                 ),
             ],
           ),
@@ -175,6 +181,7 @@ class _DownloadSections extends StatelessWidget {
                   section: _DownloadSectionType.waiting,
                   waitingPosition: index + 1,
                   onCancelDownload: onCancelDownload,
+                  onRetryFailedDownload: onRetryFailedDownload,
                 ),
             ],
           ),
@@ -192,6 +199,7 @@ class _DownloadSections extends StatelessWidget {
                   download: download,
                   section: _DownloadSectionType.completed,
                   onCancelDownload: onCancelDownload,
+                  onRetryFailedDownload: onRetryFailedDownload,
                 ),
             ],
           ),
@@ -209,6 +217,7 @@ class _DownloadSections extends StatelessWidget {
                   download: download,
                   section: _DownloadSectionType.failed,
                   onCancelDownload: onCancelDownload,
+                  onRetryFailedDownload: onRetryFailedDownload,
                 ),
             ],
           ),
@@ -394,6 +403,7 @@ class _DownloadCard extends StatelessWidget {
     required this.download,
     required this.section,
     required this.onCancelDownload,
+    required this.onRetryFailedDownload,
     this.waitingPosition,
   });
 
@@ -401,6 +411,7 @@ class _DownloadCard extends StatelessWidget {
   final _DownloadSectionType section;
   final int? waitingPosition;
   final ValueChanged<String> onCancelDownload;
+  final Future<void> Function(String jobId) onRetryFailedDownload;
 
   @override
   Widget build(BuildContext context) {
@@ -471,7 +482,10 @@ class _DownloadCard extends StatelessWidget {
       );
     }
     if (section == _DownloadSectionType.failed) {
-      return const _RetryDownloadAction();
+      return _RetryDownloadAction(
+        isRetrying: download.isRetrying,
+        onRetry: () => onRetryFailedDownload(download.jobId),
+      );
     }
     if (download.isSavingToDevice) {
       return const _SavingToDeviceAction();
@@ -836,18 +850,30 @@ class _RemoveFromQueueDialog extends StatelessWidget {
 }
 
 class _RetryDownloadAction extends StatelessWidget {
-  const _RetryDownloadAction();
+  const _RetryDownloadAction({
+    required this.isRetrying,
+    required this.onRetry,
+  });
+
+  final bool isRetrying;
+  final Future<void> Function() onRetry;
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      enabled: false,
-      label: 'Retry download coming soon',
+      enabled: !isRetrying,
+      label: isRetrying ? 'Retrying download' : 'Retry download',
       child: TextButton.icon(
-        onPressed: null,
-        icon: const Icon(Icons.refresh_rounded),
-        label: const Text('Retry (Coming Soon)'),
+        onPressed: isRetrying ? null : onRetry,
+        icon: isRetrying
+            ? const SizedBox(
+                width: AppSpacing.md,
+                height: AppSpacing.md,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.refresh_rounded),
+        label: Text(isRetrying ? 'Retrying...' : 'Retry'),
         style: TextButton.styleFrom(
           minimumSize: const Size(0, AppSizes.touchTarget),
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),

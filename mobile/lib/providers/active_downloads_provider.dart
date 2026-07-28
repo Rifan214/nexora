@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -104,27 +105,74 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
     }
   }
 
-  Future<void> openDownloadedFile(String jobId) async {
+  Future<String?> openDownloadedFile(String jobId) async {
     final download = _find(jobId);
     final filePath = download?.savedFilePath?.trim();
     if (download == null ||
-        download.fileOpenLoading ||
         filePath == null ||
         filePath.isEmpty) {
-      return;
+      return 'File Missing';
     }
 
-    _replace(download.copyWith(fileOpenLoading: true, fileDownloadError: null));
     try {
-      await ref.read(mediaRepositoryProvider).openDownloadedFile(filePath);
-      final latest = _find(jobId);
-      if (latest != null) {
-        _replace(latest.copyWith(fileOpenLoading: false));
+      if (!await File(filePath).exists()) {
+        return 'File Missing';
       }
+      await ref.read(mediaRepositoryProvider).openDownloadedFile(filePath);
+      return null;
     } on ApiException catch (error) {
-      _markFileOpenFailed(jobId, error.message);
+      return error.message;
     } catch (_) {
-      _markFileOpenFailed(jobId, 'Unable to open the file.');
+      return 'Unable to open the file.';
+    }
+  }
+
+  Future<String?> retryFailedDownload(String jobId) async {
+    final failedDownload = _find(jobId);
+    if (failedDownload == null ||
+        failedDownload.isRetrying ||
+        !_isRetryable(failedDownload)) {
+      return 'This download can no longer be retried.';
+    }
+
+    final mediaUrl = failedDownload.metadata.webpageUrl.trim();
+    if (!_isValidMediaUrl(mediaUrl) ||
+        (failedDownload.mediaType == MediaDownloadType.video &&
+            failedDownload.selectedVideoQuality == null)) {
+      return 'This download can no longer be retried.';
+    }
+
+    _replace(failedDownload.copyWith(isRetrying: true));
+
+    try {
+      final job = await ref.read(mediaRepositoryProvider).createDownloadJob(
+            mediaUrl: mediaUrl,
+            mediaType: failedDownload.mediaType,
+            videoQuality: failedDownload.selectedVideoQuality,
+          );
+
+      state = [
+        for (final download in state)
+          if (download.jobId.toLowerCase() != failedDownload.jobId.toLowerCase())
+            download,
+        TrackedDownload(
+          jobId: job.jobId,
+          metadata: failedDownload.metadata,
+          mediaType: failedDownload.mediaType,
+          selectedVideoQuality: failedDownload.selectedVideoQuality,
+          status: 'pending',
+          progress: 0,
+        ),
+      ];
+      _listenToJob(job.jobId);
+      return null;
+    } on ApiException catch (error) {
+      _restoreFailedDownload(failedDownload.jobId);
+      final message = error.message.trim();
+      return message.isEmpty ? 'Unable to retry the download.' : message;
+    } catch (_) {
+      _restoreFailedDownload(failedDownload.jobId);
+      return 'Unable to retry the download.';
     }
   }
 
@@ -174,7 +222,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
       return;
     }
 
-    if (_isTerminal(download.status) && !_isTerminal(update.status)) {
+    if (download.isFinalized || _isTerminal(download.status)) {
       return;
     }
 
@@ -301,7 +349,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
     }
 
     final download = _find(jobId);
-    if (download != null) {
+    if (download != null && !download.isFinalized) {
       _replace(
         download.copyWith(
           fileDownloadLoading: false,
@@ -312,18 +360,11 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
     }
   }
 
-  void _markFileOpenFailed(String jobId, String message) {
-    final download = _find(jobId);
-    if (download != null) {
-      _replace(
-        download.copyWith(fileOpenLoading: false, fileDownloadError: message),
-      );
-    }
-  }
-
   void _markProgressConnectionLost(String jobId, Object error) {
     final download = _find(jobId);
-    if (download == null || _isTerminal(download.status)) {
+    if (download == null ||
+        download.isFinalized ||
+        _isTerminal(download.status)) {
       return;
     }
 
@@ -410,6 +451,27 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
         else
           download,
     ];
+  }
+
+  void _restoreFailedDownload(String jobId) {
+    final latest = _find(jobId);
+    if (latest != null) {
+      _replace(latest.copyWith(isRetrying: false));
+    }
+  }
+
+  bool _isRetryable(TrackedDownload download) {
+    return download.status == 'failed' ||
+        download.status == 'connection_lost' ||
+        download.fileDownloadError?.trim().isNotEmpty == true;
+  }
+
+  bool _isValidMediaUrl(String value) {
+    final uri = Uri.tryParse(value);
+    return uri != null &&
+        uri.hasScheme &&
+        uri.host.isNotEmpty &&
+        (uri.scheme == 'http' || uri.scheme == 'https');
   }
 
   bool _isCancellable(String status) {
