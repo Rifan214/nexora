@@ -15,14 +15,29 @@ import 'nexora_brand.dart';
 import 'nexora_floating_notification.dart';
 import 'nexora_state_panel.dart';
 
-class HistoryContent extends ConsumerWidget {
+class HistoryContent extends ConsumerStatefulWidget {
   const HistoryContent({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HistoryContent> createState() => _HistoryContentState();
+}
+
+class _HistoryContentState extends ConsumerState<HistoryContent> {
+  final _searchController = TextEditingController();
+  var _searchQuery = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final historyState = ref.watch(downloadHistoryProvider);
     final historyController = ref.read(downloadHistoryProvider.notifier);
     final textTheme = Theme.of(context).textTheme;
+    final filter = _HistoryFilter(query: _searchQuery);
 
     return SingleChildScrollView(
       padding: AppSpacing.pageHorizontal,
@@ -42,6 +57,24 @@ class HistoryContent extends ConsumerWidget {
                 'Recent Downloads',
                 style: textTheme.headlineMedium,
               ),
+              const SizedBox(height: AppSpacing.lg),
+              SearchBar(
+                controller: _searchController,
+                hintText: 'Search downloads...',
+                leading: const Icon(Icons.search_rounded),
+                trailing: _searchQuery.isEmpty
+                    ? null
+                    : [
+                        IconButton(
+                          tooltip: 'Clear search',
+                          onPressed: _clearSearch,
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                onChanged: (value) {
+                  setState(() => _searchQuery = value);
+                },
+              ),
               const SizedBox(height: AppSpacing.xl),
               AnimatedSwitcher(
                 duration: AppDurations.short,
@@ -60,9 +93,18 @@ class HistoryContent extends ConsumerWidget {
                         );
                       }
 
+                      final filteredDownloads = filter.apply(downloads);
+                      if (filteredDownloads.isEmpty) {
+                        return const NexoraStatePanel(
+                          title: 'No downloads found.',
+                          message: 'Try a different search term.',
+                          icon: Icons.search_off_rounded,
+                        );
+                      }
+
                       return Column(
                         children: [
-                          for (final download in downloads) ...[
+                          for (final download in filteredDownloads) ...[
                             _HistoryDownloadCard(
                               download: download,
                               onOpen: () {
@@ -105,6 +147,11 @@ class HistoryContent extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() => _searchQuery = '');
   }
 
   String _historyStateKey(AsyncValue<List<DownloadHistoryItem>> state) {
@@ -172,6 +219,31 @@ class HistoryContent extends ConsumerWidget {
     } catch (_) {
       // The card only enables tapping after confirming that the file exists.
     }
+  }
+}
+
+class _HistoryFilter {
+  const _HistoryFilter({required this.query});
+
+  final String query;
+
+  List<DownloadHistoryItem> apply(List<DownloadHistoryItem> downloads) {
+    final normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery.isEmpty) {
+      return downloads;
+    }
+
+    return [
+      for (final download in downloads)
+        if (_matches(download, normalizedQuery)) download,
+    ];
+  }
+
+  bool _matches(DownloadHistoryItem download, String query) {
+    // The current local history schema persists the title only. Keep matching
+    // centralized so future persisted uploader or source URL fields can join
+    // this local-only filter without changing the History UI.
+    return download.title.toLowerCase().contains(query);
   }
 }
 
