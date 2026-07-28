@@ -128,6 +128,22 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
     }
   }
 
+  void clearCompletedDownloads() {
+    state = state.where((download) {
+      return !(download.status == 'completed' &&
+          download.savedFilePath?.trim().isNotEmpty == true &&
+          download.fileDownloadError?.trim().isNotEmpty != true);
+    }).toList();
+  }
+
+  void clearFailedDownloads() {
+    state = state.where((download) {
+      return !(download.status == 'failed' ||
+          download.status == 'connection_lost' ||
+          download.fileDownloadError?.trim().isNotEmpty == true);
+    }).toList();
+  }
+
   void _listenToJob(String jobId) {
     _jobSubscriptions[jobId] = ref
         .read(mediaRepositoryProvider)

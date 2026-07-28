@@ -13,10 +13,14 @@ class DownloadsContent extends StatelessWidget {
     super.key,
     required this.downloads,
     required this.onCancelDownload,
+    required this.onClearCompleted,
+    required this.onClearFailed,
   });
 
   final List<TrackedDownload> downloads;
   final ValueChanged<String> onCancelDownload;
+  final VoidCallback onClearCompleted;
+  final VoidCallback onClearFailed;
 
   @override
   Widget build(BuildContext context) {
@@ -74,6 +78,8 @@ class DownloadsContent extends StatelessWidget {
                         completed: completed,
                         failed: failed,
                         onCancelDownload: onCancelDownload,
+                        onClearCompleted: onClearCompleted,
+                        onClearFailed: onClearFailed,
                       )
                     : const NexoraStatePanel(
                         title: 'No active downloads',
@@ -99,7 +105,8 @@ class DownloadsContent extends StatelessWidget {
 
   bool _isCompleted(TrackedDownload download) {
     return download.status == 'completed' &&
-        download.savedFilePath?.trim().isNotEmpty == true;
+        download.savedFilePath?.trim().isNotEmpty == true &&
+        download.fileDownloadError?.trim().isNotEmpty != true;
   }
 
   bool _isFailed(TrackedDownload download) {
@@ -124,6 +131,8 @@ class _DownloadSections extends StatelessWidget {
     required this.completed,
     required this.failed,
     required this.onCancelDownload,
+    required this.onClearCompleted,
+    required this.onClearFailed,
   });
 
   final List<TrackedDownload> downloading;
@@ -131,6 +140,8 @@ class _DownloadSections extends StatelessWidget {
   final List<TrackedDownload> completed;
   final List<TrackedDownload> failed;
   final ValueChanged<String> onCancelDownload;
+  final VoidCallback onClearCompleted;
+  final VoidCallback onClearFailed;
 
   @override
   Widget build(BuildContext context) {
@@ -171,6 +182,10 @@ class _DownloadSections extends StatelessWidget {
           _DownloadSection(
             title: 'Completed',
             count: completed.length,
+            action: _ClearManagerSectionAction(
+              section: _ClearManagerSection.completed,
+              onClear: onClearCompleted,
+            ),
             children: [
               for (final download in completed)
                 _DownloadCard(
@@ -184,6 +199,10 @@ class _DownloadSections extends StatelessWidget {
           _DownloadSection(
             title: 'Failed',
             count: failed.length,
+            action: _ClearManagerSectionAction(
+              section: _ClearManagerSection.failed,
+              onClear: onClearFailed,
+            ),
             children: [
               for (final download in failed)
                 _DownloadCard(
@@ -203,11 +222,13 @@ class _DownloadSection extends StatelessWidget {
     required this.title,
     required this.count,
     required this.children,
+    this.action,
   });
 
   final String title;
   final int count;
   final List<Widget> children;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -219,11 +240,18 @@ class _DownloadSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            '$title ($count)',
-            style: textTheme.titleLarge?.copyWith(
-              color: colorScheme.onSurface,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '$title ($count)',
+                  style: textTheme.titleLarge?.copyWith(
+                    color: colorScheme.onSurface,
+                  ),
+                ),
+              ),
+              if (action != null) action!,
+            ],
           ),
           const SizedBox(height: AppSpacing.md),
           for (final child in children) ...[
@@ -233,6 +261,97 @@ class _DownloadSection extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+enum _ClearManagerSection { completed, failed }
+
+class _ClearManagerSectionAction extends StatelessWidget {
+  const _ClearManagerSectionAction({
+    required this.section,
+    required this.onClear,
+  });
+
+  final _ClearManagerSection section;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton(
+      onPressed: () => _confirmClear(context),
+      style: TextButton.styleFrom(
+        minimumSize: const Size(0, AppSizes.touchTarget),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      ),
+      child: const Text('Clear'),
+    );
+  }
+
+  Future<void> _confirmClear(BuildContext context) async {
+    final shouldClear = await showDialog<bool>(
+      context: context,
+      builder: (context) => _ClearManagerSectionDialog(section: section),
+    );
+
+    if (shouldClear == true) {
+      onClear();
+    }
+  }
+}
+
+class _ClearManagerSectionDialog extends StatelessWidget {
+  const _ClearManagerSectionDialog({required this.section});
+
+  final _ClearManagerSection section;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final actionStyle = FilledButton.styleFrom(
+      minimumSize: const Size(0, AppSizes.touchTarget),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      textStyle: textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+    );
+
+    return AlertDialog(
+      title: Text(_title),
+      content: Text(_message),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          style: actionStyle.copyWith(
+            backgroundColor: WidgetStatePropertyAll(
+              colorScheme.surfaceContainerHigh,
+            ),
+            foregroundColor: WidgetStatePropertyAll(colorScheme.onSurface),
+          ),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          style: actionStyle.copyWith(
+            backgroundColor: WidgetStatePropertyAll(colorScheme.primary),
+            foregroundColor: WidgetStatePropertyAll(colorScheme.onPrimary),
+          ),
+          child: const Text('Clear'),
+        ),
+      ],
+    );
+  }
+
+  String get _title {
+    return section == _ClearManagerSection.completed
+        ? 'Clear Completed?'
+        : 'Clear Failed?';
+  }
+
+  String get _message {
+    return section == _ClearManagerSection.completed
+        ? 'This only removes completed downloads from the current Downloads page.\n'
+            'History and downloaded files will remain untouched.'
+        : 'This removes failed downloads from the current Downloads page.\n'
+            'No backend data will be modified.';
   }
 }
 

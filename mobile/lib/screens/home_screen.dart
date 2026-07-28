@@ -60,14 +60,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final canRequestMetadata = hasMediaUrl && !isMediaBusy;
 
     if (_selectedDestinationIndex == NexoraNavigationBar.downloadsIndex) {
+      final downloadsController = ref.read(activeDownloadsProvider.notifier);
       return _buildScaffold(
         DownloadsContent(
           downloads: activeDownloads,
           onCancelDownload: (jobId) {
             unawaited(
-              ref.read(activeDownloadsProvider.notifier).cancelDownload(jobId),
+              downloadsController.cancelDownload(jobId),
             );
           },
+          onClearCompleted: downloadsController.clearCompletedDownloads,
+          onClearFailed: downloadsController.clearFailedDownloads,
         ),
       );
     }
