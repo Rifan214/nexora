@@ -84,6 +84,26 @@ class MediaController extends Notifier<MediaState> {
     state = MediaState.success(
       metadata: current.metadata,
       selectedVideoQuality: quality,
+      currentMediaType: MediaDownloadType.video,
+    );
+  }
+
+  void selectAudioOption() {
+    final current = _successState;
+    if (current == null ||
+        current.downloadLoading ||
+        current.fileDownloadLoading ||
+        current.fileOpenLoading ||
+        current.metadata.audioOptions.isEmpty) {
+      return;
+    }
+
+    unawaited(_closeJobSubscription());
+    _cancelFileDownload();
+
+    state = MediaState.success(
+      metadata: current.metadata,
+      currentMediaType: MediaDownloadType.audio,
     );
   }
 

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 
 import '../core/theme/app_tokens.dart';
+import '../models/media_download_type.dart';
 import '../models/media_metadata.dart';
 import '../models/media_state.dart';
 import '../models/tracked_download.dart';
@@ -546,7 +547,7 @@ class _MediaStatus extends ConsumerWidget {
         return _MetadataSummary(
           metadata: state.metadata,
           selectedVideoQuality: state.selectedVideoQuality,
-          isAudioSelected: state.currentMediaType?.name == 'audio',
+          isAudioSelected: state.currentMediaType == MediaDownloadType.audio,
           downloadLoading: state.downloadLoading,
           downloadSuccess: hasDetachedSession ? false : state.downloadSuccess,
           downloadError: hasDetachedSession
@@ -585,6 +586,7 @@ class _MediaStatus extends ConsumerWidget {
                   ? false
                   : activeDownload?.fileOpenLoading ?? state.fileOpenLoading,
           onVideoQualitySelected: mediaController.selectVideoQuality,
+          onAudioOptionSelected: mediaController.selectAudioOption,
           onVideoDownloadPressed: mediaController.createVideoDownloadJob,
           onAudioDownloadPressed: mediaController.createAudioDownloadJob,
           onOpenFilePressed: activeDownload == null
@@ -660,6 +662,7 @@ class _MetadataSummary extends StatelessWidget {
     required this.savedDirectory,
     required this.fileOpenLoading,
     required this.onVideoQualitySelected,
+    required this.onAudioOptionSelected,
     required this.onVideoDownloadPressed,
     required this.onAudioDownloadPressed,
     required this.onOpenFilePressed,
@@ -682,6 +685,7 @@ class _MetadataSummary extends StatelessWidget {
   final String? savedDirectory;
   final bool fileOpenLoading;
   final ValueChanged<VideoQuality> onVideoQualitySelected;
+  final VoidCallback onAudioOptionSelected;
   final VoidCallback onVideoDownloadPressed;
   final VoidCallback onAudioDownloadPressed;
   final VoidCallback onOpenFilePressed;
@@ -694,41 +698,33 @@ class _MetadataSummary extends StatelessWidget {
         fileOpenLoading ||
         _isActiveStatus(currentStatus) ||
         _isCompletedStatus(currentStatus);
-    final isVideoDownloadDisabled =
-        selectedVideoQuality == null || isDownloadActionDisabled;
-    final isVideoQualitySelectionEnabled = !downloadLoading &&
-        !fileDownloadLoading &&
-        !fileOpenLoading &&
-        !_isActiveStatus(currentStatus);
+    final hasMediaSelection = selectedVideoQuality != null || isAudioSelected;
+    final isStartDownloadDisabled =
+        !hasMediaSelection || isDownloadActionDisabled;
+    final isMediaSelectionEnabled = !isDownloadActionDisabled;
+    final onStartDownloadPressed = isAudioSelected
+        ? onAudioDownloadPressed
+        : onVideoDownloadPressed;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _MetadataPreviewCard(metadata: metadata),
         const SizedBox(height: AppSpacing.xxl),
-        _VideoQualitySelectionList(
-          qualities: metadata.videoQualities,
+        _UnifiedMediaSelection(
+          videoQualities: metadata.videoQualities,
+          audioOptions: metadata.audioOptions,
           selectedVideoQuality: selectedVideoQuality,
-          enabled: isVideoQualitySelectionEnabled,
+          isAudioSelected: isAudioSelected,
+          enabled: isMediaSelectionEnabled,
           onVideoQualitySelected: onVideoQualitySelected,
+          onAudioOptionSelected: onAudioOptionSelected,
         ),
-        if (metadata.audioOptions.isNotEmpty) ...[
-          const SizedBox(height: AppSpacing.xxl),
-          const Divider(),
-          const SizedBox(height: AppSpacing.xxl),
-          _AudioOptionSelector(
-            options: metadata.audioOptions,
-            isSelected: isAudioSelected,
-            enabled: !isDownloadActionDisabled,
-            onSelected: onAudioDownloadPressed,
-          ),
-        ],
         const SizedBox(height: AppSpacing.xxl),
         SizedBox(
           width: double.infinity,
           child: FilledButton(
-            onPressed:
-                isVideoDownloadDisabled ? null : onVideoDownloadPressed,
+            onPressed: isStartDownloadDisabled ? null : onStartDownloadPressed,
             child: downloadLoading
                 ? Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -1199,6 +1195,78 @@ class _FileTransferProgress extends StatelessWidget {
   }
 }
 
+class _UnifiedMediaSelection extends StatelessWidget {
+  const _UnifiedMediaSelection({
+    required this.videoQualities,
+    required this.audioOptions,
+    required this.selectedVideoQuality,
+    required this.isAudioSelected,
+    required this.enabled,
+    required this.onVideoQualitySelected,
+    required this.onAudioOptionSelected,
+  });
+
+  final List<VideoQuality> videoQualities;
+  final List<AudioOption> audioOptions;
+  final VideoQuality? selectedVideoQuality;
+  final bool isAudioSelected;
+  final bool enabled;
+  final ValueChanged<VideoQuality> onVideoQualitySelected;
+  final VoidCallback onAudioOptionSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Choose Format',
+          style: textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        Text(
+          'Video',
+          style: textTheme.labelMedium?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        _VideoQualitySelectionList(
+          qualities: videoQualities,
+          selectedVideoQuality: selectedVideoQuality,
+          enabled: enabled,
+          onVideoQualitySelected: onVideoQualitySelected,
+        ),
+        if (audioOptions.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.xxl),
+          const Divider(),
+          const SizedBox(height: AppSpacing.xxl),
+          Text(
+            'Audio',
+            style: textTheme.labelMedium?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          _AudioOptionSelector(
+            options: audioOptions,
+            isSelected: isAudioSelected,
+            enabled: enabled,
+            onSelected: onAudioOptionSelected,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class _VideoQualitySelectionList extends StatelessWidget {
   const _VideoQualitySelectionList({
     required this.qualities,
@@ -1214,13 +1282,12 @@ class _VideoQualitySelectionList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
 
     if (qualities.isEmpty) {
       return Text(
         'No video qualities are available.',
-        style: textTheme.bodyMedium?.copyWith(
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
           color: colorScheme.onSurfaceVariant,
         ),
       );
@@ -1229,22 +1296,17 @@ class _VideoQualitySelectionList extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Video Quality',
-          style: textTheme.labelMedium?.copyWith(
-            color: colorScheme.onSurfaceVariant,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
         Wrap(
           spacing: AppSpacing.sm,
           runSpacing: AppSpacing.sm,
           children: [
             for (final quality in qualities)
-              _VideoQualityChip(
-                quality: quality,
-                selectedHeight: selectedVideoQuality?.height,
+              _MediaFormatChip(
+                primaryLabel: quality.label,
+                secondaryLabel: _estimatedFilesizeLabel(
+                  quality.estimatedFilesize,
+                ),
+                isSelected: selectedVideoQuality?.height == quality.height,
                 enabled: enabled,
                 onSelected: () => onVideoQualitySelected(quality),
               ),
@@ -1255,16 +1317,18 @@ class _VideoQualitySelectionList extends StatelessWidget {
   }
 }
 
-class _VideoQualityChip extends StatelessWidget {
-  const _VideoQualityChip({
-    required this.quality,
-    required this.selectedHeight,
+class _MediaFormatChip extends StatelessWidget {
+  const _MediaFormatChip({
+    required this.primaryLabel,
+    required this.secondaryLabel,
+    required this.isSelected,
     required this.enabled,
     required this.onSelected,
   });
 
-  final VideoQuality quality;
-  final int? selectedHeight;
+  final String primaryLabel;
+  final String? secondaryLabel;
+  final bool isSelected;
   final bool enabled;
   final VoidCallback onSelected;
 
@@ -1272,10 +1336,33 @@ class _VideoQualityChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final isSelected = selectedHeight == quality.height;
+    final secondaryLabel = this.secondaryLabel;
 
     return ChoiceChip(
-      label: Text(quality.label),
+      label: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            primaryLabel,
+            style: textTheme.bodyLarge?.copyWith(
+              color: isSelected ? colorScheme.onPrimary : colorScheme.onSurface,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (secondaryLabel != null) ...[
+            const SizedBox(height: AppSpacing.xxs),
+            Text(
+              secondaryLabel,
+              style: textTheme.labelSmall?.copyWith(
+                color: isSelected
+                    ? colorScheme.onPrimary.withAlpha(184)
+                    : colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ],
+      ),
       selected: isSelected,
       onSelected: enabled ? (_) => onSelected() : null,
       showCheckmark: false,
@@ -1291,10 +1378,6 @@ class _VideoQualityChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.xs,
         vertical: AppSpacing.xxs,
-      ),
-      labelStyle: textTheme.bodyLarge?.copyWith(
-        color: isSelected ? colorScheme.onPrimary : colorScheme.onSurface,
-        fontWeight: FontWeight.w600,
       ),
     );
   }
@@ -1315,76 +1398,33 @@ class _AudioOptionSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-
-    return Column(
+    return Wrap(
+      spacing: AppSpacing.sm,
+      runSpacing: AppSpacing.sm,
       children: [
         for (final option in options)
-          AnimatedContainer(
-            duration: AppDurations.short,
-            decoration: BoxDecoration(
-              color: isSelected
-                  ? colorScheme.secondaryContainer.withAlpha(72)
-                  : Colors.transparent,
-              borderRadius: AppRadii.input,
-            ),
-            child: Material(
-              type: MaterialType.transparency,
-              borderRadius: AppRadii.input,
-              child: InkWell(
-                onTap: enabled ? onSelected : null,
-                borderRadius: AppRadii.input,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    minHeight: AppSizes.touchTarget,
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: AppSpacing.xs,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.music_note_rounded,
-                          color: isSelected
-                              ? colorScheme.primary
-                              : colorScheme.onSurfaceVariant,
-                          size: AppSpacing.xl,
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '${option.label} (Best Quality)',
-                                style: textTheme.titleMedium,
-                              ),
-                              const SizedBox(height: AppSpacing.xxs),
-                              Text(
-                                'Save as high-quality ${option.extension.toUpperCase()}',
-                                style: textTheme.bodyMedium?.copyWith(
-                                  color: colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Switch(
-                          value: isSelected,
-                          onChanged: enabled ? (_) => onSelected() : null,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
+          _MediaFormatChip(
+            primaryLabel: '${option.label} (Best Quality)',
+            secondaryLabel: 'Best Audio',
+            isSelected: isSelected,
+            enabled: enabled,
+            onSelected: onSelected,
           ),
       ],
     );
   }
+}
+
+String? _estimatedFilesizeLabel(int? filesize) {
+  if (filesize == null || filesize <= 0) {
+    return null;
+  }
+
+  const bytesPerMegabyte = 1024 * 1024;
+  final megabytes = filesize / bytesPerMegabyte;
+  return megabytes >= 100
+      ? '~${megabytes.round()} MB'
+      : '~${megabytes.toStringAsFixed(1)} MB';
 }
 
 class _StatusMessage extends StatelessWidget {
