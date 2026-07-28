@@ -1302,7 +1302,7 @@ class _VideoQualitySelectionList extends StatelessWidget {
           children: [
             for (final quality in qualities)
               _MediaFormatChip(
-                primaryLabel: quality.label,
+                primaryLabel: _displayFormatLabel(quality.label),
                 secondaryLabel: _estimatedFilesizeLabel(
                   quality.estimatedFilesize,
                 ),
@@ -1365,13 +1365,18 @@ class _MediaFormatChip extends StatelessWidget {
       ),
       selected: isSelected,
       onSelected: enabled ? (_) => onSelected() : null,
-      showCheckmark: false,
+      showCheckmark: isSelected,
+      checkmarkColor: colorScheme.onPrimary,
       selectedColor: colorScheme.primary,
       backgroundColor: colorScheme.surfaceContainer,
       disabledColor: colorScheme.surfaceContainerHigh,
       side: BorderSide(
         color: isSelected ? colorScheme.primary : colorScheme.outlineVariant,
+        width: isSelected ? 2 : 1,
       ),
+      elevation: isSelected ? 2 : 0,
+      pressElevation: 4,
+      selectedShadowColor: colorScheme.primary.withAlpha(72),
       shape: const StadiumBorder(),
       materialTapTargetSize: MaterialTapTargetSize.padded,
       labelPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
@@ -1404,7 +1409,7 @@ class _AudioOptionSelector extends StatelessWidget {
       children: [
         for (final option in options)
           _MediaFormatChip(
-            primaryLabel: '${option.label} (Best Quality)',
+            primaryLabel: _displayFormatLabel(option.label),
             secondaryLabel: 'Best Audio',
             isSelected: isSelected,
             enabled: enabled,
@@ -1423,8 +1428,12 @@ String? _estimatedFilesizeLabel(int? filesize) {
   const bytesPerMegabyte = 1024 * 1024;
   final megabytes = filesize / bytesPerMegabyte;
   return megabytes >= 100
-      ? '~${megabytes.round()} MB'
-      : '~${megabytes.toStringAsFixed(1)} MB';
+      ? '~ ${megabytes.round()} MB'
+      : '~ ${megabytes.toStringAsFixed(1)} MB';
+}
+
+String _displayFormatLabel(String label) {
+  return label.trim().toLowerCase() == 'best' ? 'Best Available' : label;
 }
 
 class _StatusMessage extends StatelessWidget {
