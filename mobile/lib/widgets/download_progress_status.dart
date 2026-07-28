@@ -22,6 +22,10 @@ String friendlyDownloadStatus({
         : 'Downloading media...';
   }
 
+  if (normalizedStatus == 'queued') {
+    return 'Waiting';
+  }
+
   if (normalizedStatus == 'cancelling') {
     return 'Cancelling...';
   }

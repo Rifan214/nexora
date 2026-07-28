@@ -19,6 +19,7 @@ from app.services.download_process_manager import (
     get_download_process_manager,
 )
 from app.services.job_manager import JobManager, build_job_download_url, get_job_manager
+from app.services.queue_manager import QueueManager, get_queue_manager
 from app.services.quality_selector import QualitySelector
 from app.utils.platforms import detect_platform_from_url
 from app.utils.storage import build_download_outtmpl, find_downloaded_file, get_temp_storage_dir
@@ -35,10 +36,18 @@ _AUDIO_MP3_POSTPROCESSOR = {
 
 
 class MediaService:
-    def __init__(self, *, process_manager: DownloadProcessManager | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        process_manager: DownloadProcessManager | None = None,
+        job_manager: JobManager | None = None,
+        queue_manager: QueueManager | None = None,
+    ) -> None:
         self._settings = get_settings()
         self._quality_selector = QualitySelector()
         self._process_manager = process_manager or get_download_process_manager()
+        self._job_manager = job_manager
+        self._queue_manager = queue_manager
 
     def get_metadata(self, url: str) -> MediaMetadata:
         normalized_url = validate_http_url(url)
@@ -122,7 +131,7 @@ class MediaService:
             self._log_failure(normalized_url, exc.message, exc.details)
             raise
 
-        job_manager = get_job_manager()
+        job_manager = self._get_job_manager()
         job = job_manager.create_job(
             media_url=normalized_url,
             platform=platform,
@@ -130,29 +139,37 @@ class MediaService:
             format_id=format_selector,
             output_type=request.media_type,
         )
+        self._get_queue_manager().enqueue(
+            job.job_id,
+            starter=lambda: self._start_download_worker(
+                job_id=job.job_id,
+                url=normalized_url,
+                format_selector=format_selector,
+                output_type=request.media_type,
+            ),
+        )
+        return job
+
+    def _start_download_worker(
+        self,
+        *,
+        job_id: UUID,
+        url: str,
+        format_selector: str,
+        output_type: str,
+    ) -> None:
         worker = threading.Thread(
             target=self._download_job_background,
-            args=(job.job_id, normalized_url, format_selector, request.media_type),
+            args=(job_id, url, format_selector, output_type),
             daemon=True,
-            name=f"nexora-download-{job.job_id}",
+            name=f"nexora-download-{job_id}",
         )
-        self._process_manager.register_job(job.job_id, worker=worker)
+        self._process_manager.register_job(job_id, worker=worker)
         try:
             worker.start()
-        except RuntimeError as exc:
-            self._process_manager.finish_job(job.job_id)
-            self._mark_download_failed(
-                job.job_id,
-                error_message="Unable to start the download worker",
-                job_manager=job_manager,
-            )
-            raise APIError(
-                code="DOWNLOAD_START_ERROR",
-                message="Unable to start download",
-                details="The backend could not start the download worker",
-                status_code=500,
-            ) from exc
-        return job
+        except RuntimeError:
+            self._process_manager.finish_job(job_id)
+            raise
 
     def _download_job_background(
         self,
@@ -161,7 +178,7 @@ class MediaService:
         format_selector: str,
         output_type: str,
     ) -> None:
-        job_manager = get_job_manager()
+        job_manager = self._get_job_manager()
         self._process_manager.register_job(job_id, worker=threading.current_thread())
 
         try:
@@ -280,6 +297,12 @@ class MediaService:
             # hide the original download error or stop the worker.
             if marked_failed:
                 get_cleanup_service().cleanup_failed_download(job_id, job_manager=job_manager)
+
+    def _get_job_manager(self) -> JobManager:
+        return self._job_manager or get_job_manager()
+
+    def _get_queue_manager(self) -> QueueManager:
+        return self._queue_manager or get_queue_manager()
 
     def _finalize_cancelled_if_requested(
         self,

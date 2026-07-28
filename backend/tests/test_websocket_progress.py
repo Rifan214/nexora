@@ -64,6 +64,28 @@ def test_websocket_receives_progress_and_completion_updates() -> None:
             assert completed_message["error"] is None
 
 
+def test_websocket_receives_queued_update() -> None:
+    manager = JobManager()
+    websocket_manager = WebSocketManager()
+    manager.add_update_listener(websocket_manager.broadcast_job_update)
+    job = manager.create_job(media_url="https://www.youtube.com/watch?v=queued", platform="youtube")
+    app = _create_test_app(manager=manager, websocket_manager=websocket_manager)
+
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/ws/jobs/{job.job_id}") as websocket:
+            websocket.receive_json()
+
+            manager.mark_queued(job.job_id)
+
+            assert websocket.receive_json() == {
+                "job_id": str(job.job_id),
+                "status": JobStatus.queued.value,
+                "progress": 0,
+                "download_url": None,
+                "error": None,
+            }
+
+
 def test_websocket_receives_failed_update() -> None:
     manager = JobManager()
     websocket_manager = WebSocketManager()

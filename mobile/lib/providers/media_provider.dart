@@ -12,6 +12,7 @@ import '../models/media_download_type.dart';
 import '../models/media_metadata.dart';
 import '../models/media_state.dart';
 import '../repositories/media_repository.dart';
+import 'active_downloads_provider.dart';
 import 'history_provider.dart';
 
 final mediaProvider = NotifierProvider<MediaController, MediaState>(
@@ -73,8 +74,7 @@ class MediaController extends Notifier<MediaState> {
     if (current == null ||
         current.downloadLoading ||
         current.fileDownloadLoading ||
-        current.fileOpenLoading ||
-        _isActiveStatus(current.currentStatus)) {
+        current.fileOpenLoading) {
       return;
     }
 
@@ -156,9 +156,7 @@ class MediaController extends Notifier<MediaState> {
     if (current == null ||
         current.downloadLoading ||
         current.fileDownloadLoading ||
-        current.fileOpenLoading ||
-        _isActiveStatus(current.currentStatus) ||
-        _isCompletedStatus(current.currentStatus)) {
+        current.fileOpenLoading) {
       return;
     }
 
@@ -224,6 +222,12 @@ class MediaController extends Notifier<MediaState> {
         currentStatus: 'pending',
         currentProgress: 0,
       );
+      ref.read(activeDownloadsProvider.notifier).trackDownload(
+            jobId: job.jobId,
+            metadata: current.metadata,
+            mediaType: mediaType,
+            selectedVideoQuality: selectedVideoQuality,
+          );
       _listenToJob(job.jobId);
     } on ApiException catch (error) {
       final latest = _successState;
@@ -550,10 +554,7 @@ class MediaController extends Notifier<MediaState> {
       return false;
     }
 
-    return current.downloadLoading ||
-        current.fileDownloadLoading ||
-        current.fileOpenLoading ||
-        _isActiveStatus(current.currentStatus);
+    return current.downloadLoading;
   }
 
   String _progressErrorMessage(Object error) {
@@ -584,6 +585,7 @@ class MediaController extends Notifier<MediaState> {
   bool _isActiveStatus(String? status) {
     final normalizedStatus = status?.toLowerCase();
     return normalizedStatus == 'pending' ||
+        normalizedStatus == 'queued' ||
         normalizedStatus == 'processing' ||
         normalizedStatus == 'cancelling';
   }

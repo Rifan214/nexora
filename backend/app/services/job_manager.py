@@ -96,7 +96,23 @@ class JobManager:
         )
         return self._store_updated_job(
             updated_job,
-            expected_statuses={JobStatus.pending, JobStatus.processing},
+            expected_statuses={JobStatus.pending, JobStatus.queued, JobStatus.processing},
+        )
+
+    def mark_queued(self, job_id: UUID) -> DownloadJob:
+        """Publish that a job is waiting for the queue's active slot."""
+        job = self._get_required_job(job_id)
+        updated_job = job.model_copy(
+            update={
+                "status": JobStatus.queued,
+                "progress": 0,
+                "error_message": None,
+                "updated_at": _utcnow(),
+            }
+        )
+        return self._store_updated_job(
+            updated_job,
+            expected_statuses={JobStatus.pending},
         )
 
     def update_job_metadata(
@@ -121,7 +137,7 @@ class JobManager:
         )
         return self._store_updated_job(
             updated_job,
-            expected_statuses={JobStatus.pending, JobStatus.processing},
+            expected_statuses={JobStatus.pending, JobStatus.queued, JobStatus.processing},
         )
 
     def mark_completed(self, job_id: UUID, *, download_url: str | None = None) -> DownloadJob:

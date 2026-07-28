@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 _ACTIVE_JOB_STATUSES = {
     JobStatus.pending,
+    JobStatus.queued,
     JobStatus.processing,
     JobStatus.cancelling,
 }

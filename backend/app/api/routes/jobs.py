@@ -43,8 +43,8 @@ def get_job(job_id: UUID, job_manager: JobManager = Depends(get_job_manager)) ->
 @router.post(
     "/jobs/{job_id}/cancel",
     response_model=APIResponse[DownloadJobStatusResponse],
-    summary="Cancel an active download job",
-    description="Requests cancellation of an active yt-dlp or FFmpeg operation.",
+    summary="Cancel an active or queued download job",
+    description="Requests cancellation of a queued job or an active yt-dlp or FFmpeg operation.",
     response_model_exclude_none=True,
     dependencies=[Depends(run_lazy_cleanup)],
     responses={

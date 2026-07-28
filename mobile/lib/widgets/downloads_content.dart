@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/theme/app_tokens.dart';
 import '../models/media_download_type.dart';
-import '../models/media_state.dart';
+import '../models/tracked_download.dart';
 import 'download_progress_status.dart';
 import 'media_card_parts.dart';
 import 'nexora_brand.dart';
@@ -11,16 +11,16 @@ import 'nexora_state_panel.dart';
 class DownloadsContent extends StatelessWidget {
   const DownloadsContent({
     super.key,
-    required this.mediaState,
+    required this.downloads,
     required this.onCancelDownload,
   });
 
-  final MediaState mediaState;
-  final VoidCallback onCancelDownload;
+  final List<TrackedDownload> downloads;
+  final ValueChanged<String> onCancelDownload;
 
   @override
   Widget build(BuildContext context) {
-    final activeDownloads = _activeDownloads(mediaState);
+    final activeDownloads = downloads.where((download) => download.isActive).toList();
     final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -91,20 +91,6 @@ class DownloadsContent extends StatelessWidget {
     );
   }
 
-  List<MediaSuccess> _activeDownloads(MediaState state) {
-    if (state is! MediaSuccess) {
-      return const <MediaSuccess>[];
-    }
-
-    final normalizedStatus = state.currentStatus?.trim().toLowerCase();
-    final isActive = state.currentJobId != null &&
-        (normalizedStatus == 'pending' ||
-            normalizedStatus == 'processing' ||
-            normalizedStatus == 'cancelling' ||
-            _isSavingToDevice(state));
-    return isActive ? <MediaSuccess>[state] : const <MediaSuccess>[];
-  }
-
   String _downloadsSummary(int count) {
     if (count == 1) {
       return 'Managing 1 file currently.';
@@ -132,9 +118,7 @@ class _DownloadCountBadge extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLow,
-        border: Border.all(
-          color: colorScheme.outlineVariant.withAlpha(96),
-        ),
+        border: Border.all(color: colorScheme.outlineVariant.withAlpha(96)),
         borderRadius: AppRadii.pill,
       ),
       child: Text(
@@ -154,59 +138,63 @@ class _ActiveDownloadCard extends StatelessWidget {
     required this.onCancelDownload,
   });
 
-  final MediaSuccess download;
-  final VoidCallback onCancelDownload;
+  final TrackedDownload download;
+  final ValueChanged<String> onCancelDownload;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final useVerticalLayout = constraints.maxWidth < 520;
-            final thumbnail = NexoraMediaThumbnail(
-              metadata: download.metadata,
-              mediaType: download.currentMediaType,
-            );
-            final details = _DownloadDetails(download: download);
-            final action = _isSavingToDevice(download)
-                ? const _SavingToDeviceAction()
-                : _CancelDownloadAction(
-                    status: download.currentStatus,
-                    onCancel: onCancelDownload,
-                  );
+    final isQueued = download.status == 'queued';
+    final colorScheme = Theme.of(context).colorScheme;
 
-            if (useVerticalLayout) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Opacity(
+      opacity: isQueued ? 0.72 : 1,
+      child: Card(
+        color: isQueued ? colorScheme.surfaceContainerLow : null,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final useVerticalLayout = constraints.maxWidth < 520;
+              final thumbnail = NexoraMediaThumbnail(
+                metadata: download.metadata,
+                mediaType: download.mediaType,
+              );
+              final details = _DownloadDetails(download: download);
+              final action = download.isSavingToDevice
+                  ? const _SavingToDeviceAction()
+                  : _CancelDownloadAction(
+                      status: download.status,
+                      onCancel: () => onCancelDownload(download.jobId),
+                    );
+
+              if (useVerticalLayout) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    thumbnail,
+                    const SizedBox(height: AppSpacing.md),
+                    details,
+                    const SizedBox(height: AppSpacing.sm),
+                    Align(alignment: Alignment.centerRight, child: action),
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  thumbnail,
-                  const SizedBox(height: AppSpacing.md),
-                  details,
-                  const SizedBox(height: AppSpacing.sm),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: action,
+                  SizedBox(
+                    width: AppSizes.compactThumbnailWidth,
+                    child: thumbnail,
                   ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(child: details),
+                  const SizedBox(width: AppSpacing.sm),
+                  action,
                 ],
               );
-            }
-
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: AppSizes.compactThumbnailWidth,
-                  child: thumbnail,
-                ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(child: details),
-                const SizedBox(width: AppSpacing.sm),
-                action,
-              ],
-            );
-          },
+            },
+          ),
         ),
       ),
     );
@@ -216,22 +204,21 @@ class _ActiveDownloadCard extends StatelessWidget {
 class _DownloadDetails extends StatelessWidget {
   const _DownloadDetails({required this.download});
 
-  final MediaSuccess download;
+  final TrackedDownload download;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final isSavingToDevice = _isSavingToDevice(download);
+    final isSavingToDevice = download.isSavingToDevice;
+    final isQueued = download.status == 'queued';
     final progress = _clampProgress(
-      isSavingToDevice
-          ? download.fileDownloadProgress
-          : download.currentProgress,
+      isSavingToDevice ? download.fileDownloadProgress : download.progress,
     );
-    final hasKnownProgress = !isSavingToDevice || progress > 0;
+    final hasKnownProgress = !isQueued && (!isSavingToDevice || progress > 0);
     final status = friendlyDownloadStatus(
-      backendStatus: download.currentStatus,
-      backendProgress: download.currentProgress,
+      backendStatus: download.status,
+      backendProgress: download.progress,
       isSavingToDevice: isSavingToDevice,
     );
 
@@ -259,6 +246,7 @@ class _DownloadDetails extends StatelessWidget {
             _DownloadStatusBadge(
               status: status,
               isSavingToDevice: isSavingToDevice,
+              isQueued: isQueued,
             ),
             const Spacer(),
             if (hasKnownProgress)
@@ -270,66 +258,51 @@ class _DownloadDetails extends StatelessWidget {
               ),
           ],
         ),
-        const SizedBox(height: AppSpacing.sm),
-        Semantics(
-          label: hasKnownProgress
-              ? '$status $progress percent'
-              : status,
-          child: ClipRRect(
-            borderRadius: AppRadii.pill,
-            child: LinearProgressIndicator(
-              value: hasKnownProgress ? progress / 100 : null,
-              minHeight: AppSpacing.xs,
+        if (!isQueued) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Semantics(
+            label: hasKnownProgress ? '$status $progress percent' : status,
+            child: ClipRRect(
+              borderRadius: AppRadii.pill,
+              child: LinearProgressIndicator(
+                value: hasKnownProgress ? progress / 100 : null,
+                minHeight: AppSpacing.xs,
+              ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }
 
-  String _qualityLabel(MediaSuccess state) {
-    if (state.currentMediaType == MediaDownloadType.audio) {
+  String _qualityLabel(TrackedDownload download) {
+    if (download.mediaType == MediaDownloadType.audio) {
       return 'MP3';
     }
-
-    return state.selectedVideoQuality?.label ?? 'Video';
+    return download.selectedVideoQuality?.label ?? 'Video';
   }
 
   int _clampProgress(int value) {
     if (value < 0) {
       return 0;
     }
-
     if (value > 100) {
       return 100;
     }
-
     return value;
   }
-
-}
-
-bool _isSavingToDevice(MediaSuccess state) {
-  if (state.fileDownloadLoading) {
-    return true;
-  }
-
-  final hasSavedFile = state.savedFilePath?.trim().isNotEmpty == true;
-  final hasFileDownloadError =
-      state.fileDownloadError?.trim().isNotEmpty == true;
-  return state.currentStatus?.trim().toLowerCase() == 'completed' &&
-      !hasSavedFile &&
-      !hasFileDownloadError;
 }
 
 class _DownloadStatusBadge extends StatelessWidget {
   const _DownloadStatusBadge({
     required this.status,
     required this.isSavingToDevice,
+    required this.isQueued,
   });
 
   final String status;
   final bool isSavingToDevice;
+  final bool isQueued;
 
   @override
   Widget build(BuildContext context) {
@@ -349,15 +322,20 @@ class _DownloadStatusBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            isSavingToDevice ? Icons.save_rounded : Icons.downloading_rounded,
-            color: colorScheme.primary,
+            isSavingToDevice
+                ? Icons.save_rounded
+                : isQueued
+                    ? Icons.schedule_rounded
+                    : Icons.downloading_rounded,
+            color: isQueued ? colorScheme.onSurfaceVariant : colorScheme.primary,
             size: AppSpacing.md,
           ),
           const SizedBox(width: AppSpacing.xxs),
           Text(
             status,
             style: textTheme.labelMedium?.copyWith(
-              color: colorScheme.primary,
+              color:
+                  isQueued ? colorScheme.onSurfaceVariant : colorScheme.primary,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -373,17 +351,15 @@ class _CancelDownloadAction extends StatelessWidget {
     required this.onCancel,
   });
 
-  final String? status;
+  final String status;
   final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-
-    final normalizedStatus = status?.trim().toLowerCase();
-    final isCancelling = normalizedStatus == 'cancelling';
-    final isCancellable = normalizedStatus == 'pending' ||
-        normalizedStatus == 'processing';
+    final isCancelling = status == 'cancelling';
+    final isCancellable =
+        status == 'pending' || status == 'queued' || status == 'processing';
 
     return Semantics(
       button: true,

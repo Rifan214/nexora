@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import '../core/theme/app_tokens.dart';
 import '../models/media_metadata.dart';
 import '../models/media_state.dart';
+import '../models/tracked_download.dart';
+import '../providers/active_downloads_provider.dart';
 import '../providers/media_provider.dart';
 import '../widgets/download_progress_status.dart';
 import '../widgets/downloads_content.dart';
@@ -30,7 +32,6 @@ class HomeScreen extends ConsumerStatefulWidget {
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   final _urlController = TextEditingController();
   var _selectedDestinationIndex = NexoraNavigationBar.downloadIndex;
-  String? _automaticFileDownloadJobId;
   final _shownCompletionNotificationKeys = <String>{};
 
   @override
@@ -48,23 +49,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<MediaState>(mediaProvider, (_, next) {
-      _scheduleCompletedFileDownload(next);
-      _scheduleCompletionNotification(next);
+    ref.listen<List<TrackedDownload>>(activeDownloadsProvider, (_, next) {
+      _scheduleCompletionNotifications(next);
     });
 
     final mediaState = ref.watch(mediaProvider);
+    final activeDownloads = ref.watch(activeDownloadsProvider);
     final hasMediaUrl = _urlController.text.trim().isNotEmpty;
     final isMediaBusy = _isMediaBusy(mediaState);
     final canRequestMetadata = hasMediaUrl && !isMediaBusy;
 
     if (_selectedDestinationIndex == NexoraNavigationBar.downloadsIndex) {
-      final mediaController = ref.read(mediaProvider.notifier);
       return _buildScaffold(
         DownloadsContent(
-          mediaState: mediaState,
-          onCancelDownload: () {
-            unawaited(mediaController.cancelCurrentDownload());
+          downloads: activeDownloads,
+          onCancelDownload: (jobId) {
+            unawaited(
+              ref.read(activeDownloadsProvider.notifier).cancelDownload(jobId),
+            );
           },
         ),
       );
@@ -100,6 +102,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         canAnalyze: canRequestMetadata,
         showClearAction: hasMediaUrl,
         onClearUrl: _clearUrl,
+        onPaste: _pasteUrl,
         onAnalyze: () => _getMetadata(canRequestMetadata),
         metadataContent: _MediaStatus(mediaState: mediaState),
       ),
@@ -134,95 +137,36 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     ref.read(mediaProvider.notifier).getMediaInfo(_urlController.text);
   }
 
-  void _scheduleCompletedFileDownload(MediaState state) {
-    if (state is! MediaSuccess) {
-      return;
-    }
-
-    final jobId = state.currentJobId?.trim();
-    if (jobId == null ||
-        jobId.isEmpty ||
-        _automaticFileDownloadJobId == jobId ||
-        !_canAutomaticallySaveCompletedFile(state, jobId)) {
-      return;
-    }
-
-    _automaticFileDownloadJobId = jobId;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
+  void _scheduleCompletionNotifications(List<TrackedDownload> downloads) {
+    for (final download in downloads) {
+      final savedFilePath = download.savedFilePath?.trim();
+      if (savedFilePath == null || savedFilePath.isEmpty) {
+        continue;
       }
 
-      final latestState = ref.read(mediaProvider);
-      if (!_canAutomaticallySaveCompletedFile(latestState, jobId)) {
-        return;
+      final notificationKey = '${download.jobId}:$savedFilePath';
+      if (!_shownCompletionNotificationKeys.add(notificationKey)) {
+        continue;
       }
 
-      unawaited(ref.read(mediaProvider.notifier).downloadCompletedFile());
-    });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+
+        final isStillSaved = ref.read(activeDownloadsProvider).any(
+              (item) =>
+                  item.jobId == download.jobId &&
+                  item.savedFilePath?.trim() == savedFilePath,
+            );
+        if (isStillSaved) {
+          _showCompletionSnackBar(_snackBarFilename(download));
+        }
+      });
+    }
   }
 
-  bool _canAutomaticallySaveCompletedFile(
-    MediaState state,
-    String expectedJobId,
-  ) {
-    if (state is! MediaSuccess) {
-      return false;
-    }
-
-    final hasSavedFile = state.savedFilePath?.trim().isNotEmpty == true;
-    final hasFileDownloadError =
-        state.fileDownloadError?.trim().isNotEmpty == true;
-    return state.currentJobId?.trim() == expectedJobId &&
-        state.currentStatus?.trim().toLowerCase() == 'completed' &&
-        !state.fileDownloadLoading &&
-        !hasSavedFile &&
-        !hasFileDownloadError;
-  }
-
-  void _scheduleCompletionNotification(MediaState state) {
-    final notificationKey = _completionNotificationKey(state);
-    if (notificationKey == null ||
-        _shownCompletionNotificationKeys.contains(notificationKey)) {
-      return;
-    }
-
-    _shownCompletionNotificationKeys.add(notificationKey);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-
-      final latestState = ref.read(mediaProvider);
-      if (_completionNotificationKey(latestState) != notificationKey ||
-          latestState is! MediaSuccess) {
-        return;
-      }
-
-      _showCompletionSnackBar(latestState);
-    });
-  }
-
-  String? _completionNotificationKey(MediaState state) {
-    if (state is! MediaSuccess) {
-      return null;
-    }
-
-    final savedFilePath = state.savedFilePath?.trim();
-    if (savedFilePath == null || savedFilePath.isEmpty) {
-      return null;
-    }
-
-    final jobId = state.currentJobId?.trim();
-    if (jobId != null && jobId.isNotEmpty) {
-      return '$jobId:$savedFilePath';
-    }
-
-    return savedFilePath;
-  }
-
-  void _showCompletionSnackBar(MediaSuccess state) {
-    final filename = _snackBarFilename(state);
+  void _showCompletionSnackBar(String filename) {
     final messenger = ScaffoldMessenger.of(context);
 
     messenger
@@ -237,13 +181,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       );
   }
 
-  String _snackBarFilename(MediaSuccess state) {
-    final downloadedFilename = state.downloadedFilename?.trim();
+  String _snackBarFilename(TrackedDownload download) {
+    final downloadedFilename = download.downloadedFilename?.trim();
     if (downloadedFilename != null && downloadedFilename.isNotEmpty) {
       return downloadedFilename;
     }
 
-    final savedFilePath = state.savedFilePath?.trim();
+    final savedFilePath = download.savedFilePath?.trim();
     if (savedFilePath == null || savedFilePath.isEmpty) {
       return 'Download';
     }
@@ -322,13 +266,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       return false;
     }
 
-    final normalizedStatus = state.currentStatus?.toLowerCase();
-    return state.downloadLoading ||
-        state.fileDownloadLoading ||
-        state.fileOpenLoading ||
-        normalizedStatus == 'pending' ||
-        normalizedStatus == 'processing' ||
-        normalizedStatus == 'cancelling';
+    return state.downloadLoading;
   }
 }
 
@@ -487,6 +425,7 @@ class _MetadataLoadedContent extends StatelessWidget {
     required this.canAnalyze,
     required this.showClearAction,
     required this.onClearUrl,
+    required this.onPaste,
     required this.onAnalyze,
     required this.metadataContent,
   });
@@ -496,6 +435,7 @@ class _MetadataLoadedContent extends StatelessWidget {
   final bool canAnalyze;
   final bool showClearAction;
   final VoidCallback onClearUrl;
+  final Future<void> Function() onPaste;
   final VoidCallback onAnalyze;
   final Widget metadataContent;
 
@@ -530,12 +470,22 @@ class _MetadataLoadedContent extends StatelessWidget {
                 decoration: InputDecoration(
                   hintText: 'Paste URL here...',
                   prefixIcon: const Icon(Icons.link_rounded),
-                  suffixIcon: IconButton(
-                    tooltip: 'Clear URL',
-                    onPressed: showClearAction && isInputEnabled
-                        ? onClearUrl
-                        : null,
-                    icon: const Icon(Icons.close_rounded),
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Paste from clipboard',
+                        onPressed: isInputEnabled ? onPaste : null,
+                        icon: const Icon(Icons.content_paste_rounded),
+                      ),
+                      IconButton(
+                        tooltip: 'Clear URL',
+                        onPressed: showClearAction && isInputEnabled
+                            ? onClearUrl
+                            : null,
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -568,27 +518,41 @@ class _MediaStatus extends ConsumerWidget {
       },
       success: (state) {
         final mediaController = ref.read(mediaProvider.notifier);
+        final downloadController = ref.read(activeDownloadsProvider.notifier);
+        final activeDownload = _downloadForJob(
+          ref.watch(activeDownloadsProvider),
+          state.currentJobId,
+        );
         return _MetadataSummary(
           metadata: state.metadata,
           selectedVideoQuality: state.selectedVideoQuality,
           isAudioSelected: state.currentMediaType?.name == 'audio',
           downloadLoading: state.downloadLoading,
           downloadSuccess: state.downloadSuccess,
-          downloadError: state.downloadError,
+          downloadError: activeDownload?.error ?? state.downloadError,
           currentJobId: state.currentJobId,
-          currentStatus: state.currentStatus,
-          currentProgress: state.currentProgress,
-          fileDownloadLoading: state.fileDownloadLoading,
-          fileDownloadProgress: state.fileDownloadProgress,
-          fileDownloadError: state.fileDownloadError,
-          downloadedFilename: state.downloadedFilename,
-          savedFilePath: state.savedFilePath,
-          savedDirectory: state.savedDirectory,
-          fileOpenLoading: state.fileOpenLoading,
+          currentStatus: activeDownload?.status ?? state.currentStatus,
+          currentProgress: activeDownload?.progress ?? state.currentProgress,
+          fileDownloadLoading:
+              activeDownload?.fileDownloadLoading ?? state.fileDownloadLoading,
+          fileDownloadProgress: activeDownload?.fileDownloadProgress ??
+              state.fileDownloadProgress,
+          fileDownloadError:
+              activeDownload?.fileDownloadError ?? state.fileDownloadError,
+          downloadedFilename:
+              activeDownload?.downloadedFilename ?? state.downloadedFilename,
+          savedFilePath: activeDownload?.savedFilePath ?? state.savedFilePath,
+          savedDirectory: activeDownload?.savedDirectory ?? state.savedDirectory,
+          fileOpenLoading:
+              activeDownload?.fileOpenLoading ?? state.fileOpenLoading,
           onVideoQualitySelected: mediaController.selectVideoQuality,
           onVideoDownloadPressed: mediaController.createVideoDownloadJob,
           onAudioDownloadPressed: mediaController.createAudioDownloadJob,
-          onOpenFilePressed: mediaController.openDownloadedFile,
+          onOpenFilePressed: activeDownload == null
+              ? mediaController.openDownloadedFile
+              : () => unawaited(
+                    downloadController.openDownloadedFile(activeDownload.jobId),
+                  ),
         );
       },
       error: (state) {
@@ -600,6 +564,23 @@ class _MediaStatus extends ConsumerWidget {
       },
     );
   }
+}
+
+TrackedDownload? _downloadForJob(
+  List<TrackedDownload> downloads,
+  String? jobId,
+) {
+  final normalizedJobId = jobId?.trim().toLowerCase();
+  if (normalizedJobId == null || normalizedJobId.isEmpty) {
+    return null;
+  }
+
+  for (final download in downloads) {
+    if (download.jobId.toLowerCase() == normalizedJobId) {
+      return download;
+    }
+  }
+  return null;
 }
 
 class _MetadataSummary extends StatelessWidget {
@@ -746,6 +727,7 @@ class _MetadataSummary extends StatelessWidget {
   bool _isActiveStatus(String? status) {
     final normalizedStatus = status?.toLowerCase();
     return normalizedStatus == 'pending' ||
+        normalizedStatus == 'queued' ||
         normalizedStatus == 'processing' ||
         normalizedStatus == 'cancelling';
   }
