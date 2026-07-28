@@ -24,7 +24,6 @@ class DownloadsContent extends StatelessWidget {
     final waiting = downloads.where((download) => download.status == 'queued').toList();
     final completed = downloads.where(_isCompleted).toList();
     final failed = downloads.where(_isFailed).toList();
-    final hasBackendActiveDownload = downloads.any(_isBackendActive);
     final activeCount = downloading.length + waiting.length;
     final hasDownloads =
         activeCount > 0 || completed.isNotEmpty || failed.isNotEmpty;
@@ -72,7 +71,6 @@ class DownloadsContent extends StatelessWidget {
                     ? _DownloadSections(
                         downloading: downloading,
                         waiting: waiting,
-                        queueOffset: hasBackendActiveDownload ? 1 : 0,
                         completed: completed,
                         failed: failed,
                         onCancelDownload: onCancelDownload,
@@ -104,12 +102,6 @@ class DownloadsContent extends StatelessWidget {
         download.savedFilePath?.trim().isNotEmpty == true;
   }
 
-  bool _isBackendActive(TrackedDownload download) {
-    return download.status == 'pending' ||
-        download.status == 'processing' ||
-        download.status == 'cancelling';
-  }
-
   bool _isFailed(TrackedDownload download) {
     return download.status == 'failed' ||
         download.status == 'connection_lost' ||
@@ -129,7 +121,6 @@ class _DownloadSections extends StatelessWidget {
   const _DownloadSections({
     required this.downloading,
     required this.waiting,
-    required this.queueOffset,
     required this.completed,
     required this.failed,
     required this.onCancelDownload,
@@ -137,7 +128,6 @@ class _DownloadSections extends StatelessWidget {
 
   final List<TrackedDownload> downloading;
   final List<TrackedDownload> waiting;
-  final int queueOffset;
   final List<TrackedDownload> completed;
   final List<TrackedDownload> failed;
   final ValueChanged<String> onCancelDownload;
@@ -172,7 +162,7 @@ class _DownloadSections extends StatelessWidget {
                 _DownloadCard(
                   download: waiting[index],
                   section: _DownloadSectionType.waiting,
-                  waitingPosition: queueOffset + index + 1,
+                  waitingPosition: index + 1,
                   onCancelDownload: onCancelDownload,
                 ),
             ],
@@ -356,14 +346,18 @@ class _DownloadCard extends StatelessWidget {
   }
 
   Widget? _action() {
+    if (section == _DownloadSectionType.waiting) {
+      return _RemoveFromQueueAction(
+        onRemove: () => onCancelDownload(download.jobId),
+      );
+    }
     if (section == _DownloadSectionType.failed) {
       return const _RetryDownloadAction();
     }
     if (download.isSavingToDevice) {
       return const _SavingToDeviceAction();
     }
-    if (section == _DownloadSectionType.downloading ||
-        section == _DownloadSectionType.waiting) {
+    if (section == _DownloadSectionType.downloading) {
       return _CancelDownloadAction(
         status: download.status,
         onCancel: () => onCancelDownload(download.jobId),
@@ -641,6 +635,83 @@ class _SavingToDeviceAction extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _RemoveFromQueueAction extends StatelessWidget {
+  const _RemoveFromQueueAction({required this.onRemove});
+
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return TextButton.icon(
+      onPressed: () => _confirmRemoval(context),
+      icon: const Icon(Icons.remove_circle_outline_rounded),
+      label: const Text('Remove'),
+      style: TextButton.styleFrom(
+        foregroundColor: colorScheme.error,
+        minimumSize: const Size(0, AppSizes.touchTarget),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      ),
+    );
+  }
+
+  Future<void> _confirmRemoval(BuildContext context) async {
+    final shouldRemove = await showDialog<bool>(
+      context: context,
+      builder: (context) => const _RemoveFromQueueDialog(),
+    );
+
+    if (shouldRemove == true) {
+      onRemove();
+    }
+  }
+}
+
+class _RemoveFromQueueDialog extends StatelessWidget {
+  const _RemoveFromQueueDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final actionStyle = FilledButton.styleFrom(
+      minimumSize: const Size(0, AppSizes.touchTarget),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      textStyle: textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+    );
+
+    return AlertDialog(
+      icon: Icon(Icons.remove_circle_outline_rounded, color: colorScheme.error),
+      title: const Text('Remove from Queue?'),
+      content: const Text(
+        'This download will be removed from the queue.\n'
+        'The active download will not be affected.',
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          style: actionStyle.copyWith(
+            backgroundColor: WidgetStatePropertyAll(
+              colorScheme.surfaceContainerHigh,
+            ),
+            foregroundColor: WidgetStatePropertyAll(colorScheme.onSurface),
+          ),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          style: actionStyle.copyWith(
+            backgroundColor: WidgetStatePropertyAll(colorScheme.error),
+            foregroundColor: WidgetStatePropertyAll(colorScheme.onError),
+          ),
+          child: const Text('Remove'),
+        ),
+      ],
     );
   }
 }
