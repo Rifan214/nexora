@@ -20,7 +20,14 @@ class DownloadsContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final activeDownloads = downloads.where((download) => download.isActive).toList();
+    final downloading = downloads.where(_isDownloading).toList();
+    final waiting = downloads.where((download) => download.status == 'queued').toList();
+    final completed = downloads.where(_isCompleted).toList();
+    final failed = downloads.where(_isFailed).toList();
+    final hasBackendActiveDownload = downloads.any(_isBackendActive);
+    final activeCount = downloading.length + waiting.length;
+    final hasDownloads =
+        activeCount > 0 || completed.isNotEmpty || failed.isNotEmpty;
     final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -42,16 +49,16 @@ class DownloadsContent extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      'Active Downloads',
+                      'Downloads',
                       style: textTheme.headlineMedium,
                     ),
                   ),
-                  _DownloadCountBadge(count: activeDownloads.length),
+                  _DownloadCountBadge(count: activeCount),
                 ],
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(
-                _downloadsSummary(activeDownloads.length),
+                _downloadsSummary(activeCount),
                 style: textTheme.bodyLarge?.copyWith(
                   color: colorScheme.onSurfaceVariant,
                 ),
@@ -61,27 +68,21 @@ class DownloadsContent extends StatelessWidget {
                 duration: AppDurations.short,
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeInCubic,
-                child: KeyedSubtree(
-                  key: ValueKey(activeDownloads.isEmpty),
-                  child: activeDownloads.isEmpty
-                      ? const NexoraStatePanel(
-                          title: 'No active downloads',
-                          message:
-                              'New download jobs will appear here while media is downloading or saving.',
-                          icon: Icons.downloading_outlined,
-                        )
-                      : Column(
-                          children: [
-                            for (final download in activeDownloads) ...[
-                              _ActiveDownloadCard(
-                                download: download,
-                                onCancelDownload: onCancelDownload,
-                              ),
-                              const SizedBox(height: AppSpacing.xl),
-                            ],
-                          ],
-                        ),
-                ),
+                child: hasDownloads
+                    ? _DownloadSections(
+                        downloading: downloading,
+                        waiting: waiting,
+                        queueOffset: hasBackendActiveDownload ? 1 : 0,
+                        completed: completed,
+                        failed: failed,
+                        onCancelDownload: onCancelDownload,
+                      )
+                    : const NexoraStatePanel(
+                        title: 'No active downloads',
+                        message:
+                            'New download jobs will appear here while media is downloading or saving.',
+                        icon: Icons.downloading_outlined,
+                      ),
               ),
               const SizedBox(height: AppSpacing.xxl),
             ],
@@ -91,14 +92,161 @@ class DownloadsContent extends StatelessWidget {
     );
   }
 
+  bool _isDownloading(TrackedDownload download) {
+    return download.status == 'pending' ||
+        download.status == 'processing' ||
+        download.status == 'cancelling' ||
+        download.isSavingToDevice;
+  }
+
+  bool _isCompleted(TrackedDownload download) {
+    return download.status == 'completed' &&
+        download.savedFilePath?.trim().isNotEmpty == true;
+  }
+
+  bool _isBackendActive(TrackedDownload download) {
+    return download.status == 'pending' ||
+        download.status == 'processing' ||
+        download.status == 'cancelling';
+  }
+
+  bool _isFailed(TrackedDownload download) {
+    return download.status == 'failed' ||
+        download.status == 'connection_lost' ||
+        download.fileDownloadError?.trim().isNotEmpty == true;
+  }
+
   String _downloadsSummary(int count) {
     if (count == 1) {
-      return 'Managing 1 file currently.';
+      return 'Managing 1 active file.';
     }
 
-    return 'Managing $count files currently.';
+    return 'Managing $count active files.';
   }
 }
+
+class _DownloadSections extends StatelessWidget {
+  const _DownloadSections({
+    required this.downloading,
+    required this.waiting,
+    required this.queueOffset,
+    required this.completed,
+    required this.failed,
+    required this.onCancelDownload,
+  });
+
+  final List<TrackedDownload> downloading;
+  final List<TrackedDownload> waiting;
+  final int queueOffset;
+  final List<TrackedDownload> completed;
+  final List<TrackedDownload> failed;
+  final ValueChanged<String> onCancelDownload;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: ValueKey(
+        '${downloading.length}:${waiting.length}:${completed.length}:${failed.length}',
+      ),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (downloading.isNotEmpty)
+          _DownloadSection(
+            title: 'Downloading',
+            count: downloading.length,
+            children: [
+              for (final download in downloading)
+                _DownloadCard(
+                  download: download,
+                  section: _DownloadSectionType.downloading,
+                  onCancelDownload: onCancelDownload,
+                ),
+            ],
+          ),
+        if (waiting.isNotEmpty)
+          _DownloadSection(
+            title: 'Waiting',
+            count: waiting.length,
+            children: [
+              for (var index = 0; index < waiting.length; index += 1)
+                _DownloadCard(
+                  download: waiting[index],
+                  section: _DownloadSectionType.waiting,
+                  waitingPosition: queueOffset + index + 1,
+                  onCancelDownload: onCancelDownload,
+                ),
+            ],
+          ),
+        if (completed.isNotEmpty)
+          _DownloadSection(
+            title: 'Completed',
+            count: completed.length,
+            children: [
+              for (final download in completed)
+                _DownloadCard(
+                  download: download,
+                  section: _DownloadSectionType.completed,
+                  onCancelDownload: onCancelDownload,
+                ),
+            ],
+          ),
+        if (failed.isNotEmpty)
+          _DownloadSection(
+            title: 'Failed',
+            count: failed.length,
+            children: [
+              for (final download in failed)
+                _DownloadCard(
+                  download: download,
+                  section: _DownloadSectionType.failed,
+                  onCancelDownload: onCancelDownload,
+                ),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+class _DownloadSection extends StatelessWidget {
+  const _DownloadSection({
+    required this.title,
+    required this.count,
+    required this.children,
+  });
+
+  final String title;
+  final int count;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.xxl),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '$title ($count)',
+            style: textTheme.titleLarge?.copyWith(
+              color: colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          for (final child in children) ...[
+            child,
+            const SizedBox(height: AppSpacing.md),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+enum _DownloadSectionType { downloading, waiting, completed, failed }
 
 class _DownloadCountBadge extends StatelessWidget {
   const _DownloadCountBadge({required this.count});
@@ -109,7 +257,7 @@ class _DownloadCountBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final label = count == 1 ? '1 Item' : '$count Items';
+    final label = count == 1 ? '1 Active' : '$count Active';
 
     return Container(
       padding: const EdgeInsets.symmetric(
@@ -132,24 +280,29 @@ class _DownloadCountBadge extends StatelessWidget {
   }
 }
 
-class _ActiveDownloadCard extends StatelessWidget {
-  const _ActiveDownloadCard({
+class _DownloadCard extends StatelessWidget {
+  const _DownloadCard({
     required this.download,
+    required this.section,
     required this.onCancelDownload,
+    this.waitingPosition,
   });
 
   final TrackedDownload download;
+  final _DownloadSectionType section;
+  final int? waitingPosition;
   final ValueChanged<String> onCancelDownload;
 
   @override
   Widget build(BuildContext context) {
-    final isQueued = download.status == 'queued';
+    final isWaiting = section == _DownloadSectionType.waiting;
     final colorScheme = Theme.of(context).colorScheme;
+    final action = _action();
 
     return Opacity(
-      opacity: isQueued ? 0.72 : 1,
+      opacity: isWaiting ? 0.72 : 1,
       child: Card(
-        color: isQueued ? colorScheme.surfaceContainerLow : null,
+        color: isWaiting ? colorScheme.surfaceContainerLow : null,
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.md),
           child: LayoutBuilder(
@@ -159,13 +312,11 @@ class _ActiveDownloadCard extends StatelessWidget {
                 metadata: download.metadata,
                 mediaType: download.mediaType,
               );
-              final details = _DownloadDetails(download: download);
-              final action = download.isSavingToDevice
-                  ? const _SavingToDeviceAction()
-                  : _CancelDownloadAction(
-                      status: download.status,
-                      onCancel: () => onCancelDownload(download.jobId),
-                    );
+              final details = _DownloadDetails(
+                download: download,
+                section: section,
+                waitingPosition: waitingPosition,
+              );
 
               if (useVerticalLayout) {
                 return Column(
@@ -174,8 +325,10 @@ class _ActiveDownloadCard extends StatelessWidget {
                     thumbnail,
                     const SizedBox(height: AppSpacing.md),
                     details,
-                    const SizedBox(height: AppSpacing.sm),
-                    Align(alignment: Alignment.centerRight, child: action),
+                    if (action != null) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      Align(alignment: Alignment.centerRight, child: action),
+                    ],
                   ],
                 );
               }
@@ -189,8 +342,10 @@ class _ActiveDownloadCard extends StatelessWidget {
                   ),
                   const SizedBox(width: AppSpacing.md),
                   Expanded(child: details),
-                  const SizedBox(width: AppSpacing.sm),
-                  action,
+                  if (action != null) ...[
+                    const SizedBox(width: AppSpacing.sm),
+                    action,
+                  ],
                 ],
               );
             },
@@ -199,28 +354,49 @@ class _ActiveDownloadCard extends StatelessWidget {
       ),
     );
   }
+
+  Widget? _action() {
+    if (section == _DownloadSectionType.failed) {
+      return const _RetryDownloadAction();
+    }
+    if (download.isSavingToDevice) {
+      return const _SavingToDeviceAction();
+    }
+    if (section == _DownloadSectionType.downloading ||
+        section == _DownloadSectionType.waiting) {
+      return _CancelDownloadAction(
+        status: download.status,
+        onCancel: () => onCancelDownload(download.jobId),
+      );
+    }
+    return null;
+  }
 }
 
 class _DownloadDetails extends StatelessWidget {
-  const _DownloadDetails({required this.download});
+  const _DownloadDetails({
+    required this.download,
+    required this.section,
+    this.waitingPosition,
+  });
 
   final TrackedDownload download;
+  final _DownloadSectionType section;
+  final int? waitingPosition;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final isWaiting = section == _DownloadSectionType.waiting;
+    final isDownloading = section == _DownloadSectionType.downloading;
     final isSavingToDevice = download.isSavingToDevice;
-    final isQueued = download.status == 'queued';
     final progress = _clampProgress(
       isSavingToDevice ? download.fileDownloadProgress : download.progress,
     );
-    final hasKnownProgress = !isQueued && (!isSavingToDevice || progress > 0);
-    final status = friendlyDownloadStatus(
-      backendStatus: download.status,
-      backendProgress: download.progress,
-      isSavingToDevice: isSavingToDevice,
-    );
+    final hasKnownProgress = !isSavingToDevice || progress > 0;
+    final status = _statusLabel();
+    final failureMessage = _failureMessage();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -245,11 +421,11 @@ class _DownloadDetails extends StatelessWidget {
           children: [
             _DownloadStatusBadge(
               status: status,
+              section: section,
               isSavingToDevice: isSavingToDevice,
-              isQueued: isQueued,
             ),
             const Spacer(),
-            if (hasKnownProgress)
+            if (isDownloading && hasKnownProgress)
               Text(
                 '$progress%',
                 style: textTheme.titleMedium?.copyWith(
@@ -258,7 +434,7 @@ class _DownloadDetails extends StatelessWidget {
               ),
           ],
         ),
-        if (!isQueued) ...[
+        if (isDownloading) ...[
           const SizedBox(height: AppSpacing.sm),
           Semantics(
             label: hasKnownProgress ? '$status $progress percent' : status,
@@ -271,8 +447,49 @@ class _DownloadDetails extends StatelessWidget {
             ),
           ),
         ],
+        if (failureMessage != null) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            failureMessage,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ],
     );
+  }
+
+  String _statusLabel() {
+    switch (section) {
+      case _DownloadSectionType.waiting:
+        return 'Waiting (#${waitingPosition ?? 1})';
+      case _DownloadSectionType.completed:
+        return 'Completed';
+      case _DownloadSectionType.failed:
+        return 'Failed';
+      case _DownloadSectionType.downloading:
+        return friendlyDownloadStatus(
+          backendStatus: download.status,
+          backendProgress: download.progress,
+          isSavingToDevice: download.isSavingToDevice,
+        );
+    }
+  }
+
+  String? _failureMessage() {
+    if (section != _DownloadSectionType.failed) {
+      return null;
+    }
+
+    final message = download.fileDownloadError ?? download.error;
+    final trimmedMessage = message?.trim();
+    if (trimmedMessage == null || trimmedMessage.isEmpty) {
+      return 'The download could not be completed.';
+    }
+    return trimmedMessage;
   }
 
   String _qualityLabel(TrackedDownload download) {
@@ -296,18 +513,28 @@ class _DownloadDetails extends StatelessWidget {
 class _DownloadStatusBadge extends StatelessWidget {
   const _DownloadStatusBadge({
     required this.status,
+    required this.section,
     required this.isSavingToDevice,
-    required this.isQueued,
   });
 
   final String status;
+  final _DownloadSectionType section;
   final bool isSavingToDevice;
-  final bool isQueued;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final isWaiting = section == _DownloadSectionType.waiting;
+    final isCompleted = section == _DownloadSectionType.completed;
+    final isFailed = section == _DownloadSectionType.failed;
+    final foregroundColor = isFailed
+        ? colorScheme.error
+        : isCompleted
+            ? colorScheme.tertiary
+            : isWaiting
+                ? colorScheme.onSurfaceVariant
+                : colorScheme.primary;
 
     return Container(
       padding: const EdgeInsets.symmetric(
@@ -315,7 +542,11 @@ class _DownloadStatusBadge extends StatelessWidget {
         vertical: AppSpacing.xs,
       ),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLow,
+        color: isFailed
+            ? colorScheme.errorContainer
+            : isCompleted
+                ? colorScheme.tertiaryContainer
+                : colorScheme.surfaceContainerLow,
         borderRadius: AppRadii.badge,
       ),
       child: Row(
@@ -324,18 +555,21 @@ class _DownloadStatusBadge extends StatelessWidget {
           Icon(
             isSavingToDevice
                 ? Icons.save_rounded
-                : isQueued
+                : isWaiting
                     ? Icons.schedule_rounded
-                    : Icons.downloading_rounded,
-            color: isQueued ? colorScheme.onSurfaceVariant : colorScheme.primary,
+                    : isCompleted
+                        ? Icons.check_circle_outline_rounded
+                        : isFailed
+                            ? Icons.error_outline_rounded
+                            : Icons.downloading_rounded,
+            color: foregroundColor,
             size: AppSpacing.md,
           ),
           const SizedBox(width: AppSpacing.xxs),
           Text(
             status,
             style: textTheme.labelMedium?.copyWith(
-              color:
-                  isQueued ? colorScheme.onSurfaceVariant : colorScheme.primary,
+              color: foregroundColor,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -405,6 +639,28 @@ class _SavingToDeviceAction extends StatelessWidget {
             minimumSize: const Size(0, AppSizes.touchTarget),
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RetryDownloadAction extends StatelessWidget {
+  const _RetryDownloadAction();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      enabled: false,
+      label: 'Retry download coming soon',
+      child: TextButton.icon(
+        onPressed: null,
+        icon: const Icon(Icons.refresh_rounded),
+        label: const Text('Retry (Coming Soon)'),
+        style: TextButton.styleFrom(
+          minimumSize: const Size(0, AppSizes.touchTarget),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
         ),
       ),
     );
