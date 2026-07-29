@@ -12,6 +12,7 @@ import '../models/download_job.dart';
 import '../models/job_update.dart';
 import '../models/media_download_type.dart';
 import '../models/media_metadata.dart';
+import '../models/playlist_metadata.dart';
 import '../services/api_service.dart';
 import '../services/device_file_service.dart';
 import '../services/web_socket_service.dart';
@@ -77,6 +78,28 @@ class MediaRepository {
     }
 
     return metadata;
+  }
+
+  Future<PlaylistMetadata> getPlaylistInfo(String url) async {
+    final response = await _apiService.postJson(
+      ApiPaths.mediaPlaylistInfo,
+      data: {'url': url.trim()},
+    );
+    final playlistResponse = PlaylistInfoResponse.fromJson(response);
+
+    if (!playlistResponse.success) {
+      throw ApiException(
+        playlistResponse.error?.details.isNotEmpty == true
+            ? playlistResponse.error!.details
+            : playlistResponse.message,
+      );
+    }
+
+    final playlist = playlistResponse.data;
+    if (playlist == null) {
+      throw const ApiException('Invalid response from server.');
+    }
+    return playlist;
   }
 
   Future<DownloadJobData> createDownloadJob({

@@ -21,6 +21,20 @@ class MediaInfoRequest(BaseModel):
         return validate_http_url(value)
 
 
+class PlaylistInfoRequest(BaseModel):
+    url: str = Field(
+        ...,
+        min_length=1,
+        description="HTTP or HTTPS playlist URL",
+        examples=["https://www.youtube.com/playlist?list=PL..."],
+    )
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        return validate_http_url(value)
+
+
 class MediaDownloadRequest(BaseModel):
     url: str = Field(
         ...,

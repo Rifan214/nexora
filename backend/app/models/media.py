@@ -21,6 +21,23 @@ class AudioOption(BaseModel):
     extension: str = Field(..., min_length=1, description="Downloaded audio file extension")
 
 
+class PlaylistItem(BaseModel):
+    """Lightweight playlist entry used only to populate Batch Import."""
+
+    title: str = Field(..., min_length=1, description="Playlist item title")
+    thumbnail_url: str | None = Field(default=None, description="Item thumbnail URL if available")
+    webpage_url: str = Field(..., min_length=1, description="Canonical item webpage URL")
+    duration_seconds: int | None = Field(default=None, ge=0, description="Item duration in seconds")
+
+
+class PlaylistMetadata(BaseModel):
+    """Playlist preview without media formats or download state."""
+
+    title: str = Field(..., min_length=1, description="Playlist title")
+    total_count: int = Field(..., ge=0, description="Number of importable playlist items")
+    items: list[PlaylistItem] = Field(default_factory=list, description="Importable playlist items")
+
+
 class MediaMetadata(BaseModel):
     platform: str = Field(..., min_length=1, description="Detected platform from yt-dlp")
     title: str = Field(..., min_length=1, description="Media title")

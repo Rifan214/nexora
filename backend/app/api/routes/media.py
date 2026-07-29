@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends
 
 from app.api.dependencies import run_lazy_cleanup
 from app.models.job import JobCreateResponse
-from app.models.media import MediaMetadata
-from app.models.requests import MediaDownloadRequest, MediaInfoRequest
+from app.models.media import MediaMetadata, PlaylistMetadata
+from app.models.requests import MediaDownloadRequest, MediaInfoRequest, PlaylistInfoRequest
 from app.models.response import APIResponse
 from app.services.media_service import MediaService
 
@@ -35,6 +35,25 @@ def media_info(
 ) -> APIResponse[MediaMetadata]:
     logger.info("Incoming media info request url=%s", request.url)
     metadata = media_service.get_metadata(request.url)
+    return APIResponse.ok(data=metadata)
+
+
+@router.post(
+    "/playlist/info",
+    response_model=APIResponse[PlaylistMetadata],
+    summary="Get lightweight playlist metadata for Batch Import",
+    description=(
+        "Returns a playlist title and importable item URLs with lightweight display metadata. "
+        "This endpoint does not extract formats and does not create download jobs."
+    ),
+    response_model_exclude_none=True,
+)
+def playlist_info(
+    request: PlaylistInfoRequest,
+    media_service: MediaService = Depends(get_media_service),
+) -> APIResponse[PlaylistMetadata]:
+    logger.info("Incoming playlist info request url=%s", request.url)
+    metadata = media_service.get_playlist_metadata(request.url)
     return APIResponse.ok(data=metadata)
 
 

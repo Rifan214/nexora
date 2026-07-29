@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID
 
 from yt_dlp import YoutubeDL
@@ -11,7 +12,7 @@ from yt_dlp.utils import DownloadError, ExtractorError, YoutubeDLError
 from app.core.config import get_settings
 from app.core.exceptions import APIError
 from app.models.job import DownloadJob, JobStatus
-from app.models.media import AudioOption, MediaMetadata
+from app.models.media import AudioOption, MediaMetadata, PlaylistItem, PlaylistMetadata
 from app.models.requests import MediaDownloadRequest
 from app.services.cleanup_service import get_cleanup_service
 from app.services.download_process_manager import (
@@ -75,6 +76,47 @@ class MediaService:
                 code="METADATA_EXTRACTION_ERROR",
                 message="Failed to extract media metadata",
                 details="An unexpected error occurred while extracting media metadata",
+                status_code=500,
+            )
+            self._log_failure(normalized_url, api_error.message, api_error.details, exc)
+            raise api_error from None
+
+    def get_playlist_metadata(self, url: str) -> PlaylistMetadata:
+        """Extract a flat playlist preview without resolving item formats."""
+        normalized_url = validate_http_url(url)
+        logger.info("Playlist metadata extraction started url=%s", normalized_url)
+
+        try:
+            info = self._extract_playlist_info_or_raise_api_error(normalized_url)
+            platform = self._detect_platform(info)
+            if platform != "youtube":
+                raise APIError(
+                    code="UNSUPPORTED_PLATFORM",
+                    message="Unsupported platform",
+                    details=f"Platform '{platform}' is not supported in V1",
+                    status_code=501,
+                )
+
+            items = self._build_playlist_items(info)
+            metadata = PlaylistMetadata(
+                title=str(info.get("title") or "Untitled playlist"),
+                total_count=len(items),
+                items=items,
+            )
+            logger.info(
+                "Playlist metadata extraction completed url=%s item_count=%s",
+                normalized_url,
+                metadata.total_count,
+            )
+            return metadata
+        except APIError as exc:
+            self._log_failure(normalized_url, exc.message, exc.details)
+            raise
+        except Exception as exc:
+            api_error = APIError(
+                code="PLAYLIST_EXTRACTION_ERROR",
+                message="Failed to extract playlist metadata",
+                details="An unexpected error occurred while extracting playlist metadata",
                 status_code=500,
             )
             self._log_failure(normalized_url, api_error.message, api_error.details, exc)
@@ -472,6 +514,51 @@ class MediaService:
                 status_code=500,
             ) from exc
 
+    def _extract_playlist_info(self, url: str) -> dict[str, Any]:
+        # Flat extraction intentionally avoids resolving each video's formats.
+        # Batch Import performs that work later, sequentially, for selected URLs.
+        ydl_options = {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": False,
+            "skip_download": True,
+            "extract_flat": True,
+            "cachedir": False,
+        }
+        with YoutubeDL(ydl_options) as youtube_dl:
+            extracted_info = youtube_dl.extract_info(url, download=False)
+
+        if not isinstance(extracted_info, dict):
+            raise APIError(
+                code="PLAYLIST_EXTRACTION_ERROR",
+                message="Failed to extract playlist metadata",
+                details="yt-dlp returned an unexpected response",
+                status_code=500,
+            )
+        if extracted_info.get("_type") != "playlist" and not extracted_info.get("entries"):
+            raise APIError(
+                code="NOT_A_PLAYLIST",
+                message="Playlist unavailable",
+                details="The supplied URL does not reference a playlist",
+                status_code=422,
+            )
+        return extracted_info
+
+    def _extract_playlist_info_or_raise_api_error(self, url: str) -> dict[str, Any]:
+        try:
+            return self._extract_playlist_info(url)
+        except APIError:
+            raise
+        except (DownloadError, ExtractorError) as exc:
+            raise self._map_yt_dlp_error(exc) from None
+        except Exception as exc:
+            raise APIError(
+                code="PLAYLIST_EXTRACTION_ERROR",
+                message="Failed to extract playlist metadata",
+                details="An unexpected error occurred while extracting playlist metadata",
+                status_code=500,
+            ) from exc
+
     @staticmethod
     def _detect_platform(info: dict[str, Any]) -> str:
         extractor_key = str(info.get("extractor_key") or info.get("ie_key") or "").casefold()
@@ -512,6 +599,40 @@ class MediaService:
             video_qualities=video_qualities,
             audio_options=self._build_audio_options(formats),
         )
+
+    def _build_playlist_items(self, info: dict[str, Any]) -> list[PlaylistItem]:
+        items: list[PlaylistItem] = []
+        for entry in info.get("entries") or []:
+            if not isinstance(entry, dict):
+                continue
+            webpage_url = self._playlist_entry_webpage_url(entry)
+            if webpage_url is None:
+                continue
+            items.append(
+                PlaylistItem(
+                    title=str(entry.get("title") or "Untitled media"),
+                    thumbnail_url=self._select_thumbnail(entry),
+                    webpage_url=webpage_url,
+                    duration_seconds=self._int_or_none(entry.get("duration")),
+                )
+            )
+        return items
+
+    @staticmethod
+    def _playlist_entry_webpage_url(entry: dict[str, Any]) -> str | None:
+        webpage_url = entry.get("webpage_url") or entry.get("original_url")
+        if webpage_url:
+            return str(webpage_url)
+
+        entry_url = entry.get("url")
+        if isinstance(entry_url, str) and entry_url.startswith(("http://", "https://")):
+            return entry_url
+
+        # YouTube flat playlist extraction commonly returns only a video ID.
+        entry_id = entry.get("id") or entry_url
+        if entry_id:
+            return f"https://www.youtube.com/watch?v={quote(str(entry_id), safe='')}"
+        return None
 
     @classmethod
     def _build_audio_options(cls, formats: list[dict[str, Any]]) -> list[AudioOption]:

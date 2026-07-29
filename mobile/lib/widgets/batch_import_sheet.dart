@@ -10,6 +10,7 @@ import '../models/media_metadata.dart';
 import '../providers/batch_import_provider.dart';
 import 'media_card_parts.dart';
 import 'media_format_chip.dart';
+import 'playlist_import_sheet.dart';
 
 class BatchImportSheet extends ConsumerStatefulWidget {
   const BatchImportSheet({super.key});
@@ -69,7 +70,11 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
           ),
           child: Column(
             children: [
-              _BatchSheetHeader(onClose: () => Navigator.of(context).pop()),
+              _BatchSheetHeader(
+                onClose: () => Navigator.of(context).pop(),
+                onImportPlaylist:
+                    batchState.items.isEmpty ? _importPlaylist : null,
+              ),
               Expanded(
                 child: batchState.items.isEmpty
                     ? _BatchInput(
@@ -107,12 +112,33 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
       setState(() => _detectedUrlCount = detectedUrlCount);
     }
   }
+
+  Future<void> _importPlaylist() async {
+    final urls = await PlaylistImportSheet.show(context);
+    if (!mounted || urls == null || urls.isEmpty) {
+      return;
+    }
+
+    final mergedUrls = normalizeBatchUrls([
+      ..._urlController.text.split(RegExp(r'\r?\n')),
+      ...urls,
+    ]);
+    final text = mergedUrls.join('\n');
+    _urlController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
 }
 
 class _BatchSheetHeader extends StatelessWidget {
-  const _BatchSheetHeader({required this.onClose});
+  const _BatchSheetHeader({
+    required this.onClose,
+    required this.onImportPlaylist,
+  });
 
   final VoidCallback onClose;
+  final VoidCallback? onImportPlaylist;
 
   @override
   Widget build(BuildContext context) {
@@ -128,6 +154,11 @@ class _BatchSheetHeader extends StatelessWidget {
       child: Row(
         children: [
           Expanded(child: Text('Batch Import', style: textTheme.titleLarge)),
+          IconButton(
+            tooltip: 'Import playlist',
+            onPressed: onImportPlaylist,
+            icon: const Icon(Icons.playlist_add_rounded),
+          ),
           IconButton(
             tooltip: 'Close batch import',
             onPressed: onClose,
