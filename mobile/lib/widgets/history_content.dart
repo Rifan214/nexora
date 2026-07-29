@@ -24,12 +24,16 @@ class HistoryContent extends ConsumerStatefulWidget {
 
 class _HistoryContentState extends ConsumerState<HistoryContent> {
   final _searchController = TextEditingController();
+  Timer? _searchDebounce;
+  List<DownloadHistoryItem> _sourceDownloads = const [];
+  List<DownloadHistoryItem> _visibleDownloads = const [];
   var _searchQuery = '';
   var _mediaFilter = _HistoryMediaFilter.all;
   var _sortOrder = _HistorySortOrder.newestFirst;
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -39,147 +43,58 @@ class _HistoryContentState extends ConsumerState<HistoryContent> {
     final historyState = ref.watch(downloadHistoryProvider);
     final historyController = ref.read(downloadHistoryProvider.notifier);
     final textTheme = Theme.of(context).textTheme;
-    final historyPipeline = _HistoryViewPipeline(
-      query: _searchQuery,
-      mediaFilter: _mediaFilter,
-      sortOrder: _sortOrder,
+    final header = _HistoryHeader(
+      textTheme: textTheme,
+      searchController: _searchController,
+      searchQuery: _searchQuery,
+      selectedFilter: _mediaFilter,
+      selectedSortOrder: _sortOrder,
+      onSearchChanged: _onSearchChanged,
+      onClearSearch: _clearSearch,
+      onFilterSelected: _setMediaFilter,
+      onSortSelected: _setSortOrder,
     );
 
-    return SingleChildScrollView(
-      padding: AppSpacing.pageHorizontal,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: AppSizes.contentMaxWidth),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: AppSpacing.md),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: NexoraBrand(),
-              ),
-              const SizedBox(height: AppSpacing.xxl),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Recent Downloads',
-                      style: textTheme.headlineMedium,
-                    ),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: AppSizes.contentMaxWidth),
+        child: historyState.when(
+          data: (downloads) {
+            _replaceSourceDownloads(downloads);
+            return _HistoryList(
+              header: header,
+              sourceIsEmpty: downloads.isEmpty,
+              visibleDownloads: _visibleDownloads,
+              onOpen: (download) {
+                unawaited(_openHistoryFile(ref, download.localFilePath));
+              },
+              onDelete: (download) {
+                unawaited(
+                  _confirmAndDeleteHistoryItem(
+                    context,
+                    ref,
+                    historyController,
+                    download,
                   ),
-                  PopupMenuButton<_HistorySortOrder>(
-                    tooltip: 'Sort history',
-                    icon: const Icon(Icons.sort_rounded),
-                    initialValue: _sortOrder,
-                    onSelected: (sortOrder) {
-                      setState(() => _sortOrder = sortOrder);
-                    },
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(
-                        value: _HistorySortOrder.newestFirst,
-                        child: Text('Newest first'),
-                      ),
-                      PopupMenuItem(
-                        value: _HistorySortOrder.oldestFirst,
-                        child: Text('Oldest first'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              SearchBar(
-                controller: _searchController,
-                hintText: 'Search downloads...',
-                leading: const Icon(Icons.search_rounded),
-                trailing: _searchQuery.isEmpty
-                    ? null
-                    : [
-                        IconButton(
-                          tooltip: 'Clear search',
-                          onPressed: _clearSearch,
-                          icon: const Icon(Icons.close_rounded),
-                        ),
-                      ],
-                onChanged: (value) {
-                  setState(() => _searchQuery = value);
-                },
-              ),
-              const SizedBox(height: AppSpacing.md),
-              _HistoryFilterBar(
-                selectedFilter: _mediaFilter,
-                onSelected: (filter) {
-                  setState(() => _mediaFilter = filter);
-                },
-              ),
-              const SizedBox(height: AppSpacing.xl),
-              AnimatedSwitcher(
-                duration: AppDurations.short,
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeInCubic,
-                child: KeyedSubtree(
-                  key: ValueKey(_historyStateKey(historyState)),
-                  child: historyState.when(
-                    data: (downloads) {
-                      if (downloads.isEmpty) {
-                        return const NexoraStatePanel(
-                          title: 'No completed downloads',
-                          message:
-                              'Completed downloads saved on this device will appear here.',
-                          icon: Icons.history_rounded,
-                        );
-                      }
-
-                      final visibleDownloads = historyPipeline.apply(downloads);
-                      if (visibleDownloads.isEmpty) {
-                        return const NexoraStatePanel(
-                          title: 'No matching downloads found.',
-                          message: 'Try a different search or filter.',
-                          icon: Icons.search_off_rounded,
-                        );
-                      }
-
-                      return Column(
-                        children: [
-                          for (final download in visibleDownloads) ...[
-                            _HistoryDownloadCard(
-                              download: download,
-                              onOpen: () {
-                                unawaited(
-                                  _openHistoryFile(ref, download.localFilePath),
-                                );
-                              },
-                              onDelete: () {
-                                unawaited(
-                                  _confirmAndDeleteHistoryItem(
-                                    context,
-                                    ref,
-                                    historyController,
-                                    download,
-                                  ),
-                                );
-                              },
-                            ),
-                            const SizedBox(height: AppSpacing.xl),
-                          ],
-                        ],
-                      );
-                    },
-                    loading: () => const NexoraStatePanel(
-                      title: 'Loading history',
-                      message: 'Loading completed downloads from this device.',
-                      isLoading: true,
-                    ),
-                    error: (_, __) => const NexoraStatePanel(
-                      title: 'History unavailable',
-                      message: 'Unable to load saved download history.',
-                      tone: NexoraStateTone.error,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xxl),
-            ],
+                );
+              },
+            );
+          },
+          loading: () => _HistoryStateList(
+            header: header,
+            panel: const NexoraStatePanel(
+              title: 'Loading history',
+              message: 'Loading completed downloads from this device.',
+              isLoading: true,
+            ),
+          ),
+          error: (_, __) => _HistoryStateList(
+            header: header,
+            panel: const NexoraStatePanel(
+              title: 'History unavailable',
+              message: 'Unable to load saved download history.',
+              tone: NexoraStateTone.error,
+            ),
           ),
         ),
       ),
@@ -187,16 +102,63 @@ class _HistoryContentState extends ConsumerState<HistoryContent> {
   }
 
   void _clearSearch() {
+    _searchDebounce?.cancel();
     _searchController.clear();
-    setState(() => _searchQuery = '');
+    if (_searchQuery.isNotEmpty) {
+      setState(() {
+        _searchQuery = '';
+        _rebuildVisibleDownloads();
+      });
+    }
   }
 
-  String _historyStateKey(AsyncValue<List<DownloadHistoryItem>> state) {
-    return state.when(
-      data: (downloads) => downloads.isEmpty ? 'empty' : 'history',
-      loading: () => 'loading',
-      error: (_, __) => 'error',
-    );
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted || _searchQuery == value) {
+        return;
+      }
+      setState(() {
+        _searchQuery = value;
+        _rebuildVisibleDownloads();
+      });
+    });
+  }
+
+  void _setMediaFilter(_HistoryMediaFilter filter) {
+    if (filter == _mediaFilter) {
+      return;
+    }
+    setState(() {
+      _mediaFilter = filter;
+      _rebuildVisibleDownloads();
+    });
+  }
+
+  void _setSortOrder(_HistorySortOrder sortOrder) {
+    if (sortOrder == _sortOrder) {
+      return;
+    }
+    setState(() {
+      _sortOrder = sortOrder;
+      _rebuildVisibleDownloads();
+    });
+  }
+
+  void _replaceSourceDownloads(List<DownloadHistoryItem> downloads) {
+    if (identical(_sourceDownloads, downloads)) {
+      return;
+    }
+    _sourceDownloads = downloads;
+    _rebuildVisibleDownloads();
+  }
+
+  void _rebuildVisibleDownloads() {
+    _visibleDownloads = _HistoryViewPipeline(
+      query: _searchQuery,
+      mediaFilter: _mediaFilter,
+      sortOrder: _sortOrder,
+    ).apply(_sourceDownloads);
   }
 
   Future<void> _confirmAndDeleteHistoryItem(
@@ -256,6 +218,185 @@ class _HistoryContentState extends ConsumerState<HistoryContent> {
     } catch (_) {
       // The card only enables tapping after confirming that the file exists.
     }
+  }
+}
+
+class _HistoryHeader extends StatelessWidget {
+  const _HistoryHeader({
+    required this.textTheme,
+    required this.searchController,
+    required this.searchQuery,
+    required this.selectedFilter,
+    required this.selectedSortOrder,
+    required this.onSearchChanged,
+    required this.onClearSearch,
+    required this.onFilterSelected,
+    required this.onSortSelected,
+  });
+
+  final TextTheme textTheme;
+  final TextEditingController searchController;
+  final String searchQuery;
+  final _HistoryMediaFilter selectedFilter;
+  final _HistorySortOrder selectedSortOrder;
+  final ValueChanged<String> onSearchChanged;
+  final VoidCallback onClearSearch;
+  final ValueChanged<_HistoryMediaFilter> onFilterSelected;
+  final ValueChanged<_HistorySortOrder> onSortSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: AppSpacing.md),
+        const Align(
+          alignment: Alignment.centerLeft,
+          child: NexoraBrand(),
+        ),
+        const SizedBox(height: AppSpacing.xxl),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Recent Downloads',
+                style: textTheme.headlineMedium,
+              ),
+            ),
+            PopupMenuButton<_HistorySortOrder>(
+              tooltip: 'Sort history',
+              icon: const Icon(Icons.sort_rounded),
+              initialValue: selectedSortOrder,
+              onSelected: onSortSelected,
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: _HistorySortOrder.newestFirst,
+                  child: Text('Newest first'),
+                ),
+                PopupMenuItem(
+                  value: _HistorySortOrder.oldestFirst,
+                  child: Text('Oldest first'),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        SearchBar(
+          controller: searchController,
+          hintText: 'Search downloads...',
+          leading: const Icon(Icons.search_rounded),
+          trailing: searchQuery.isEmpty
+              ? null
+              : [
+                  IconButton(
+                    tooltip: 'Clear search',
+                    onPressed: onClearSearch,
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+          onChanged: onSearchChanged,
+        ),
+        const SizedBox(height: AppSpacing.md),
+        _HistoryFilterBar(
+          selectedFilter: selectedFilter,
+          onSelected: onFilterSelected,
+        ),
+        const SizedBox(height: AppSpacing.xl),
+      ],
+    );
+  }
+}
+
+class _HistoryStateList extends StatelessWidget {
+  const _HistoryStateList({required this.header, required this.panel});
+
+  final Widget header;
+  final Widget panel;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      padding: AppSpacing.pageHorizontal,
+      itemCount: 2,
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return header;
+        }
+        return Padding(
+          padding: const EdgeInsets.only(bottom: AppSpacing.xxl),
+          child: panel,
+        );
+      },
+    );
+  }
+}
+
+class _HistoryList extends StatelessWidget {
+  const _HistoryList({
+    required this.header,
+    required this.sourceIsEmpty,
+    required this.visibleDownloads,
+    required this.onOpen,
+    required this.onDelete,
+  });
+
+  final Widget header;
+  final bool sourceIsEmpty;
+  final List<DownloadHistoryItem> visibleDownloads;
+  final ValueChanged<DownloadHistoryItem> onOpen;
+  final ValueChanged<DownloadHistoryItem> onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final showsStatePanel = sourceIsEmpty || visibleDownloads.isEmpty;
+    final itemCount = showsStatePanel ? 2 : visibleDownloads.length + 1;
+
+    return ListView.builder(
+      padding: AppSpacing.pageHorizontal,
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return header;
+        }
+        if (sourceIsEmpty) {
+          return const Padding(
+            padding: EdgeInsets.only(bottom: AppSpacing.xxl),
+            child: NexoraStatePanel(
+              title: 'No completed downloads',
+              message:
+                  'Completed downloads saved on this device will appear here.',
+              icon: Icons.history_rounded,
+            ),
+          );
+        }
+        if (visibleDownloads.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.only(bottom: AppSpacing.xxl),
+            child: NexoraStatePanel(
+              title: 'No matching downloads found.',
+              message: 'Try a different search or filter.',
+              icon: Icons.search_off_rounded,
+            ),
+          );
+        }
+
+        final download = visibleDownloads[index - 1];
+        final isLastDownload = index == visibleDownloads.length;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: isLastDownload
+                ? AppSpacing.xl + AppSpacing.xxl
+                : AppSpacing.xl,
+          ),
+          child: _HistoryDownloadCard(
+            download: download,
+            onOpen: () => onOpen(download),
+            onDelete: () => onDelete(download),
+          ),
+        );
+      },
+    );
   }
 }
 
