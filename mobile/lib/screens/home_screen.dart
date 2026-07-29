@@ -9,6 +9,7 @@ import '../models/media_download_type.dart';
 import '../models/media_metadata.dart';
 import '../models/media_state.dart';
 import '../models/tracked_download.dart';
+import 'download_preferences_page.dart';
 import '../providers/active_downloads_provider.dart';
 import '../providers/media_provider.dart';
 import '../widgets/download_progress_status.dart';
@@ -96,6 +97,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           onPaste: _pasteUrl,
           onAnalyze: () => _getMetadata(canRequestMetadata),
           onBatchImport: _showBatchImport,
+          onOpenDownloadPreferences: _openDownloadPreferences,
           statusContent: mediaState is MediaIdle
               ? null
               : _MediaStatus(mediaState: mediaState),
@@ -113,6 +115,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         onPaste: _pasteUrl,
         onAnalyze: () => _getMetadata(canRequestMetadata),
         onBatchImport: _showBatchImport,
+        onOpenDownloadPreferences: _openDownloadPreferences,
         metadataContent: _MediaStatus(mediaState: mediaState),
       ),
     );
@@ -148,6 +151,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   void _showBatchImport() {
     unawaited(BatchImportSheet.show(context));
+  }
+
+  Future<void> _openDownloadPreferences() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const DownloadPreferencesPage(),
+      ),
+    );
   }
 
   Future<void> _retryFailedDownload(String jobId) async {
@@ -304,6 +315,7 @@ class _HomeReadyContent extends StatelessWidget {
     required this.onPaste,
     required this.onAnalyze,
     required this.onBatchImport,
+    required this.onOpenDownloadPreferences,
     this.statusContent,
   });
 
@@ -313,6 +325,7 @@ class _HomeReadyContent extends StatelessWidget {
   final Future<void> Function() onPaste;
   final VoidCallback onAnalyze;
   final VoidCallback onBatchImport;
+  final Future<void> Function() onOpenDownloadPreferences;
   final Widget? statusContent;
 
   @override
@@ -341,9 +354,8 @@ class _HomeReadyContent extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const SizedBox(height: AppSpacing.md),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: NexoraBrand(),
+                  _HomeHeader(
+                    onOpenDownloadPreferences: onOpenDownloadPreferences,
                   ),
                   SizedBox(height: heroTopSpacing),
                   Column(
@@ -452,6 +464,47 @@ class _HomeReadyContent extends StatelessWidget {
   }
 }
 
+enum _HomeOverflowAction { downloadPreferences }
+
+class _HomeHeader extends StatelessWidget {
+  const _HomeHeader({required this.onOpenDownloadPreferences});
+
+  final Future<void> Function() onOpenDownloadPreferences;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Expanded(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: NexoraBrand(),
+          ),
+        ),
+        PopupMenuButton<_HomeOverflowAction>(
+          tooltip: 'More options',
+          onSelected: (action) {
+            if (action == _HomeOverflowAction.downloadPreferences) {
+              unawaited(onOpenDownloadPreferences());
+            }
+          },
+          itemBuilder: (context) => const [
+            PopupMenuItem(
+              value: _HomeOverflowAction.downloadPreferences,
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.tune_rounded),
+                title: Text('Download Preferences'),
+              ),
+            ),
+          ],
+          icon: const Icon(Icons.more_vert_rounded),
+        ),
+      ],
+    );
+  }
+}
+
 class _MetadataLoadedContent extends StatelessWidget {
   const _MetadataLoadedContent({
     required this.urlController,
@@ -462,6 +515,7 @@ class _MetadataLoadedContent extends StatelessWidget {
     required this.onPaste,
     required this.onAnalyze,
     required this.onBatchImport,
+    required this.onOpenDownloadPreferences,
     required this.metadataContent,
   });
 
@@ -473,6 +527,7 @@ class _MetadataLoadedContent extends StatelessWidget {
   final Future<void> Function() onPaste;
   final VoidCallback onAnalyze;
   final VoidCallback onBatchImport;
+  final Future<void> Function() onOpenDownloadPreferences;
   final Widget metadataContent;
 
   @override
@@ -486,9 +541,8 @@ class _MetadataLoadedContent extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: AppSpacing.md),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: NexoraBrand(),
+              _HomeHeader(
+                onOpenDownloadPreferences: onOpenDownloadPreferences,
               ),
               const SizedBox(height: AppSpacing.xxl),
               TextField(

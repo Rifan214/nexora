@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_exception.dart';
 import '../models/completed_file_download.dart';
+import '../models/download_preferences.dart';
 import '../models/download_history_item.dart';
 import '../models/job_update.dart';
 import '../models/media_download_type.dart';
@@ -13,6 +14,7 @@ import '../models/media_metadata.dart';
 import '../models/media_state.dart';
 import '../repositories/media_repository.dart';
 import 'active_downloads_provider.dart';
+import 'download_preferences_provider.dart';
 import 'history_provider.dart';
 
 final mediaProvider = NotifierProvider<MediaController, MediaState>(
@@ -61,11 +63,26 @@ class MediaController extends Notifier<MediaState> {
           'audio option count=${metadata.audioOptions.length}',
         );
       }
-      state = MediaState.success(metadata: metadata);
+      final preferences = await _loadDownloadPreferences();
+      final preferredSelection =
+          resolvePreferredMediaSelection(metadata, preferences);
+      state = MediaState.success(
+        metadata: metadata,
+        selectedVideoQuality: preferredSelection?.videoQuality,
+        currentMediaType: preferredSelection?.mediaType,
+      );
     } on ApiException catch (error) {
       state = MediaState.error(error.message);
     } catch (_) {
       state = const MediaState.error('Unable to retrieve media metadata.');
+    }
+  }
+
+  Future<DownloadPreferences> _loadDownloadPreferences() async {
+    try {
+      return await ref.read(downloadPreferencesProvider.future);
+    } catch (_) {
+      return const DownloadPreferences();
     }
   }
 
