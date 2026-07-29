@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nexora/main.dart';
 import 'package:nexora/models/download_history_item.dart';
 import 'package:nexora/models/download_job.dart';
+import 'package:nexora/models/batch_import.dart';
 import 'package:nexora/models/media_download_type.dart';
 import 'package:nexora/models/media_metadata.dart';
 
@@ -101,6 +102,35 @@ void main() {
       'media_type': 'video',
       'quality_height': 1080,
     });
+  });
+
+  test('rejects malformed batch URL lines before analysis', () {
+    final result = validateBatchUrlLines([
+      'https://www.youtube.com/watch?v=valid',
+      'prefix https://www.youtube.com/watch?v=leading-characters',
+      'https://www.youtube.com/watch?v=first https://youtu.be/second',
+      'https://www.youtube.com/watch?v=valid https://example.com/trailing',
+      'ftp://example.com/file',
+      'https://',
+    ]);
+
+    expect(result.validUrls, ['https://www.youtube.com/watch?v=valid']);
+    expect(result.invalidUrls, hasLength(5));
+    expect(result.invalidUrls.map((item) => item.lineNumber), [2, 3, 4, 5, 6]);
+  });
+
+  test('accepts normal and playlist batch URLs', () {
+    final result = validateBatchUrlLines([
+      '',
+      '  https://youtu.be/example?si=tracking  ',
+      'https://www.youtube.com/playlist?list=PLexample&si=tracking',
+    ]);
+
+    expect(result.invalidUrls, isEmpty);
+    expect(result.validUrls, [
+      'https://youtu.be/example?si=tracking',
+      'https://www.youtube.com/playlist?list=PLexample&si=tracking',
+    ]);
   });
 
   testWidgets('shows the Nexora home screen', (WidgetTester tester) async {

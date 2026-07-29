@@ -30,7 +30,9 @@ class BatchImportSheet extends ConsumerStatefulWidget {
 
 class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
   final _urlController = TextEditingController();
+  final _urlFocusNode = FocusNode();
   var _detectedUrlCount = 0;
+  var _hasInput = false;
 
   @override
   void initState() {
@@ -49,6 +51,7 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
     _urlController
       ..removeListener(_updateDetectedUrlCount)
       ..dispose();
+    _urlFocusNode.dispose();
     super.dispose();
   }
 
@@ -79,14 +82,11 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
                 child: batchState.items.isEmpty
                     ? _BatchInput(
                         controller: _urlController,
+                        focusNode: _urlFocusNode,
                         detectedUrlCount: _detectedUrlCount,
-                        onAnalyze: _detectedUrlCount == 0
+                        onAnalyze: !_hasInput
                             ? null
-                            : () => unawaited(
-                                  batchController.analyzeUrls(
-                                    _urlController.text.split(RegExp(r'\r?\n')),
-                                  ),
-                                ),
+                            : () => unawaited(_validateAndAnalyze(batchController)),
                       )
                     : _BatchResults(
                         state: batchState,
@@ -106,11 +106,33 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
   }
 
   void _updateDetectedUrlCount() {
-    final detectedUrlCount =
-        normalizeBatchUrls(_urlController.text.split(RegExp(r'\r?\n'))).length;
-    if (_detectedUrlCount != detectedUrlCount) {
-      setState(() => _detectedUrlCount = detectedUrlCount);
+    final validation =
+        validateBatchUrlLines(_urlController.text.split(RegExp(r'\r?\n')));
+    final detectedUrlCount = normalizeBatchUrls(validation.validUrls).length;
+    final hasInput = _urlController.text.trim().isNotEmpty;
+    if (_detectedUrlCount != detectedUrlCount || _hasInput != hasInput) {
+      setState(() {
+        _detectedUrlCount = detectedUrlCount;
+        _hasInput = hasInput;
+      });
     }
+  }
+
+  Future<void> _validateAndAnalyze(BatchImportController controller) async {
+    final validation =
+        validateBatchUrlLines(_urlController.text.split(RegExp(r'\r?\n')));
+    if (validation.hasInvalidUrls) {
+      final shouldFocusInput = await _showInvalidUrlsDialog(
+        context,
+        validation.invalidUrls,
+      );
+      if (shouldFocusInput && mounted) {
+        _urlFocusNode.requestFocus();
+      }
+      return;
+    }
+
+    await controller.analyzeUrls(validation.validUrls);
   }
 
   Future<void> _importPlaylist() async {
@@ -129,6 +151,44 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
       selection: TextSelection.collapsed(offset: text.length),
     );
   }
+}
+
+Future<bool> _showInvalidUrlsDialog(
+  BuildContext context,
+  List<BatchInvalidUrl> invalidUrls,
+) async {
+  return (await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          icon: const Icon(Icons.link_off_rounded),
+          title: const Text('Invalid URLs detected'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 240),
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: invalidUrls.length,
+              separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.xs),
+              itemBuilder: (context, index) {
+                final invalidUrl = invalidUrls[index];
+                return Text(
+                  'Line ${invalidUrl.lineNumber}: ${invalidUrl.value.trim()}',
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Close'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Fix URLs'),
+            ),
+          ],
+        ),
+      )) ??
+      false;
 }
 
 class _BatchSheetHeader extends StatelessWidget {
@@ -173,11 +233,13 @@ class _BatchSheetHeader extends StatelessWidget {
 class _BatchInput extends StatelessWidget {
   const _BatchInput({
     required this.controller,
+    required this.focusNode,
     required this.detectedUrlCount,
     required this.onAnalyze,
   });
 
   final TextEditingController controller;
+  final FocusNode focusNode;
   final int detectedUrlCount;
   final VoidCallback? onAnalyze;
 
@@ -201,6 +263,7 @@ class _BatchInput extends StatelessWidget {
           const SizedBox(height: AppSpacing.lg),
           TextField(
             controller: controller,
+            focusNode: focusNode,
             minLines: 7,
             maxLines: 12,
             keyboardType: TextInputType.multiline,

@@ -122,6 +122,66 @@ class BatchImportState {
   }
 }
 
+class BatchInvalidUrl {
+  const BatchInvalidUrl({required this.lineNumber, required this.value});
+
+  final int lineNumber;
+  final String value;
+}
+
+class BatchUrlValidationResult {
+  const BatchUrlValidationResult({
+    required this.validUrls,
+    required this.invalidUrls,
+  });
+
+  final List<String> validUrls;
+  final List<BatchInvalidUrl> invalidUrls;
+
+  bool get hasInvalidUrls => invalidUrls.isNotEmpty;
+}
+
+BatchUrlValidationResult validateBatchUrlLines(Iterable<String> lines) {
+  final validUrls = <String>[];
+  final invalidUrls = <BatchInvalidUrl>[];
+  final urlScheme = RegExp(r'https?://', caseSensitive: false);
+
+  for (var index = 0; index < lines.length; index++) {
+    final rawLine = lines.elementAt(index);
+    final value = rawLine.trim();
+    if (value.isEmpty) {
+      continue;
+    }
+
+    final schemeMatches = urlScheme.allMatches(rawLine).toList(growable: false);
+    final hasOnlyOneUrl = schemeMatches.length == 1;
+    final hasOnlyWhitespaceBeforeUrl = hasOnlyOneUrl &&
+        rawLine.substring(0, schemeMatches.single.start).trim().isEmpty;
+    final hasWhitespaceInsideUrl = value.contains(RegExp(r'\s'));
+    final uri = Uri.tryParse(value);
+    final hasSupportedUri = uri != null &&
+        uri.isAbsolute &&
+        (uri.scheme.toLowerCase() == 'http' ||
+            uri.scheme.toLowerCase() == 'https') &&
+        uri.host.isNotEmpty;
+
+    if (!hasOnlyOneUrl ||
+        !hasOnlyWhitespaceBeforeUrl ||
+        hasWhitespaceInsideUrl ||
+        !hasSupportedUri) {
+      invalidUrls.add(BatchInvalidUrl(lineNumber: index + 1, value: rawLine));
+      continue;
+    }
+
+    validUrls.add(value);
+  }
+
+  return BatchUrlValidationResult(
+    validUrls: List.unmodifiable(validUrls),
+    invalidUrls: List.unmodifiable(invalidUrls),
+  );
+}
+
 List<String> normalizeBatchUrls(Iterable<String> lines) {
   final urls = LinkedHashSet<String>();
   for (final line in lines) {

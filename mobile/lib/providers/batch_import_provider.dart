@@ -25,7 +25,12 @@ class BatchImportController extends Notifier<BatchImportState> {
       return;
     }
 
-    final urls = normalizeBatchUrls(lines);
+    final validation = validateBatchUrlLines(lines);
+    if (validation.hasInvalidUrls) {
+      return;
+    }
+
+    final urls = normalizeBatchUrls(validation.validUrls);
     if (urls.isEmpty) {
       reset();
       return;
