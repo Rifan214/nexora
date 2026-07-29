@@ -12,8 +12,10 @@ import '../models/tracked_download.dart';
 import '../providers/active_downloads_provider.dart';
 import '../providers/media_provider.dart';
 import '../widgets/download_progress_status.dart';
+import '../widgets/batch_import_sheet.dart';
 import '../widgets/downloads_content.dart';
 import '../widgets/history_content.dart';
+import '../widgets/media_format_chip.dart';
 import '../widgets/nexora_brand.dart';
 import '../widgets/nexora_floating_notification.dart';
 import '../widgets/nexora_navigation_bar.dart';
@@ -93,6 +95,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           canAnalyze: canRequestMetadata,
           onPaste: _pasteUrl,
           onAnalyze: () => _getMetadata(canRequestMetadata),
+          onBatchImport: _showBatchImport,
           statusContent: mediaState is MediaIdle
               ? null
               : _MediaStatus(mediaState: mediaState),
@@ -109,6 +112,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         onClearUrl: _clearUrl,
         onPaste: _pasteUrl,
         onAnalyze: () => _getMetadata(canRequestMetadata),
+        onBatchImport: _showBatchImport,
         metadataContent: _MediaStatus(mediaState: mediaState),
       ),
     );
@@ -140,6 +144,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
 
     ref.read(mediaProvider.notifier).getMediaInfo(_urlController.text);
+  }
+
+  void _showBatchImport() {
+    unawaited(BatchImportSheet.show(context));
   }
 
   Future<void> _retryFailedDownload(String jobId) async {
@@ -295,6 +303,7 @@ class _HomeReadyContent extends StatelessWidget {
     required this.canAnalyze,
     required this.onPaste,
     required this.onAnalyze,
+    required this.onBatchImport,
     this.statusContent,
   });
 
@@ -303,6 +312,7 @@ class _HomeReadyContent extends StatelessWidget {
   final bool canAnalyze;
   final Future<void> Function() onPaste;
   final VoidCallback onAnalyze;
+  final VoidCallback onBatchImport;
   final Widget? statusContent;
 
   @override
@@ -415,6 +425,12 @@ class _HomeReadyContent extends StatelessWidget {
                                 icon: const Icon(Icons.download_rounded),
                                 label: const Text('Analyze'),
                               ),
+                              const SizedBox(height: AppSpacing.sm),
+                              OutlinedButton.icon(
+                                onPressed: isInputEnabled ? onBatchImport : null,
+                                icon: const Icon(Icons.playlist_add_rounded),
+                                label: const Text('Batch Import'),
+                              ),
                             ],
                           ),
                         ),
@@ -445,6 +461,7 @@ class _MetadataLoadedContent extends StatelessWidget {
     required this.onClearUrl,
     required this.onPaste,
     required this.onAnalyze,
+    required this.onBatchImport,
     required this.metadataContent,
   });
 
@@ -455,6 +472,7 @@ class _MetadataLoadedContent extends StatelessWidget {
   final VoidCallback onClearUrl;
   final Future<void> Function() onPaste;
   final VoidCallback onAnalyze;
+  final VoidCallback onBatchImport;
   final Widget metadataContent;
 
   @override
@@ -507,7 +525,16 @@ class _MetadataLoadedContent extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: AppSpacing.xxl),
+              const SizedBox(height: AppSpacing.sm),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: isInputEnabled ? onBatchImport : null,
+                  icon: const Icon(Icons.playlist_add_rounded),
+                  label: const Text('Batch Import'),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xl),
               metadataContent,
               const SizedBox(height: AppSpacing.xxl),
             ],
@@ -1301,9 +1328,9 @@ class _VideoQualitySelectionList extends StatelessWidget {
           runSpacing: AppSpacing.sm,
           children: [
             for (final quality in qualities)
-              _MediaFormatChip(
-                primaryLabel: _displayFormatLabel(quality.label),
-                secondaryLabel: _estimatedFilesizeLabel(
+              MediaFormatChip(
+                primaryLabel: quality.label,
+                secondaryLabel: formatEstimatedFilesize(
                   quality.estimatedFilesize,
                 ),
                 isSelected: selectedVideoQuality?.height == quality.height,
@@ -1313,77 +1340,6 @@ class _VideoQualitySelectionList extends StatelessWidget {
           ],
         ),
       ],
-    );
-  }
-}
-
-class _MediaFormatChip extends StatelessWidget {
-  const _MediaFormatChip({
-    required this.primaryLabel,
-    required this.secondaryLabel,
-    required this.isSelected,
-    required this.enabled,
-    required this.onSelected,
-  });
-
-  final String primaryLabel;
-  final String? secondaryLabel;
-  final bool isSelected;
-  final bool enabled;
-  final VoidCallback onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final secondaryLabel = this.secondaryLabel;
-
-    return ChoiceChip(
-      label: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            primaryLabel,
-            style: textTheme.bodyLarge?.copyWith(
-              color: isSelected ? colorScheme.onPrimary : colorScheme.onSurface,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          if (secondaryLabel != null) ...[
-            const SizedBox(height: AppSpacing.xxs),
-            Text(
-              secondaryLabel,
-              style: textTheme.labelSmall?.copyWith(
-                color: isSelected
-                    ? colorScheme.onPrimary.withAlpha(184)
-                    : colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ],
-      ),
-      selected: isSelected,
-      onSelected: enabled ? (_) => onSelected() : null,
-      showCheckmark: isSelected,
-      checkmarkColor: colorScheme.onPrimary,
-      selectedColor: colorScheme.primary,
-      backgroundColor: colorScheme.surfaceContainer,
-      disabledColor: colorScheme.surfaceContainerHigh,
-      side: BorderSide(
-        color: isSelected ? colorScheme.primary : colorScheme.outlineVariant,
-        width: isSelected ? 2 : 1,
-      ),
-      elevation: isSelected ? 2 : 0,
-      pressElevation: 4,
-      selectedShadowColor: colorScheme.primary.withAlpha(72),
-      shape: const StadiumBorder(),
-      materialTapTargetSize: MaterialTapTargetSize.padded,
-      labelPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.xs,
-        vertical: AppSpacing.xxs,
-      ),
     );
   }
 }
@@ -1408,8 +1364,8 @@ class _AudioOptionSelector extends StatelessWidget {
       runSpacing: AppSpacing.sm,
       children: [
         for (final option in options)
-          _MediaFormatChip(
-            primaryLabel: _displayFormatLabel(option.label),
+          MediaFormatChip(
+            primaryLabel: option.label,
             secondaryLabel: 'Best Audio',
             isSelected: isSelected,
             enabled: enabled,
@@ -1418,22 +1374,6 @@ class _AudioOptionSelector extends StatelessWidget {
       ],
     );
   }
-}
-
-String? _estimatedFilesizeLabel(int? filesize) {
-  if (filesize == null || filesize <= 0) {
-    return null;
-  }
-
-  const bytesPerMegabyte = 1024 * 1024;
-  final megabytes = filesize / bytesPerMegabyte;
-  return megabytes >= 100
-      ? '~ ${megabytes.round()} MB'
-      : '~ ${megabytes.toStringAsFixed(1)} MB';
-}
-
-String _displayFormatLabel(String label) {
-  return label.trim().toLowerCase() == 'best' ? 'Best Available' : label;
 }
 
 class _StatusMessage extends StatelessWidget {

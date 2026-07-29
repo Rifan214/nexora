@@ -1,6 +1,6 @@
 abstract final class AppConfig {
-  static const _defaultApiBaseUrl = 'http://192.168.1.9:8000';
-  static const _defaultWebSocketBaseUrl = 'ws://192.168.1.9:8000';
+  static const _defaultApiBaseUrl = 'http://192.168.1.24:8000';
+  static const _defaultWebSocketBaseUrl = 'ws://192.168.1.24:8000';
 
   static const apiBaseUrl = String.fromEnvironment(
     'NEXORA_API_BASE_URL',
