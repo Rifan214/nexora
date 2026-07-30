@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import logging
 import threading
+from copy import deepcopy
+from collections import OrderedDict
+from time import monotonic
 from typing import Any
 from urllib.parse import quote
 from uuid import UUID
@@ -34,6 +37,9 @@ _AUDIO_MP3_POSTPROCESSOR = {
     "preferredcodec": "mp3",
     "preferredquality": "0",
 }
+_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok"})
+_TIKTOK_INFO_CACHE_LIMIT = 32
+_TIKTOK_INFO_CACHE_TTL_SECONDS = 300
 
 
 class MediaService:
@@ -49,6 +55,8 @@ class MediaService:
         self._process_manager = process_manager or get_download_process_manager()
         self._job_manager = job_manager
         self._queue_manager = queue_manager
+        self._tiktok_info_cache: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
+        self._tiktok_info_cache_lock = threading.RLock()
 
     def get_metadata(self, url: str) -> MediaMetadata:
         normalized_url = validate_http_url(url)
@@ -57,13 +65,8 @@ class MediaService:
         try:
             info = self._extract_info_or_raise_api_error(normalized_url)
             platform = self._detect_platform(info)
-            if platform != "youtube":
-                raise APIError(
-                    code="UNSUPPORTED_PLATFORM",
-                    message="Unsupported platform",
-                    details=f"Platform '{platform}' is not supported in V1",
-                    status_code=501,
-                )
+            self._ensure_supported_media_platform(platform)
+            self._cache_tiktok_info(url=normalized_url, platform=platform, info=info)
 
             metadata = self._build_metadata(info=info, platform=platform, url=normalized_url)
             logger.info("Metadata extraction completed url=%s platform=%s", normalized_url, platform)
@@ -87,15 +90,23 @@ class MediaService:
         logger.info("Playlist metadata extraction started url=%s", normalized_url)
 
         try:
-            info = self._extract_playlist_info_or_raise_api_error(normalized_url)
-            platform = self._detect_platform(info)
-            if platform != "youtube":
+            if detect_platform_from_url(normalized_url) == "tiktok":
                 raise APIError(
-                    code="UNSUPPORTED_PLATFORM",
-                    message="Unsupported platform",
-                    details=f"Platform '{platform}' is not supported in V1",
+                    code="TIKTOK_PLAYLIST_NOT_SUPPORTED",
+                    message="TikTok playlist import is unavailable",
+                    details="TikTok playlist import is not supported. Paste individual TikTok video URLs instead.",
                     status_code=501,
                 )
+            info = self._extract_playlist_info_or_raise_api_error(normalized_url)
+            platform = self._detect_platform(info)
+            if platform == "tiktok":
+                raise APIError(
+                    code="TIKTOK_PLAYLIST_NOT_SUPPORTED",
+                    message="TikTok playlist import is unavailable",
+                    details="TikTok playlist import is not supported. Paste individual TikTok video URLs instead.",
+                    status_code=501,
+                )
+            self._ensure_supported_media_platform(platform)
 
             items = self._build_playlist_items(info)
             metadata = PlaylistMetadata(
@@ -133,15 +144,11 @@ class MediaService:
         )
 
         try:
-            info = self._extract_info_or_raise_api_error(normalized_url)
+            info = self._get_cached_tiktok_info(normalized_url) or self._extract_info_or_raise_api_error(
+                normalized_url
+            )
             platform = self._detect_platform(info)
-            if platform != "youtube":
-                raise APIError(
-                    code="UNSUPPORTED_PLATFORM",
-                    message="Unsupported platform",
-                    details=f"Platform '{platform}' is not supported in V1",
-                    status_code=501,
-                )
+            self._ensure_supported_media_platform(platform)
 
             formats = info.get("formats") or []
             if request.media_type == "audio":
@@ -188,6 +195,7 @@ class MediaService:
                 url=normalized_url,
                 format_selector=format_selector,
                 output_type=request.media_type,
+                download_info=deepcopy(info) if platform == "tiktok" else None,
             ),
         )
         return job
@@ -199,10 +207,11 @@ class MediaService:
         url: str,
         format_selector: str,
         output_type: str,
+        download_info: dict[str, Any] | None = None,
     ) -> None:
         worker = threading.Thread(
             target=self._download_job_background,
-            args=(job_id, url, format_selector, output_type),
+            args=(job_id, url, format_selector, output_type, download_info),
             daemon=True,
             name=f"nexora-download-{job_id}",
         )
@@ -219,6 +228,7 @@ class MediaService:
         url: str,
         format_selector: str,
         output_type: str,
+        download_info: dict[str, Any] | None = None,
     ) -> None:
         job_manager = self._get_job_manager()
         self._process_manager.register_job(job_id, worker=threading.current_thread())
@@ -227,10 +237,8 @@ class MediaService:
             self._process_manager.raise_if_cancelled(job_id)
             job_manager.update_progress(job_id, 0)
             initial_platform = detect_platform_from_url(url)
-            if initial_platform != "youtube":
-                error_message = (
-                    f"Platform '{initial_platform}' is not supported in V1"
-                )
+            if initial_platform not in _SUPPORTED_MEDIA_PLATFORMS:
+                error_message = "This media platform is not supported."
                 self._mark_download_failed(
                     job_id,
                     error_message=error_message,
@@ -244,14 +252,17 @@ class MediaService:
                 return
 
             self._process_manager.raise_if_cancelled(job_id)
-            with self._process_manager.worker_context(job_id):
-                extracted_info = self._extract_info(url)
+            if download_info is not None:
+                extracted_info = download_info
+            else:
+                with self._process_manager.worker_context(job_id):
+                    extracted_info = self._extract_info(url)
             self._process_manager.raise_if_cancelled(job_id)
             detected_platform = self._detect_platform(extracted_info)
-            if detected_platform != "youtube":
+            if detected_platform not in _SUPPORTED_MEDIA_PLATFORMS:
                 self._mark_download_failed(
                     job_id,
-                    error_message=f"Platform '{detected_platform}' is not supported in V1",
+                    error_message="This media platform is not supported.",
                     job_manager=job_manager,
                 )
                 return
@@ -281,7 +292,13 @@ class MediaService:
                 with YoutubeDL(ydl_options) as youtube_dl:
                     self._process_manager.attach_downloader(job_id, youtube_dl)
                     try:
-                        downloaded_info = youtube_dl.extract_info(url, download=True)
+                        if download_info is None:
+                            downloaded_info = youtube_dl.extract_info(url, download=True)
+                        else:
+                            downloaded_info = youtube_dl.process_ie_result(
+                                deepcopy(download_info),
+                                download=True,
+                            )
                     finally:
                         self._process_manager.detach_downloader(job_id, youtube_dl)
 
@@ -490,6 +507,13 @@ class MediaService:
             )
 
         if extracted_info.get("_type") == "playlist" or extracted_info.get("entries"):
+            if self._detect_platform(extracted_info) == "tiktok":
+                raise APIError(
+                    code="TIKTOK_PLAYLIST_NOT_SUPPORTED",
+                    message="TikTok playlist import is unavailable",
+                    details="TikTok playlist import is not supported. Paste individual TikTok video URLs instead.",
+                    status_code=501,
+                )
             raise APIError(
                 code="PLAYLIST_NOT_SUPPORTED",
                 message="Unsupported media type",
@@ -505,7 +529,7 @@ class MediaService:
         except APIError:
             raise
         except (DownloadError, ExtractorError) as exc:
-            raise self._map_yt_dlp_error(exc) from None
+            raise self._map_yt_dlp_error(exc, url=url) from None
         except Exception as exc:
             raise APIError(
                 code="METADATA_EXTRACTION_ERROR",
@@ -550,7 +574,7 @@ class MediaService:
         except APIError:
             raise
         except (DownloadError, ExtractorError) as exc:
-            raise self._map_yt_dlp_error(exc) from None
+            raise self._map_yt_dlp_error(exc, url=url) from None
         except Exception as exc:
             raise APIError(
                 code="PLAYLIST_EXTRACTION_ERROR",
@@ -579,6 +603,17 @@ class MediaService:
             return "vimeo"
         return "unknown"
 
+    @staticmethod
+    def _ensure_supported_media_platform(platform: str) -> None:
+        if platform in _SUPPORTED_MEDIA_PLATFORMS:
+            return
+        raise APIError(
+            code="UNSUPPORTED_PLATFORM",
+            message="Unsupported platform",
+            details="This media platform is not supported.",
+            status_code=501,
+        )
+
     def _build_metadata(self, *, info: dict[str, Any], platform: str, url: str) -> MediaMetadata:
         formats = info.get("formats") or []
         video_qualities = self._quality_selector.build_qualities(formats)
@@ -589,7 +624,7 @@ class MediaService:
             uploader_url=info.get("uploader_url"),
             thumbnail_url=self._select_thumbnail(info),
             duration_seconds=self._int_or_none(info.get("duration")),
-            webpage_url=str(info.get("webpage_url") or url),
+            webpage_url=self._download_source_url(info=info, platform=platform, url=url),
             extractor=str(info.get("extractor") or ""),
             extractor_key=str(info.get("extractor_key") or info.get("ie_key") or ""),
             upload_date=info.get("upload_date"),
@@ -617,6 +652,46 @@ class MediaService:
                 )
             )
         return items
+
+    @staticmethod
+    def _download_source_url(*, info: dict[str, Any], platform: str, url: str) -> str:
+        # TikTok short/share URLs can succeed where a later extraction of the
+        # canonical URL returned by yt-dlp fails. Returning the proven source
+        # URL lets the existing Home, batch, and retry flows replay the request.
+        if platform == "tiktok":
+            return url
+        return str(info.get("webpage_url") or url)
+
+    def _cache_tiktok_info(
+        self,
+        *,
+        url: str,
+        platform: str,
+        info: dict[str, Any],
+    ) -> None:
+        if platform != "tiktok":
+            return
+
+        with self._tiktok_info_cache_lock:
+            self._tiktok_info_cache[url] = (
+                monotonic() + _TIKTOK_INFO_CACHE_TTL_SECONDS,
+                deepcopy(info),
+            )
+            self._tiktok_info_cache.move_to_end(url)
+            while len(self._tiktok_info_cache) > _TIKTOK_INFO_CACHE_LIMIT:
+                self._tiktok_info_cache.popitem(last=False)
+
+    def _get_cached_tiktok_info(self, url: str) -> dict[str, Any] | None:
+        with self._tiktok_info_cache_lock:
+            cached_info = self._tiktok_info_cache.get(url)
+            if cached_info is None:
+                return None
+            expires_at, info = cached_info
+            if expires_at <= monotonic():
+                self._tiktok_info_cache.pop(url, None)
+                return None
+            self._tiktok_info_cache.move_to_end(url)
+            return deepcopy(info)
 
     @staticmethod
     def _playlist_entry_webpage_url(entry: dict[str, Any]) -> str | None:
@@ -675,9 +750,21 @@ class MediaService:
 
 
     @staticmethod
-    def _map_yt_dlp_error(exc: Exception) -> APIError:
+    def _map_yt_dlp_error(exc: Exception, *, url: str | None = None) -> APIError:
         message = str(exc)
         lowered = message.casefold()
+
+        if (
+            url is not None
+            and detect_platform_from_url(url) == "tiktok"
+            and "rehydration" in lowered
+        ):
+            return APIError(
+                code="TIKTOK_EXTRACTION_UNAVAILABLE",
+                message="TikTok video temporarily unavailable",
+                details="TikTok could not be accessed right now. Try its share link again later.",
+                status_code=502,
+            )
 
         if any(token in lowered for token in ("private", "members-only", "sign in")):
             return APIError(

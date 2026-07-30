@@ -190,7 +190,10 @@ class _FutureSupportCard extends StatelessWidget {
               isAvailable: true,
             ),
             const Divider(),
-            const _PlatformSupportRow(platform: 'TikTok'),
+            const _PlatformSupportRow(
+              platform: 'TikTok',
+              isAvailable: true,
+            ),
             const Divider(),
             const _PlatformSupportRow(platform: 'Instagram'),
             const Divider(),

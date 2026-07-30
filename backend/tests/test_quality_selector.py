@@ -252,6 +252,34 @@ def test_short_form_video_formats_follow_the_same_quality_rules() -> None:
     assert [quality.label for quality in qualities] == ["144p", "720p HD"]
 
 
+def test_portrait_video_uses_its_short_edge_for_familiar_quality_labels() -> None:
+    selector = QualitySelector()
+
+    qualities = selector.build_qualities(
+        [
+            {
+                "format_id": "tiktok-720",
+                "width": 720,
+                "height": 1280,
+                "ext": "mp4",
+                "vcodec": "h264",
+                "acodec": "aac",
+            },
+            {
+                "format_id": "tiktok-1080",
+                "width": 1080,
+                "height": 1920,
+                "ext": "mp4",
+                "vcodec": "h265",
+                "acodec": "aac",
+            },
+        ]
+    )
+
+    assert [quality.height for quality in qualities] == [720, 1080]
+    assert [quality.label for quality in qualities] == ["720p HD", "1080p Full HD"]
+
+
 def test_progressive_only_video_is_available_without_an_audio_only_stream() -> None:
     selector = QualitySelector()
     selection = selector.select_for_height(

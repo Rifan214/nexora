@@ -5,6 +5,7 @@ import 'package:nexora/main.dart';
 import 'package:nexora/models/download_history_item.dart';
 import 'package:nexora/models/download_job.dart';
 import 'package:nexora/models/batch_import.dart';
+import 'package:nexora/models/download_preferences.dart';
 import 'package:nexora/models/media_download_type.dart';
 import 'package:nexora/models/media_metadata.dart';
 import 'package:nexora/providers/batch_import_provider.dart';
@@ -134,6 +135,46 @@ void main() {
       'https://youtu.be/example?si=tracking',
       'https://www.youtube.com/playlist?list=PLexample&si=tracking',
     ]);
+  });
+
+  test('normalizes mixed TikTok and YouTube batch URLs without duplicates', () {
+    final urls = normalizeBatchUrls([
+      'https://www.tiktok.com/@nexora/video/12345',
+      'https://www.youtube.com/watch?v=example',
+      'https://www.tiktok.com/@nexora/video/12345',
+    ]);
+
+    expect(urls, [
+      'https://www.tiktok.com/@nexora/video/12345',
+      'https://www.youtube.com/watch?v=example',
+    ]);
+  });
+
+  test('applies TikTok quality preferences with a best-quality fallback', () {
+    final metadata = MediaMetadata(
+      platform: 'tiktok',
+      title: 'TikTok video',
+      webpageUrl: 'https://www.tiktok.com/@nexora/video/12345',
+      extractor: 'TikTok',
+      extractorKey: 'TikTok',
+      videoQualities: const [
+        VideoQuality(label: '720p HD', height: 720, extension: 'mp4'),
+      ],
+    );
+
+    final preferred = resolvePreferredMediaSelection(
+      metadata,
+      const DownloadPreferences(videoQuality: VideoQualityPreference.p1080),
+    );
+    final bestAvailable = resolvePreferredMediaSelection(
+      metadata,
+      const DownloadPreferences(
+        videoQuality: VideoQualityPreference.bestAvailable,
+      ),
+    );
+
+    expect(preferred?.videoQuality?.height, 720);
+    expect(bestAvailable?.videoQuality?.height, 720);
   });
 
   test('retains batch URLs until Clear Batch is requested', () {

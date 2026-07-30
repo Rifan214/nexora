@@ -81,7 +81,7 @@ class QualitySelector:
         video_candidates: list[dict[str, Any]] = []
 
         for format_item in usable_formats:
-            height = self._height(format_item)
+            height = self._quality_height(format_item)
             if height is None:
                 logger.debug(
                     "Quality format excluded from video candidates format_id=%s reason=missing_height",
@@ -254,9 +254,19 @@ class QualitySelector:
         return value not in (None, "", "none", "None")
 
     @staticmethod
-    def _height(format_item: dict[str, Any]) -> int | None:
-        value = QualitySelector._int_or_none(format_item.get("height"))
-        return value if value is not None and value > 0 else None
+    def _quality_height(format_item: dict[str, Any]) -> int | None:
+        height = QualitySelector._int_or_none(format_item.get("height"))
+        width = QualitySelector._int_or_none(format_item.get("width"))
+        if height is None or height <= 0:
+            return None
+        if width is None or width <= 0:
+            return height
+
+        # yt-dlp reports the physical vertical edge as ``height``. For portrait
+        # video, a 720x1280 stream would otherwise be labelled "1280p", while
+        # viewers and source platforms conventionally call it 720p. Group by
+        # the short edge to keep portrait and landscape labels familiar.
+        return min(width, height)
 
     @staticmethod
     def _format_id(format_item: dict[str, Any] | None) -> str:
