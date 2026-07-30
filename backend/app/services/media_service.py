@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 import threading
 from copy import deepcopy
-from collections import OrderedDict
-from time import monotonic
 from typing import Any
 from urllib.parse import quote
 from uuid import UUID
@@ -22,7 +20,9 @@ from app.services.download_process_manager import (
     DownloadProcessManager,
     get_download_process_manager,
 )
+from app.services.download_metadata_diagnostics import build_download_metadata_diagnostic_report
 from app.services.job_manager import JobManager, build_job_download_url, get_job_manager
+from app.services.media_snapshot_cache import MediaSnapshotCache
 from app.services.queue_manager import QueueManager, get_queue_manager
 from app.services.quality_selector import QualitySelector
 from app.utils.platforms import detect_platform_from_url
@@ -38,8 +38,35 @@ _AUDIO_MP3_POSTPROCESSOR = {
     "preferredquality": "0",
 }
 _SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok"})
-_TIKTOK_INFO_CACHE_LIMIT = 32
-_TIKTOK_INFO_CACHE_TTL_SECONDS = 300
+_DOWNLOAD_TRANSPORT_FIELDS = frozenset(
+    {
+        "formats",
+        "url",
+        "http_headers",
+        "cookies",
+        "protocol",
+        "manifest_url",
+        "fragments",
+        "__x_forwarded_for_ip",
+        "_format_sort_fields",
+        "id",
+        "extractor",
+        "extractor_key",
+        "webpage_url",
+        "original_url",
+    }
+)
+_PROCESSED_DOWNLOAD_FIELDS = frozenset(
+    {
+        "requested_formats",
+        "requested_downloads",
+        "__real_download",
+        "_filename",
+        "filepath",
+        "__files_to_move",
+        "__finaldir",
+    }
+)
 
 
 class MediaService:
@@ -49,24 +76,21 @@ class MediaService:
         process_manager: DownloadProcessManager | None = None,
         job_manager: JobManager | None = None,
         queue_manager: QueueManager | None = None,
+        snapshot_cache: MediaSnapshotCache | None = None,
     ) -> None:
         self._settings = get_settings()
         self._quality_selector = QualitySelector()
         self._process_manager = process_manager or get_download_process_manager()
         self._job_manager = job_manager
         self._queue_manager = queue_manager
-        self._tiktok_info_cache: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
-        self._tiktok_info_cache_lock = threading.RLock()
+        self._snapshot_cache = snapshot_cache or MediaSnapshotCache()
 
     def get_metadata(self, url: str) -> MediaMetadata:
         normalized_url = validate_http_url(url)
         logger.info("Metadata extraction started url=%s", normalized_url)
 
         try:
-            info = self._extract_info_or_raise_api_error(normalized_url)
-            platform = self._detect_platform(info)
-            self._ensure_supported_media_platform(platform)
-            self._cache_tiktok_info(url=normalized_url, platform=platform, info=info)
+            info, platform = self._get_or_extract_supported_info(normalized_url)
 
             metadata = self._build_metadata(info=info, platform=platform, url=normalized_url)
             logger.info("Metadata extraction completed url=%s platform=%s", normalized_url, platform)
@@ -144,11 +168,7 @@ class MediaService:
         )
 
         try:
-            info = self._get_cached_tiktok_info(normalized_url) or self._extract_info_or_raise_api_error(
-                normalized_url
-            )
-            platform = self._detect_platform(info)
-            self._ensure_supported_media_platform(platform)
+            info, platform = self._get_or_extract_supported_info(normalized_url)
 
             formats = info.get("formats") or []
             if request.media_type == "audio":
@@ -195,7 +215,7 @@ class MediaService:
                 url=normalized_url,
                 format_selector=format_selector,
                 output_type=request.media_type,
-                download_info=deepcopy(info) if platform == "tiktok" else None,
+                download_info=deepcopy(info),
             ),
         )
         return job
@@ -295,8 +315,30 @@ class MediaService:
                         if download_info is None:
                             downloaded_info = youtube_dl.extract_info(url, download=True)
                         else:
+                            resolved_download_info = download_info
+                            if detected_platform == "youtube":
+                                resolved_download_info, legacy_download_info = self._refresh_download_transport_info(
+                                    youtube_dl,
+                                    url=url,
+                                    snapshot=download_info,
+                                )
+                                settings = self._settings
+                                logger.info(
+                                    "Diagnostics checkpoint reached enabled=%s",
+                                    settings.download_metadata_diagnostics,
+                                )
+                                self._log_download_metadata_diagnostics(
+                                    job_id=job_id,
+                                    output_type=output_type,
+                                    format_selector=format_selector,
+                                    legacy_info=legacy_download_info,
+                                    snapshot_info=resolved_download_info,
+                                )
+                                resolved_download_info = self._sanitize_processed_download_fields(
+                                    resolved_download_info
+                                )
                             downloaded_info = youtube_dl.process_ie_result(
-                                deepcopy(download_info),
+                                resolved_download_info,
                                 download=True,
                             )
                     finally:
@@ -362,6 +404,70 @@ class MediaService:
 
     def _get_queue_manager(self) -> QueueManager:
         return self._queue_manager or get_queue_manager()
+
+    def _get_or_extract_supported_info(self, normalized_url: str) -> tuple[dict[str, Any], str]:
+        snapshot = self._snapshot_cache.get(normalized_url)
+        if snapshot is not None:
+            info = snapshot.extracted_info
+            platform = self._detect_platform(info)
+            self._ensure_supported_media_platform(platform)
+            return info, platform
+
+        info = self._extract_info_or_raise_api_error(normalized_url)
+        platform = self._detect_platform(info)
+        self._ensure_supported_media_platform(platform)
+        self._snapshot_cache.put(normalized_url, info)
+        return info, platform
+
+    @staticmethod
+    def _refresh_download_transport_info(
+        youtube_dl: YoutubeDL,
+        *,
+        url: str,
+        snapshot: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Refresh transient stream data without replacing cached presentation metadata."""
+        refreshed_info = youtube_dl.extract_info(url, download=False, process=False)
+        if not isinstance(refreshed_info, dict):
+            raise DownloadError("yt-dlp did not return download metadata")
+
+        resolved_info = deepcopy(snapshot)
+        for field in _DOWNLOAD_TRANSPORT_FIELDS:
+            if field in refreshed_info:
+                resolved_info[field] = deepcopy(refreshed_info[field])
+        return resolved_info, refreshed_info
+
+    @staticmethod
+    def _sanitize_processed_download_fields(info: dict[str, Any]) -> dict[str, Any]:
+        """Discard cached yt-dlp runtime state before processing fresh streams."""
+        sanitized_info = deepcopy(info)
+        for field in _PROCESSED_DOWNLOAD_FIELDS:
+            sanitized_info.pop(field, None)
+        return sanitized_info
+
+    def _log_download_metadata_diagnostics(
+        self,
+        *,
+        job_id: UUID,
+        output_type: str,
+        format_selector: str,
+        legacy_info: dict[str, Any],
+        snapshot_info: dict[str, Any],
+    ) -> None:
+        if not self._settings.download_metadata_diagnostics:
+            return
+
+        report = build_download_metadata_diagnostic_report(
+            legacy_info=legacy_info,
+            snapshot_info=snapshot_info,
+        )
+        logger.info(
+            "Download metadata diagnostic job_id=%s media_type=%s format_selector=%s report=%s",
+            job_id,
+            output_type,
+            format_selector,
+            report.as_log_payload(),
+        )
 
     def _finalize_cancelled_if_requested(
         self,
@@ -661,37 +767,6 @@ class MediaService:
         if platform == "tiktok":
             return url
         return str(info.get("webpage_url") or url)
-
-    def _cache_tiktok_info(
-        self,
-        *,
-        url: str,
-        platform: str,
-        info: dict[str, Any],
-    ) -> None:
-        if platform != "tiktok":
-            return
-
-        with self._tiktok_info_cache_lock:
-            self._tiktok_info_cache[url] = (
-                monotonic() + _TIKTOK_INFO_CACHE_TTL_SECONDS,
-                deepcopy(info),
-            )
-            self._tiktok_info_cache.move_to_end(url)
-            while len(self._tiktok_info_cache) > _TIKTOK_INFO_CACHE_LIMIT:
-                self._tiktok_info_cache.popitem(last=False)
-
-    def _get_cached_tiktok_info(self, url: str) -> dict[str, Any] | None:
-        with self._tiktok_info_cache_lock:
-            cached_info = self._tiktok_info_cache.get(url)
-            if cached_info is None:
-                return None
-            expires_at, info = cached_info
-            if expires_at <= monotonic():
-                self._tiktok_info_cache.pop(url, None)
-                return None
-            self._tiktok_info_cache.move_to_end(url)
-            return deepcopy(info)
 
     @staticmethod
     def _playlist_entry_webpage_url(entry: dict[str, Any]) -> str | None:

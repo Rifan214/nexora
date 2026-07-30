@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     api_version: str = Field(default="0.2.0", alias="NEXORA_API_VERSION")
     env: str = Field(default="development", alias="NEXORA_ENV")
     debug: bool = Field(default=False, alias="NEXORA_DEBUG")
+    download_metadata_diagnostics: bool = Field(
+        default=False,
+        alias="NEXORA_DOWNLOAD_METADATA_DIAGNOSTICS",
+    )
     cors_origins: str = Field(default="", alias="NEXORA_CORS_ORIGINS")
     # Keep a longer safety cap for completed files that are never requested.
     download_expiration_minutes: int = Field(default=30, ge=1, alias="DOWNLOAD_EXPIRATION_MINUTES")

@@ -32,3 +32,11 @@ def test_cleanup_interval_is_read_from_environment(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("CLEANUP_INTERVAL_MINUTES", "9")
 
     assert get_settings().cleanup_interval_minutes == 9
+
+
+def test_download_metadata_diagnostics_is_read_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NEXORA_DOWNLOAD_METADATA_DIAGNOSTICS", "true")
+
+    assert get_settings().download_metadata_diagnostics is True

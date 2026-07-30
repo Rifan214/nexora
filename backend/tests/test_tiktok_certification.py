@@ -165,7 +165,7 @@ def test_tiktok_download_reuses_the_analyzed_snapshot_without_reextracting(
             source_url,
             "0",
             "video",
-            service._get_cached_tiktok_info(source_url),
+            service._snapshot_cache.get(source_url).extracted_info,
         )
 
         completed_job = job_manager.get_job(job.job_id)
