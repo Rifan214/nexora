@@ -119,5 +119,6 @@ migrate_working_dir/
 # ==========================================================
 docs/ui/stitch
 command.txt
+catatan.txt
 # Internal development documentation
 docs/

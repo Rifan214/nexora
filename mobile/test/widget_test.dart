@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:nexora/main.dart';
 import 'package:nexora/models/download_history_item.dart';
@@ -6,6 +7,8 @@ import 'package:nexora/models/download_job.dart';
 import 'package:nexora/models/batch_import.dart';
 import 'package:nexora/models/media_download_type.dart';
 import 'package:nexora/models/media_metadata.dart';
+import 'package:nexora/providers/batch_import_provider.dart';
+import 'package:nexora/providers/playlist_import_provider.dart';
 
 void main() {
   test('round trips locally persisted download history fields', () {
@@ -131,6 +134,41 @@ void main() {
       'https://youtu.be/example?si=tracking',
       'https://www.youtube.com/playlist?list=PLexample&si=tracking',
     ]);
+  });
+
+  test('retains batch URLs until Clear Batch is requested', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final controller = container.read(batchImportProvider.notifier);
+    controller.updateUrlInput('https://www.youtube.com/watch?v=batch-item');
+
+    expect(
+      container.read(batchImportProvider).urlInput,
+      'https://www.youtube.com/watch?v=batch-item',
+    );
+    expect(container.read(batchImportProvider).hasSession, isTrue);
+
+    controller.clearBatch();
+
+    expect(container.read(batchImportProvider).hasSession, isFalse);
+  });
+
+  test('retains playlist URL until the batch workspace is cleared', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final controller = container.read(playlistImportProvider.notifier);
+    controller.updateUrl('https://www.youtube.com/playlist?list=example');
+
+    expect(
+      container.read(playlistImportProvider).url,
+      'https://www.youtube.com/playlist?list=example',
+    );
+
+    controller.clear();
+
+    expect(container.read(playlistImportProvider).url, isEmpty);
   });
 
   testWidgets('shows the Nexora home screen', (WidgetTester tester) async {

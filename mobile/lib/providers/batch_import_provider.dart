@@ -16,8 +16,14 @@ class BatchImportController extends Notifier<BatchImportState> {
   @override
   BatchImportState build() => const BatchImportState();
 
-  void reset() {
+  void clearBatch() {
     state = const BatchImportState();
+  }
+
+  void updateUrlInput(String value) {
+    if (value != state.urlInput) {
+      state = state.copyWith(urlInput: value);
+    }
   }
 
   Future<void> analyzeUrls(Iterable<String> lines) async {
@@ -32,11 +38,11 @@ class BatchImportController extends Notifier<BatchImportState> {
 
     final urls = normalizeBatchUrls(validation.validUrls);
     if (urls.isEmpty) {
-      reset();
       return;
     }
 
     state = BatchImportState(
+      urlInput: state.urlInput,
       items: [
         for (final url in urls)
           BatchImportItem(url: url, status: BatchImportItemStatus.pending),
@@ -218,7 +224,15 @@ class BatchImportController extends Notifier<BatchImportState> {
       }
     }
 
-    state = state.copyWith(isSubmitting: false);
+    final completedState = state.copyWith(isSubmitting: false);
+    if (completedState.items.isNotEmpty &&
+        completedState.items.every(
+          (item) => item.status == BatchImportItemStatus.submitted,
+        )) {
+      clearBatch();
+      return;
+    }
+    state = completedState;
   }
 
   void _updateItem(

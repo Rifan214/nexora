@@ -70,6 +70,7 @@ class BatchImportItem {
 
 class BatchImportState {
   const BatchImportState({
+    this.urlInput = '',
     this.items = const [],
     this.isAnalyzing = false,
     this.isSubmitting = false,
@@ -80,6 +81,7 @@ class BatchImportState {
 
   static const _unset = Object();
 
+  final String urlInput;
   final List<BatchImportItem> items;
   final bool isAnalyzing;
   final bool isSubmitting;
@@ -88,6 +90,8 @@ class BatchImportState {
   final String? currentTitle;
 
   int get totalCount => items.length;
+
+  bool get hasSession => urlInput.trim().isNotEmpty || items.isNotEmpty;
 
   int get selectedReadyCount {
     return items
@@ -99,6 +103,7 @@ class BatchImportState {
   }
 
   BatchImportState copyWith({
+    String? urlInput,
     List<BatchImportItem>? items,
     bool? isAnalyzing,
     bool? isSubmitting,
@@ -107,6 +112,7 @@ class BatchImportState {
     Object? currentTitle = _unset,
   }) {
     return BatchImportState(
+      urlInput: urlInput ?? this.urlInput,
       items: items ?? this.items,
       isAnalyzing: isAnalyzing ?? this.isAnalyzing,
       isSubmitting: isSubmitting ?? this.isSubmitting,

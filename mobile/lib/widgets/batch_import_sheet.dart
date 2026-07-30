@@ -8,6 +8,7 @@ import '../models/batch_import.dart';
 import '../models/media_download_type.dart';
 import '../models/media_metadata.dart';
 import '../providers/batch_import_provider.dart';
+import '../providers/playlist_import_provider.dart';
 import 'media_card_parts.dart';
 import 'media_format_chip.dart';
 import 'playlist_import_sheet.dart';
@@ -37,13 +38,9 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
   @override
   void initState() {
     super.initState();
+    _urlController.text = ref.read(batchImportProvider).urlInput;
     _urlController.addListener(_updateDetectedUrlCount);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final batchState = ref.read(batchImportProvider);
-      if (!batchState.isAnalyzing && !batchState.isSubmitting) {
-        ref.read(batchImportProvider.notifier).reset();
-      }
-    });
+    _updateDetectedUrlCount();
   }
 
   @override
@@ -58,6 +55,7 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
   @override
   Widget build(BuildContext context) {
     final batchState = ref.watch(batchImportProvider);
+    final playlistState = ref.watch(playlistImportProvider);
     final batchController = ref.read(batchImportProvider.notifier);
     final viewInsets = MediaQuery.viewInsetsOf(context);
 
@@ -75,6 +73,12 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
             children: [
               _BatchSheetHeader(
                 onClose: () => Navigator.of(context).pop(),
+                onClear: !batchState.hasSession ||
+                        batchState.isAnalyzing ||
+                        batchState.isSubmitting ||
+                        playlistState.isLoading
+                    ? null
+                    : _clearBatch,
                 onImportPlaylist:
                     batchState.items.isEmpty ? _importPlaylist : null,
               ),
@@ -94,7 +98,7 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
                         onAudioSelected: batchController.selectAudioOption,
                         onRemove: batchController.removeItem,
                         onStartAll: () => unawaited(
-                          batchController.submitSelectedDownloads(),
+                          _submitSelectedDownloads(batchController),
                         ),
                       ),
               ),
@@ -106,6 +110,7 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
   }
 
   void _updateDetectedUrlCount() {
+    ref.read(batchImportProvider.notifier).updateUrlInput(_urlController.text);
     final validation =
         validateBatchUrlLines(_urlController.text.split(RegExp(r'\r?\n')));
     final detectedUrlCount = normalizeBatchUrls(validation.validUrls).length;
@@ -116,6 +121,12 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
         _hasInput = hasInput;
       });
     }
+  }
+
+  void _clearBatch() {
+    ref.read(batchImportProvider.notifier).clearBatch();
+    ref.read(playlistImportProvider.notifier).clear();
+    _urlController.clear();
   }
 
   Future<void> _validateAndAnalyze(BatchImportController controller) async {
@@ -150,6 +161,18 @@ class _BatchImportSheetState extends ConsumerState<BatchImportSheet> {
       text: text,
       selection: TextSelection.collapsed(offset: text.length),
     );
+  }
+
+  Future<void> _submitSelectedDownloads(
+    BatchImportController controller,
+  ) async {
+    await controller.submitSelectedDownloads();
+    if (!ref.read(batchImportProvider).hasSession) {
+      ref.read(playlistImportProvider.notifier).clear();
+      if (mounted) {
+        _urlController.clear();
+      }
+    }
   }
 }
 
@@ -194,10 +217,12 @@ Future<bool> _showInvalidUrlsDialog(
 class _BatchSheetHeader extends StatelessWidget {
   const _BatchSheetHeader({
     required this.onClose,
+    required this.onClear,
     required this.onImportPlaylist,
   });
 
   final VoidCallback onClose;
+  final VoidCallback? onClear;
   final VoidCallback? onImportPlaylist;
 
   @override
@@ -218,6 +243,11 @@ class _BatchSheetHeader extends StatelessWidget {
             tooltip: 'Import playlist',
             onPressed: onImportPlaylist,
             icon: const Icon(Icons.playlist_add_rounded),
+          ),
+          IconButton(
+            tooltip: 'Clear batch',
+            onPressed: onClear,
+            icon: const Icon(Icons.delete_outline_rounded),
           ),
           IconButton(
             tooltip: 'Close batch import',

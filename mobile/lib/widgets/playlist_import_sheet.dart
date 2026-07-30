@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../core/network/api_exception.dart';
 import '../core/theme/app_tokens.dart';
 import '../models/playlist_metadata.dart';
-import '../repositories/media_repository.dart';
+import '../providers/playlist_import_provider.dart';
 
 class PlaylistImportSheet extends ConsumerStatefulWidget {
   const PlaylistImportSheet({super.key});
@@ -25,15 +24,19 @@ class PlaylistImportSheet extends ConsumerStatefulWidget {
 
 class _PlaylistImportSheetState extends ConsumerState<PlaylistImportSheet> {
   final _urlController = TextEditingController();
-  final Set<String> _selectedUrls = <String>{};
 
-  PlaylistMetadata? _playlist;
-  String? _errorMessage;
-  var _isLoading = false;
+  @override
+  void initState() {
+    super.initState();
+    _urlController.text = ref.read(playlistImportProvider).url;
+    _urlController.addListener(_persistUrl);
+  }
 
   @override
   void dispose() {
-    _urlController.dispose();
+    _urlController
+      ..removeListener(_persistUrl)
+      ..dispose();
     super.dispose();
   }
 
@@ -41,6 +44,8 @@ class _PlaylistImportSheetState extends ConsumerState<PlaylistImportSheet> {
   Widget build(BuildContext context) {
     final viewInsets = MediaQuery.viewInsetsOf(context);
     final colorScheme = Theme.of(context).colorScheme;
+    final playlistState = ref.watch(playlistImportProvider);
+    final playlistController = ref.read(playlistImportProvider.notifier);
 
     return AnimatedPadding(
       duration: AppDurations.short,
@@ -58,32 +63,36 @@ class _PlaylistImportSheetState extends ConsumerState<PlaylistImportSheet> {
                 onClose: () => Navigator.of(context).pop(),
               ),
               Expanded(
-                child: _playlist == null
+                child: !playlistState.hasPreview
                     ? _PlaylistUrlInput(
                         controller: _urlController,
-                        isLoading: _isLoading,
-                        errorMessage: _errorMessage,
-                        onPreview: _previewPlaylist,
+                        isLoading: playlistState.isLoading,
+                        errorMessage: playlistState.errorMessage,
+                        onPreview: playlistController.previewPlaylist,
                       )
                     : _PlaylistPreview(
-                        playlist: _playlist!,
-                        selectedUrls: _selectedUrls,
-                        onToggle: _toggleItem,
-                        onSelectAll: _selectAll,
-                        onClearSelection: _clearSelection,
-                        onInvertSelection: _invertSelection,
+                        playlist: playlistState.playlist!,
+                        selectedUrls: playlistState.selectedUrls,
+                        onToggle: playlistController.toggleItem,
+                        onSelectAll: playlistController.selectAll,
+                        onClearSelection: playlistController.clearSelection,
+                        onInvertSelection: playlistController.invertSelection,
                       ),
               ),
-              if (_playlist != null)
+              if (playlistState.hasPreview)
                 Padding(
                   padding: const EdgeInsets.all(AppSpacing.lg),
                   child: SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
                       onPressed:
-                          _selectedUrls.isEmpty ? null : _importSelected,
+                          playlistState.selectedUrls.isEmpty
+                              ? null
+                              : _importSelected,
                       icon: const Icon(Icons.playlist_add_rounded),
-                      label: Text('Import Selected (${_selectedUrls.length})'),
+                      label: Text(
+                        'Import Selected (${playlistState.selectedUrls.length})',
+                      ),
                     ),
                   ),
                 ),
@@ -94,92 +103,14 @@ class _PlaylistImportSheetState extends ConsumerState<PlaylistImportSheet> {
     );
   }
 
-  Future<void> _previewPlaylist() async {
-    final url = _urlController.text.trim();
-    if (url.isEmpty || _isLoading) {
-      if (url.isEmpty) {
-        setState(() => _errorMessage = 'Enter a playlist URL to continue.');
-      }
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-    try {
-      final playlist = await ref
-          .read(mediaRepositoryProvider)
-          .getPlaylistInfo(url);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _playlist = playlist;
-        _selectedUrls
-          ..clear()
-          ..addAll(playlist.items.map((item) => item.webpageUrl));
-      });
-    } on ApiException catch (error) {
-      if (mounted) {
-        setState(() => _errorMessage = error.message);
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() => _errorMessage = 'Unable to preview this playlist.');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  void _toggleItem(String url, bool isSelected) {
-    setState(() {
-      if (isSelected) {
-        _selectedUrls.add(url);
-      } else {
-        _selectedUrls.remove(url);
-      }
-    });
-  }
-
-  void _selectAll() {
-    final playlist = _playlist;
-    if (playlist == null) {
-      return;
-    }
-    setState(() => _selectedUrls.addAll(
-          playlist.items.map((item) => item.webpageUrl),
-        ));
-  }
-
-  void _clearSelection() => setState(_selectedUrls.clear);
-
-  void _invertSelection() {
-    final playlist = _playlist;
-    if (playlist == null) {
-      return;
-    }
-    setState(() {
-      for (final item in playlist.items) {
-        if (!_selectedUrls.add(item.webpageUrl)) {
-          _selectedUrls.remove(item.webpageUrl);
-        }
-      }
-    });
+  void _persistUrl() {
+    ref.read(playlistImportProvider.notifier).updateUrl(_urlController.text);
   }
 
   void _importSelected() {
-    final playlist = _playlist;
-    if (playlist == null) {
-      return;
-    }
-    final selectedUrls = playlist.items
-        .where((item) => _selectedUrls.contains(item.webpageUrl))
-        .map((item) => item.webpageUrl)
-        .toList(growable: false);
+    final selectedUrls = ref
+        .read(playlistImportProvider.notifier)
+        .selectedUrlsInPlaylistOrder();
     Navigator.of(context).pop(selectedUrls);
   }
 }
