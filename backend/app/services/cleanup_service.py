@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.models.job import DownloadJob, JobStatus
 from app.services.download_process_manager import DownloadProcessManager
 from app.services.job_manager import JobManager
+from app.services.resume_state_manager import get_resume_state_manager
 from app.utils.storage import find_job_storage_files, get_temp_storage_dir
 
 logger = logging.getLogger(__name__)
@@ -207,6 +208,8 @@ class CleanupService:
             )
             if deletion_failed:
                 logger.warning("Failed download cleanup incomplete job_id=%s", job_id)
+            else:
+                get_resume_state_manager().delete(job_id)
             return removed_count
         except Exception:
             logger.exception("Failed download cleanup error job_id=%s", job_id)
@@ -253,6 +256,8 @@ class CleanupService:
             )
             if deletion_failed:
                 logger.warning("Cancelled download cleanup incomplete job_id=%s", job_id)
+            else:
+                get_resume_state_manager().delete(job_id)
             return cancelled_job
         except Exception:
             logger.exception("Cancelled download cleanup error job_id=%s", job_id)
@@ -290,6 +295,8 @@ class CleanupService:
         if deletion_failed:
             logger.warning("Expired download cleanup incomplete job_id=%s", job.job_id)
             return False
+
+        get_resume_state_manager().delete(job.job_id)
 
         if job_manager.remove_job(job.job_id):
             logger.info("Expired job removed job_id=%s", job.job_id)

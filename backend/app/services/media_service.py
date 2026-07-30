@@ -24,7 +24,9 @@ from app.services.download_metadata_diagnostics import build_download_metadata_d
 from app.services.job_manager import JobManager, build_job_download_url, get_job_manager
 from app.services.media_snapshot_cache import MediaSnapshotCache
 from app.services.queue_manager import QueueManager, get_queue_manager
+from app.services.resume_state_manager import ResumeStateManager, get_resume_state_manager
 from app.services.quality_selector import QualitySelector
+from app.models.resume_state import ResumeState
 from app.utils.platforms import detect_platform_from_url
 from app.utils.storage import build_download_outtmpl, find_downloaded_file, get_temp_storage_dir
 from app.utils.validators import validate_http_url
@@ -77,6 +79,7 @@ class MediaService:
         job_manager: JobManager | None = None,
         queue_manager: QueueManager | None = None,
         snapshot_cache: MediaSnapshotCache | None = None,
+        resume_state_manager: ResumeStateManager | None = None,
     ) -> None:
         self._settings = get_settings()
         self._quality_selector = QualitySelector()
@@ -84,6 +87,7 @@ class MediaService:
         self._job_manager = job_manager
         self._queue_manager = queue_manager
         self._snapshot_cache = snapshot_cache or MediaSnapshotCache()
+        self._resume_state_manager = resume_state_manager or get_resume_state_manager()
 
     def get_metadata(self, url: str) -> MediaMetadata:
         normalized_url = validate_http_url(url)
@@ -298,6 +302,13 @@ class MediaService:
 
             temp_dir = get_temp_storage_dir()
             output_template = build_download_outtmpl(job_id, temp_dir=temp_dir)
+            self._create_resume_state(
+                job_id=job_id,
+                source_url=url,
+                output_template=output_template,
+                format_selector=format_selector,
+                extractor=str(extracted_info.get("extractor_key") or detected_platform),
+            )
 
             ydl_options = self._build_download_options(
                 job_id=job_id,
@@ -306,6 +317,7 @@ class MediaService:
                 output_template=output_template,
                 temp_dir=temp_dir,
                 job_manager=job_manager,
+                resume_state_manager=self._resume_state_manager,
             )
 
             with self._process_manager.worker_context(job_id):
@@ -356,6 +368,7 @@ class MediaService:
             download_url = build_job_download_url(job_id)
 
             job_manager.mark_completed(job_id, download_url=download_url)
+            self._delete_resume_state(job_id)
             logger.info("Download completed job_id=%s download_url=%s", job_id, download_url)
         except YoutubeDLError as exc:
             if not self._finalize_cancelled_if_requested(job_id, job_manager=job_manager):
@@ -404,6 +417,35 @@ class MediaService:
 
     def _get_queue_manager(self) -> QueueManager:
         return self._queue_manager or get_queue_manager()
+
+    def _create_resume_state(
+        self,
+        *,
+        job_id: UUID,
+        source_url: str,
+        output_template: str,
+        format_selector: str,
+        extractor: str,
+    ) -> None:
+        try:
+            self._resume_state_manager.save(
+                ResumeState(
+                    job_id=job_id,
+                    source_url=source_url,
+                    output_path=output_template,
+                    temporary_file_path=f"{output_template}.part",
+                    media_format=format_selector,
+                    extractor=extractor,
+                )
+            )
+        except (OSError, ValueError):
+            logger.exception("Resume state creation failed job_id=%s", job_id)
+
+    def _delete_resume_state(self, job_id: UUID) -> None:
+        try:
+            self._resume_state_manager.delete(job_id)
+        except OSError:
+            logger.exception("Resume state deletion failed job_id=%s", job_id)
 
     def _get_or_extract_supported_info(self, normalized_url: str) -> tuple[dict[str, Any], str]:
         snapshot = self._snapshot_cache.get(normalized_url)
@@ -495,8 +537,9 @@ class MediaService:
         logger.info("Download cancelled job_id=%s", job_id)
         return True
 
-    def _build_progress_hook(self, job_id, job_manager):
+    def _build_progress_hook(self, job_id, job_manager, resume_state_manager: ResumeStateManager):
         last_progress = {"value": -1}
+        last_resume_progress: dict[str, tuple[int, int | None] | None] = {"value": None}
 
         def hook(payload: dict[str, Any]) -> None:
             self._process_manager.raise_if_cancelled(job_id)
@@ -508,6 +551,13 @@ class MediaService:
 
             total = payload.get("total_bytes") or payload.get("total_bytes_estimate")
             downloaded = payload.get("downloaded_bytes") or 0
+            resume_progress = (downloaded, total)
+            if resume_progress != last_resume_progress["value"]:
+                last_resume_progress["value"] = resume_progress
+                try:
+                    resume_state_manager.update_progress(job_id, downloaded, total)
+                except (OSError, ValueError):
+                    logger.warning("Resume progress update failed job_id=%s", job_id)
             if total:
                 progress = int(min(99, max(0, (downloaded / total) * 100)))
             else:
@@ -538,6 +588,7 @@ class MediaService:
         output_template: str,
         temp_dir,
         job_manager,
+        resume_state_manager: ResumeStateManager,
     ) -> dict[str, Any]:
         options: dict[str, Any] = {
             "quiet": True,
@@ -548,7 +599,7 @@ class MediaService:
             "format": format_selector,
             "outtmpl": output_template,
             "paths": {"home": str(temp_dir)},
-            "progress_hooks": [self._build_progress_hook(job_id, job_manager)],
+            "progress_hooks": [self._build_progress_hook(job_id, job_manager, resume_state_manager)],
             "postprocessor_hooks": [self._build_postprocessor_hook(job_id)],
         }
         if output_type == "audio":

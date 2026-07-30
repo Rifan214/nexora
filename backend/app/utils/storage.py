@@ -23,6 +23,12 @@ def get_temp_storage_dir() -> Path:
     return temp_dir
 
 
+def get_resume_state_storage_dir() -> Path:
+    state_dir = get_temp_storage_dir() / "resume"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir
+
+
 def build_download_outtmpl(job_id: UUID, *, temp_dir: Path | None = None) -> str:
     destination_dir = temp_dir or get_temp_storage_dir()
     return str(destination_dir / f"{job_id}.%(ext)s")
