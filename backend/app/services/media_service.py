@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 from uuid import UUID
@@ -69,6 +70,10 @@ _PROCESSED_DOWNLOAD_FIELDS = frozenset(
         "__finaldir",
     }
 )
+
+
+def _payload_path(value: Any) -> str | None:
+    return str(value) if isinstance(value, (str, Path)) and value else None
 
 
 class MediaService:
@@ -302,13 +307,20 @@ class MediaService:
 
             temp_dir = get_temp_storage_dir()
             output_template = build_download_outtmpl(job_id, temp_dir=temp_dir)
-            self._create_resume_state(
+            resume_state = self._prepare_resume_state(
                 job_id=job_id,
                 source_url=url,
                 output_template=output_template,
-                format_selector=format_selector,
-                extractor=str(extracted_info.get("extractor_key") or detected_platform),
+                temp_dir=temp_dir,
             )
+            if resume_state is None:
+                self._create_resume_state(
+                    job_id=job_id,
+                    source_url=url,
+                    output_template=output_template,
+                    format_selector=format_selector,
+                    extractor=str(extracted_info.get("extractor_key") or detected_platform),
+                )
 
             ydl_options = self._build_download_options(
                 job_id=job_id,
@@ -318,41 +330,59 @@ class MediaService:
                 temp_dir=temp_dir,
                 job_manager=job_manager,
                 resume_state_manager=self._resume_state_manager,
+                continue_download=resume_state is not None,
             )
 
             with self._process_manager.worker_context(job_id):
                 with YoutubeDL(ydl_options) as youtube_dl:
                     self._process_manager.attach_downloader(job_id, youtube_dl)
                     try:
-                        if download_info is None:
-                            downloaded_info = youtube_dl.extract_info(url, download=True)
-                        else:
-                            resolved_download_info = download_info
-                            if detected_platform == "youtube":
-                                resolved_download_info, legacy_download_info = self._refresh_download_transport_info(
-                                    youtube_dl,
-                                    url=url,
-                                    snapshot=download_info,
-                                )
-                                settings = self._settings
-                                logger.info(
-                                    "Diagnostics checkpoint reached enabled=%s",
-                                    settings.download_metadata_diagnostics,
-                                )
-                                self._log_download_metadata_diagnostics(
+                        downloaded_info = self._process_download_with_youtube_dl(
+                            youtube_dl,
+                            job_id=job_id,
+                            url=url,
+                            output_type=output_type,
+                            format_selector=format_selector,
+                            download_info=download_info,
+                            detected_platform=detected_platform,
+                        )
+                    except YoutubeDLError:
+                        if resume_state is None:
+                            raise
+                        logger.debug("Resume failed; falling back to full download job_id=%s", job_id)
+                        self._invalidate_resume_state(job_id, temp_dir=temp_dir)
+                        self._create_resume_state(
+                            job_id=job_id,
+                            source_url=url,
+                            output_template=output_template,
+                            format_selector=format_selector,
+                            extractor=str(extracted_info.get("extractor_key") or detected_platform),
+                        )
+                        fallback_options = self._build_download_options(
+                            job_id=job_id,
+                            format_selector=format_selector,
+                            output_type=output_type,
+                            output_template=output_template,
+                            temp_dir=temp_dir,
+                            job_manager=job_manager,
+                            resume_state_manager=self._resume_state_manager,
+                            continue_download=False,
+                        )
+                        with YoutubeDL(fallback_options) as fallback_youtube_dl:
+                            self._process_manager.attach_downloader(job_id, fallback_youtube_dl)
+                            try:
+                                downloaded_info = self._process_download_with_youtube_dl(
+                                    fallback_youtube_dl,
                                     job_id=job_id,
+                                    url=url,
                                     output_type=output_type,
                                     format_selector=format_selector,
-                                    legacy_info=legacy_download_info,
-                                    snapshot_info=resolved_download_info,
+                                    download_info=download_info,
+                                    detected_platform=detected_platform,
                                 )
-                                resolved_download_info = self._sanitize_processed_download_fields(
-                                    resolved_download_info
-                                )
-                            downloaded_info = youtube_dl.process_ie_result(
-                                resolved_download_info,
-                                download=True,
-                            )
+                            finally:
+                                self._process_manager.detach_downloader(job_id, fallback_youtube_dl)
+                        logger.debug("Full download fallback completed job_id=%s", job_id)
                     finally:
                         self._process_manager.detach_downloader(job_id, youtube_dl)
 
@@ -369,6 +399,8 @@ class MediaService:
 
             job_manager.mark_completed(job_id, download_url=download_url)
             self._delete_resume_state(job_id)
+            if resume_state is not None:
+                logger.debug("Resume completed successfully job_id=%s", job_id)
             logger.info("Download completed job_id=%s download_url=%s", job_id, download_url)
         except YoutubeDLError as exc:
             if not self._finalize_cancelled_if_requested(job_id, job_manager=job_manager):
@@ -446,6 +478,104 @@ class MediaService:
             self._resume_state_manager.delete(job_id)
         except OSError:
             logger.exception("Resume state deletion failed job_id=%s", job_id)
+
+    def _prepare_resume_state(
+        self,
+        *,
+        job_id: UUID,
+        source_url: str,
+        output_template: str,
+        temp_dir: Path,
+    ) -> ResumeState | None:
+        resume_state = self._resume_state_manager.load(job_id)
+        if resume_state is None:
+            return None
+
+        logger.debug("Resume state found job_id=%s", job_id)
+        if self._is_resume_state_valid(
+            resume_state,
+            source_url=source_url,
+            output_template=output_template,
+            temp_dir=temp_dir,
+        ):
+            logger.debug("Resume validation passed job_id=%s", job_id)
+            logger.debug("Starting resumed download job_id=%s", job_id)
+            return resume_state
+
+        logger.debug("Resume validation failed job_id=%s", job_id)
+        self._invalidate_resume_state(job_id, temp_dir=temp_dir)
+        return None
+
+    @staticmethod
+    def _is_resume_state_valid(
+        state: ResumeState,
+        *,
+        source_url: str,
+        output_template: str,
+        temp_dir: Path,
+    ) -> bool:
+        if state.source_url != source_url or state.downloaded_bytes <= 0:
+            return False
+
+        try:
+            storage_dir = temp_dir.resolve()
+            temporary_file = Path(state.temporary_file_path).resolve()
+            output_file = Path(state.output_path).resolve()
+        except OSError:
+            return False
+
+        if not temporary_file.is_relative_to(storage_dir) or not output_file.is_relative_to(storage_dir):
+            return False
+        if not temporary_file.is_file() or temporary_file.stat().st_size <= 0:
+            return False
+
+        expected_prefix = f"{Path(output_template).stem}."
+        return output_file.name.startswith(expected_prefix)
+
+    def _invalidate_resume_state(self, job_id: UUID, *, temp_dir: Path) -> None:
+        self._delete_resume_state(job_id)
+        for artifact in temp_dir.glob(f"{job_id}.*"):
+            if artifact.name.casefold().endswith((".part", ".ytdl")):
+                try:
+                    artifact.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Resume artifact cleanup failed job_id=%s", job_id)
+
+    def _process_download_with_youtube_dl(
+        self,
+        youtube_dl: YoutubeDL,
+        *,
+        job_id: UUID,
+        url: str,
+        output_type: str,
+        format_selector: str,
+        download_info: dict[str, Any] | None,
+        detected_platform: str,
+    ) -> dict[str, Any]:
+        if download_info is None:
+            return youtube_dl.extract_info(url, download=True)
+
+        resolved_download_info = download_info
+        if detected_platform == "youtube":
+            resolved_download_info, legacy_download_info = self._refresh_download_transport_info(
+                youtube_dl,
+                url=url,
+                snapshot=download_info,
+            )
+            settings = self._settings
+            logger.info(
+                "Diagnostics checkpoint reached enabled=%s",
+                settings.download_metadata_diagnostics,
+            )
+            self._log_download_metadata_diagnostics(
+                job_id=job_id,
+                output_type=output_type,
+                format_selector=format_selector,
+                legacy_info=legacy_download_info,
+                snapshot_info=resolved_download_info,
+            )
+            resolved_download_info = self._sanitize_processed_download_fields(resolved_download_info)
+        return youtube_dl.process_ie_result(resolved_download_info, download=True)
 
     def _get_or_extract_supported_info(self, normalized_url: str) -> tuple[dict[str, Any], str]:
         snapshot = self._snapshot_cache.get(normalized_url)
@@ -555,7 +685,13 @@ class MediaService:
             if resume_progress != last_resume_progress["value"]:
                 last_resume_progress["value"] = resume_progress
                 try:
-                    resume_state_manager.update_progress(job_id, downloaded, total)
+                    resume_state_manager.update_progress(
+                        job_id,
+                        downloaded,
+                        total,
+                        output_path=_payload_path(payload.get("filename")),
+                        temporary_file_path=_payload_path(payload.get("tmpfilename")),
+                    )
                 except (OSError, ValueError):
                     logger.warning("Resume progress update failed job_id=%s", job_id)
             if total:
@@ -589,6 +725,7 @@ class MediaService:
         temp_dir,
         job_manager,
         resume_state_manager: ResumeStateManager,
+        continue_download: bool,
     ) -> dict[str, Any]:
         options: dict[str, Any] = {
             "quiet": True,
@@ -596,6 +733,8 @@ class MediaService:
             "noplaylist": True,
             "skip_download": False,
             "cachedir": False,
+            "continuedl": continue_download,
+            "nopart": False,
             "format": format_selector,
             "outtmpl": output_template,
             "paths": {"home": str(temp_dir)},

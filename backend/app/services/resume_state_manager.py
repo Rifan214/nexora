@@ -68,6 +68,9 @@ class ResumeStateManager:
         job_id: UUID,
         downloaded_bytes: int,
         total_bytes: int | None,
+        *,
+        output_path: str | None = None,
+        temporary_file_path: str | None = None,
     ) -> ResumeState | None:
         """Persist bytes from yt-dlp's existing progress callback."""
         with _STATE_LOCK:
@@ -78,6 +81,8 @@ class ResumeStateManager:
                 update={
                     "downloaded_bytes": max(0, downloaded_bytes),
                     "total_bytes": max(0, total_bytes) if total_bytes is not None else None,
+                    "output_path": output_path or state.output_path,
+                    "temporary_file_path": temporary_file_path or state.temporary_file_path,
                     "updated_at": _utcnow(),
                 }
             )
