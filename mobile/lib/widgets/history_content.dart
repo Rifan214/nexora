@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +9,7 @@ import '../models/media_download_type.dart';
 import '../models/media_metadata.dart';
 import '../providers/history_provider.dart';
 import '../repositories/media_repository.dart';
+import '../services/device_file_service.dart';
 import 'media_card_parts.dart';
 import 'nexora_brand.dart';
 import 'nexora_floating_notification.dart';
@@ -185,7 +185,9 @@ class _HistoryContentState extends ConsumerState<HistoryContent> {
     }
 
     if (deleteOption == _HistoryDeleteOption.historyAndFile) {
-      await _deleteLocalFileIfPresent(download.localFilePath);
+      await ref
+          .read(deviceFileServiceProvider)
+          .deleteFileIfPresent(download.localFilePath);
     }
 
     if (!context.mounted) {
@@ -199,17 +201,6 @@ class _HistoryContentState extends ConsumerState<HistoryContent> {
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(buildNexoraFloatingNotification(context, title: message));
-  }
-
-  Future<void> _deleteLocalFileIfPresent(String path) async {
-    try {
-      final fileType = await FileSystemEntity.type(path, followLinks: false);
-      if (fileType == FileSystemEntityType.file) {
-        await File(path).delete();
-      }
-    } on FileSystemException {
-      // A missing or inaccessible local file must not prevent history cleanup.
-    }
   }
 
   Future<void> _openHistoryFile(WidgetRef ref, String path) async {
@@ -571,7 +562,7 @@ class _HistoryDeleteDialogState extends State<_HistoryDeleteDialog> {
   }
 }
 
-class _HistoryDownloadCard extends StatefulWidget {
+class _HistoryDownloadCard extends ConsumerStatefulWidget {
   const _HistoryDownloadCard({
     required this.download,
     required this.onOpen,
@@ -583,10 +574,10 @@ class _HistoryDownloadCard extends StatefulWidget {
   final VoidCallback onDelete;
 
   @override
-  State<_HistoryDownloadCard> createState() => _HistoryDownloadCardState();
+  ConsumerState<_HistoryDownloadCard> createState() => _HistoryDownloadCardState();
 }
 
-class _HistoryDownloadCardState extends State<_HistoryDownloadCard> {
+class _HistoryDownloadCardState extends ConsumerState<_HistoryDownloadCard> {
   late Future<bool> _fileExists;
 
   @override
@@ -604,15 +595,9 @@ class _HistoryDownloadCardState extends State<_HistoryDownloadCard> {
   }
 
   Future<bool> _checkFileExists() async {
-    try {
-      return await FileSystemEntity.type(
-            widget.download.localFilePath,
-            followLinks: false,
-          ) ==
-          FileSystemEntityType.file;
-    } on FileSystemException {
-      return false;
-    }
+    return ref
+        .read(deviceFileServiceProvider)
+        .fileExists(widget.download.localFilePath);
   }
 
   @override

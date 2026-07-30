@@ -333,6 +333,7 @@ class MediaController extends Notifier<MediaState> {
       final savedFile = await ref.read(mediaRepositoryProvider).downloadCompletedFile(
             downloadUrl: downloadUrl,
             suggestedFilename: _suggestedFilename(current),
+            mediaType: current.currentMediaType ?? MediaDownloadType.video,
             cancelToken: cancelToken,
             onReceiveProgress: (received, total) {
               _handleFileDownloadProgress(cancelToken, received, total);

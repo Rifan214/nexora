@@ -1,11 +1,13 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 import '../core/network/api_exception.dart';
+import '../models/completed_file_download.dart';
+import '../models/media_download_type.dart';
 
 final deviceFileServiceProvider = Provider<DeviceFileService>((ref) {
   return const DeviceFileService();
@@ -14,14 +16,91 @@ final deviceFileServiceProvider = Provider<DeviceFileService>((ref) {
 class DeviceFileService {
   const DeviceFileService();
 
-  Future<Directory> prepareDownloadDirectory() async {
-    final baseDirectory = await _resolveBaseDirectory();
-    final downloadDirectory = Directory(_join(baseDirectory.path, 'downloads'));
+  static const _publicStorageChannel = MethodChannel(
+    'com.example.nexora/public_storage',
+  );
 
-    await _requestStoragePermissionIfRequired(downloadDirectory);
+  Future<Directory> prepareTemporaryDownloadDirectory() async {
+    final cacheDirectory = await getTemporaryDirectory();
+    final downloadDirectory = Directory(_join(cacheDirectory.path, 'nexora-downloads'));
     await downloadDirectory.create(recursive: true);
-
     return downloadDirectory;
+  }
+
+  Future<CompletedFileDownload> publishDownloadedFile({
+    required String temporaryFilePath,
+    required String filename,
+    required MediaDownloadType mediaType,
+  }) async {
+    final sanitizedFilename = sanitizeFilename(filename);
+    if (Platform.isAndroid) {
+      return _publishToAndroidDownloads(
+        temporaryFilePath: temporaryFilePath,
+        filename: sanitizedFilename,
+        mediaType: mediaType,
+      );
+    }
+
+    final directory = await _prepareFallbackDownloadDirectory(mediaType);
+    final destinationPath = uniqueFilePath(
+      directory: directory,
+      filename: sanitizedFilename,
+    );
+    await File(temporaryFilePath).copy(destinationPath);
+    return CompletedFileDownload(
+      filename: sanitizedFilename,
+      savedPath: destinationPath,
+      savedDirectory: directory.path,
+    );
+  }
+
+  String publicDownloadsRelativePathFor(MediaDownloadType mediaType) {
+    return 'Download/Nexora/${_categoryFor(mediaType)}';
+  }
+
+  Future<bool> fileExists(String reference) async {
+    final trimmedReference = reference.trim();
+    if (trimmedReference.isEmpty) {
+      return false;
+    }
+    if (_isContentUri(trimmedReference) && Platform.isAndroid) {
+      try {
+        return await _publicStorageChannel.invokeMethod<bool>(
+              'publicMediaExists',
+              {'uri': trimmedReference},
+            ) ??
+            false;
+      } on PlatformException {
+        return false;
+      }
+    }
+    return File(trimmedReference).exists();
+  }
+
+  Future<void> deleteFileIfPresent(String reference) async {
+    final trimmedReference = reference.trim();
+    if (trimmedReference.isEmpty) {
+      return;
+    }
+    if (_isContentUri(trimmedReference) && Platform.isAndroid) {
+      try {
+        await _publicStorageChannel.invokeMethod<void>(
+          'deletePublicMedia',
+          {'uri': trimmedReference},
+        );
+      } on PlatformException {
+        // A missing or inaccessible public file must not block history cleanup.
+      }
+      return;
+    }
+
+    try {
+      if (await File(trimmedReference).exists()) {
+        await File(trimmedReference).delete();
+      }
+    } on FileSystemException {
+      // A missing or inaccessible local file must not block history cleanup.
+    }
   }
 
   String sanitizeFilename(String value) {
@@ -100,6 +179,24 @@ class DeviceFileService {
   }
 
   Future<void> openFile(String filePath) async {
+    if (_isContentUri(filePath) && Platform.isAndroid) {
+      try {
+        final opened = await _publicStorageChannel.invokeMethod<bool>(
+          'openPublicMedia',
+          {'uri': filePath},
+        );
+        if (opened == true) {
+          return;
+        }
+      } on PlatformException catch (error) {
+        final message = error.message?.trim();
+        if (message != null && message.isNotEmpty) {
+          throw ApiException(message);
+        }
+      }
+      throw const ApiException('Unable to open the file.');
+    }
+
     final result = await OpenFilex.open(filePath);
     if (result.type == ResultType.done) {
       return;
@@ -113,50 +210,84 @@ class DeviceFileService {
     throw ApiException(_messageForOpenResult(result.type));
   }
 
-  Future<Directory> _resolveBaseDirectory() async {
-    if (Platform.isAndroid) {
-      final externalDirectory = await getExternalStorageDirectory();
-      if (externalDirectory != null) {
-        return externalDirectory;
-      }
-    }
-
+  Future<CompletedFileDownload> _publishToAndroidDownloads({
+    required String temporaryFilePath,
+    required String filename,
+    required MediaDownloadType mediaType,
+  }) async {
     try {
-      final downloadsDirectory = await getDownloadsDirectory();
-      if (downloadsDirectory != null) {
-        return downloadsDirectory;
+      final result = await _publicStorageChannel.invokeMapMethod<String, dynamic>(
+        'saveToDownloads',
+        {
+          'sourcePath': temporaryFilePath,
+          'filename': filename,
+          'mimeType': _mimeTypeFor(filename, mediaType),
+          'relativePath': '${publicDownloadsRelativePathFor(mediaType)}/',
+        },
+      );
+      final uri = result?['uri'] as String?;
+      final directory = result?['relativePath'] as String?;
+      if (uri == null || uri.isEmpty || directory == null || directory.isEmpty) {
+        throw const ApiException('Unable to save the downloaded file to Downloads.');
       }
+      return CompletedFileDownload(
+        filename: filename,
+        savedPath: uri,
+        savedDirectory: directory,
+      );
+    } on ApiException {
+      rethrow;
+    } on PlatformException catch (error) {
+      final message = error.message?.trim();
+      throw ApiException(
+        message == null || message.isEmpty
+            ? 'Unable to save the downloaded file to Downloads.'
+            : message,
+      );
+    }
+  }
+
+  Future<Directory> _prepareFallbackDownloadDirectory(
+    MediaDownloadType mediaType,
+  ) async {
+    Directory? downloadsDirectory;
+    try {
+      downloadsDirectory = await getDownloadsDirectory();
     } catch (_) {
-      // Some platforms do not expose a downloads directory through path_provider.
+      // Some non-Android platforms do not expose a downloads directory.
     }
-
-    return getApplicationDocumentsDirectory();
+    final baseDirectory = downloadsDirectory ?? await getApplicationDocumentsDirectory();
+    final directory = Directory(
+      _join(_join(baseDirectory.path, 'Nexora'), _categoryFor(mediaType)),
+    );
+    await directory.create(recursive: true);
+    return directory;
   }
 
-  Future<void> _requestStoragePermissionIfRequired(Directory directory) async {
-    if (!_requiresStoragePermission(directory)) {
-      return;
-    }
-
-    final status = await Permission.storage.status;
-    if (status.isGranted) {
-      return;
-    }
-
-    final requestedStatus = await Permission.storage.request();
-    if (!requestedStatus.isGranted) {
-      throw const ApiException('Storage permission denied.');
-    }
+  String _categoryFor(MediaDownloadType mediaType) {
+    return switch (mediaType) {
+      MediaDownloadType.video => 'Video',
+      MediaDownloadType.audio => 'Audio',
+    };
   }
 
-  bool _requiresStoragePermission(Directory directory) {
-    if (!Platform.isAndroid) {
-      return false;
-    }
-
-    final normalizedPath = directory.path.replaceAll('\\', '/').toLowerCase();
-    return !normalizedPath.contains('/android/data/');
+  String _mimeTypeFor(String filename, MediaDownloadType mediaType) {
+    final extension = _extension(filename).toLowerCase();
+    return switch (extension) {
+      '.mp3' => 'audio/mpeg',
+      '.m4a' => 'audio/mp4',
+      '.aac' => 'audio/aac',
+      '.ogg' => 'audio/ogg',
+      '.opus' => 'audio/opus',
+      '.wav' => 'audio/wav',
+      '.mp4' => 'video/mp4',
+      '.mkv' => 'video/x-matroska',
+      '.webm' => mediaType == MediaDownloadType.audio ? 'audio/webm' : 'video/webm',
+      _ => 'application/octet-stream',
+    };
   }
+
+  bool _isContentUri(String value) => value.startsWith('content://');
 
   String _join(String parent, String child) {
     final separator = Platform.pathSeparator;

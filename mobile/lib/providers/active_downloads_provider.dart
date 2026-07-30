@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:io';
-
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -115,7 +113,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
     }
 
     try {
-      if (!await File(filePath).exists()) {
+      if (!await ref.read(mediaRepositoryProvider).downloadedFileExists(filePath)) {
         return 'File Missing';
       }
       await ref.read(mediaRepositoryProvider).openDownloadedFile(filePath);
@@ -274,6 +272,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
       final savedFile = await ref.read(mediaRepositoryProvider).downloadCompletedFile(
             downloadUrl: downloadUrl,
             suggestedFilename: _suggestedFilename(download),
+            mediaType: download.mediaType,
             cancelToken: cancelToken,
             onReceiveProgress: (received, total) {
               _handleFileDownloadProgress(jobId, cancelToken, received, total);

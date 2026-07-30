@@ -184,6 +184,7 @@ class MediaRepository {
   Future<CompletedFileDownload> downloadCompletedFile({
     required String downloadUrl,
     required String suggestedFilename,
+    required MediaDownloadType mediaType,
     ProgressCallback? onReceiveProgress,
     CancelToken? cancelToken,
   }) async {
@@ -192,11 +193,11 @@ class MediaRepository {
       throw const ApiException('Download URL is missing.');
     }
 
-    final downloadDirectory = await _prepareDownloadDirectory();
+    final temporaryDirectory = await _prepareTemporaryDownloadDirectory();
     final fallbackFilename = _deviceFileService.sanitizeFilename(
       suggestedFilename,
     );
-    String? savedPath;
+    String? temporaryPath;
     String? resolvedFilename;
 
     try {
@@ -207,14 +208,23 @@ class MediaRepository {
                 headers.value('content-disposition'),
               ) ??
               fallbackFilename;
-          savedPath = _deviceFileService.uniqueFilePath(
-            directory: downloadDirectory,
-            filename: resolvedFilename!,
+          temporaryPath = _deviceFileService.uniqueFilePath(
+            directory: temporaryDirectory,
+            filename: 'nexora-${DateTime.now().microsecondsSinceEpoch}.part',
           );
-          return savedPath!;
+          return temporaryPath!;
         },
         onReceiveProgress: onReceiveProgress,
         cancelToken: cancelToken,
+      );
+      final completedTemporaryPath = temporaryPath;
+      if (completedTemporaryPath == null || completedTemporaryPath.isEmpty) {
+        throw const ApiException('Unable to save the downloaded file.');
+      }
+      return _deviceFileService.publishDownloadedFile(
+        temporaryFilePath: completedTemporaryPath,
+        filename: resolvedFilename ?? fallbackFilename,
+        mediaType: mediaType,
       );
     } on ApiException {
       rethrow;
@@ -222,19 +232,16 @@ class MediaRepository {
       throw const ApiException('Unable to write the downloaded file.');
     } catch (_) {
       throw const ApiException('Unable to save the downloaded file.');
+    } finally {
+      final path = temporaryPath;
+      if (path != null && path.isNotEmpty) {
+        await _deviceFileService.deleteFileIfPresent(path);
+      }
     }
+  }
 
-    final finalSavedPath = savedPath;
-    if (finalSavedPath == null || finalSavedPath.isEmpty) {
-      throw const ApiException('Unable to save the downloaded file.');
-    }
-
-    return CompletedFileDownload(
-      filename:
-          resolvedFilename ?? _deviceFileService.filenameFromPath(finalSavedPath),
-      savedPath: finalSavedPath,
-      savedDirectory: downloadDirectory.path,
-    );
+  Future<bool> downloadedFileExists(String fileReference) {
+    return _deviceFileService.fileExists(fileReference);
   }
 
   Future<void> openDownloadedFile(String filePath) {
@@ -246,13 +253,13 @@ class MediaRepository {
     return _deviceFileService.openFile(trimmedPath);
   }
 
-  Future<Directory> _prepareDownloadDirectory() async {
+  Future<Directory> _prepareTemporaryDownloadDirectory() async {
     try {
-      return await _deviceFileService.prepareDownloadDirectory();
+      return await _deviceFileService.prepareTemporaryDownloadDirectory();
     } on ApiException {
       rethrow;
     } catch (_) {
-      throw const ApiException('Unable to prepare the download location.');
+      throw const ApiException('Unable to prepare temporary download storage.');
     }
   }
 
