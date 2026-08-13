@@ -98,6 +98,59 @@ def test_x_metadata_endpoint_preserves_the_existing_response_contract(
         app.dependency_overrides.clear()
 
 
+def test_x_video_only_metadata_exposes_video_qualities_without_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = MediaService()
+    monkeypatch.setattr(service, "_extract_info", lambda _: _twitter_video_only_info())
+
+    metadata = service.get_metadata("https://x.com/nexora/status/1900000000000000002")
+
+    assert [quality.height for quality in metadata.video_qualities] == [320, 480, 720]
+    assert metadata.audio_options == []
+
+
+def test_x_video_only_download_uses_the_single_video_selector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_manager = JobManager()
+    queue_manager = QueueManager(job_manager=job_manager)
+    service = MediaService(
+        process_manager=DownloadProcessManager(),
+        job_manager=job_manager,
+        queue_manager=queue_manager,
+    )
+    monkeypatch.setattr(service, "_extract_info", lambda _: _twitter_video_only_info())
+    monkeypatch.setattr(media_service_module.threading, "Thread", _FakeThread)
+
+    job = service.create_download_job(
+        MediaDownloadRequest(
+            url="https://x.com/nexora/status/1900000000000000002",
+            media_type="video",
+            quality_height=720,
+        )
+    )
+
+    assert job.format_id == "http-2176"
+
+
+def test_x_video_only_audio_request_remains_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = MediaService()
+    monkeypatch.setattr(service, "_extract_info", lambda _: _twitter_video_only_info())
+
+    with pytest.raises(APIError) as error:
+        service.create_download_job(
+            MediaDownloadRequest(
+                url="https://x.com/nexora/status/1900000000000000002",
+                media_type="audio",
+            )
+        )
+
+    assert error.value.code == "AUDIO_NOT_AVAILABLE"
+
+
 def test_x_post_without_downloadable_media_returns_a_friendly_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -281,6 +334,38 @@ def _twitter_info() -> dict:
             },
         ],
     }
+
+
+def _twitter_video_only_info() -> dict:
+    info = _twitter_info()
+    info.update(
+        {
+            "id": "1900000000000000002",
+            "title": "X video-only certification post",
+            "webpage_url": "https://x.com/nexora/status/1900000000000000002",
+            "formats": [
+                {
+                    "format_id": format_id,
+                    "width": width,
+                    "height": height,
+                    "ext": "mp4",
+                    "vcodec": None,
+                    "acodec": None,
+                    "video_ext": "mp4",
+                    "audio_ext": "none",
+                    "protocol": "https",
+                    "tbr": bitrate,
+                    "url": f"https://cached.example.test/{format_id}",
+                }
+                for format_id, width, height, bitrate in (
+                    ("http-632", 320, 568, 632),
+                    ("http-950", 480, 852, 950),
+                    ("http-2176", 720, 1280, 2176),
+                )
+            ],
+        }
+    )
+    return info
 
 
 class _FakeThread:

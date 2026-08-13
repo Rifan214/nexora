@@ -39,8 +39,16 @@ class QualitySelector:
         4320: "4320p 8K",
     }
 
-    def build_qualities(self, formats: Iterable[dict[str, Any]]) -> list[AvailableQuality]:
-        return [selection.quality for selection in self.select_qualities(formats)]
+    def build_qualities(
+        self,
+        formats: Iterable[dict[str, Any]],
+        *,
+        platform: str | None = None,
+    ) -> list[AvailableQuality]:
+        return [
+            selection.quality
+            for selection in self.select_qualities(formats, platform=platform)
+        ]
 
     def has_audio_available(self, formats: Iterable[dict[str, Any]]) -> bool:
         """Return whether yt-dlp exposed a usable standalone or progressive audio stream."""
@@ -53,13 +61,20 @@ class QualitySelector:
         self,
         formats: Iterable[dict[str, Any]],
         height: int,
+        *,
+        platform: str | None = None,
     ) -> QualitySelection | None:
-        for selection in self.select_qualities(formats):
+        for selection in self.select_qualities(formats, platform=platform):
             if selection.quality.height == height:
                 return selection
         return None
 
-    def select_qualities(self, formats: Iterable[dict[str, Any]]) -> list[QualitySelection]:
+    def select_qualities(
+        self,
+        formats: Iterable[dict[str, Any]],
+        *,
+        platform: str | None = None,
+    ) -> list[QualitySelection]:
         raw_formats = list(formats)
         usable_formats: list[dict[str, Any]] = []
         logger.debug("Quality selection started raw_format_count=%s", len(raw_formats))
@@ -130,6 +145,9 @@ class QualitySelector:
             if selection is not None:
                 selections.append(selection)
 
+        if not selections and platform == "twitter" and not audio_candidates:
+            selections = self._select_x_video_only_qualities(usable_formats)
+
         logger.debug(
             "Quality selection completed selected_quality_count=%s selected_qualities=%s",
             len(selections),
@@ -142,6 +160,31 @@ class QualitySelector:
                 for selection in selections
             ],
         )
+        return selections
+
+    def _select_x_video_only_qualities(
+        self,
+        formats: Iterable[dict[str, Any]],
+    ) -> list[QualitySelection]:
+        """Expose genuine X video-only media without weakening shared rules."""
+        by_height: dict[int, list[dict[str, Any]]] = {}
+        for format_item in formats:
+            if not self._is_x_video_only_candidate(format_item):
+                continue
+            height = self._quality_height(format_item)
+            if height is not None:
+                by_height.setdefault(height, []).append(format_item)
+
+        selections: list[QualitySelection] = []
+        for height in sorted(by_height):
+            selected_video = max(by_height[height], key=self._x_video_only_score)
+            selection = self._build_selection(height, selected_video)
+            selections.append(selection)
+            logger.debug(
+                "Quality resolution selected height=%s reason=x_video_only_fallback selector=%s",
+                height,
+                selection.selector,
+            )
         return selections
 
     def _select_quality_for_height(
@@ -248,6 +291,28 @@ class QualitySelector:
     def _is_audio_only(cls, format_item: dict[str, Any]) -> bool:
         return cls._has_audio(format_item) and not cls._has_video(format_item)
 
+    @classmethod
+    def _is_x_video_only_candidate(cls, format_item: dict[str, Any]) -> bool:
+        if cls._has_audio(format_item) or cls._quality_height(format_item) is None:
+            return False
+        if cls._has_video(format_item):
+            return True
+
+        # X direct MP4 renditions sometimes omit vcodec/acodec even though the
+        # transport is a valid video-only stream. Require yt-dlp's explicit
+        # video/audio extension markers and direct HTTP transport so malformed
+        # or ambiguous formats do not enter the fallback.
+        protocol = str(format_item.get("protocol") or "").casefold()
+        video_codec = str(format_item.get("vcodec") or "").casefold()
+        video_extension = str(format_item.get("video_ext") or "").casefold()
+        audio_extension = str(format_item.get("audio_ext") or "").casefold()
+        return (
+            protocol in {"http", "https"}
+            and video_codec == ""
+            and video_extension not in {"", "none"}
+            and audio_extension in {"", "none"}
+        )
+
     @staticmethod
     def _has_video(format_item: dict[str, Any]) -> bool:
         return QualitySelector._has_codec(format_item.get("vcodec"))
@@ -334,6 +399,16 @@ class QualitySelector:
             cls._filesize_or_zero(format_item),
             cls._format_id(format_item),
         )
+
+    @classmethod
+    def _x_video_only_score(
+        cls,
+        format_item: dict[str, Any],
+    ) -> tuple[int, tuple[int, float, float, int, str]]:
+        protocol = str(format_item.get("protocol") or "").casefold()
+        # Direct files need no HLS processing and match yt-dlp's preferred X
+        # fallback when both direct and HLS variants represent one resolution.
+        return (1 if protocol in {"http", "https"} else 0, cls._video_score(format_item))
 
     @classmethod
     def _audio_score(cls, format_item: dict[str, Any]) -> tuple[float, float, int, str]:

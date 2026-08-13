@@ -198,6 +198,7 @@ class MediaService:
                 selection = self._quality_selector.select_for_height(
                     formats,
                     request.quality_height,
+                    platform=platform,
                 )
                 if selection is None:
                     raise APIError(
@@ -941,7 +942,10 @@ class MediaService:
             return
 
         formats = info.get("formats") or []
-        if self._quality_selector.build_qualities(formats) or self._has_audio_available(formats):
+        if self._quality_selector.build_qualities(
+            formats,
+            platform=platform,
+        ) or self._has_audio_available(formats):
             return
 
         raise APIError(
@@ -953,7 +957,7 @@ class MediaService:
 
     def _build_metadata(self, *, info: dict[str, Any], platform: str, url: str) -> MediaMetadata:
         formats = info.get("formats") or []
-        video_qualities = self._quality_selector.build_qualities(formats)
+        video_qualities = self._quality_selector.build_qualities(formats, platform=platform)
         return MediaMetadata(
             platform=platform,
             title=str(info.get("title") or "Untitled media"),

@@ -456,7 +456,8 @@ def test_x_hls_video_variants_pair_with_the_highest_bitrate_hls_audio_rendition(
                 "audio_ext": "none",
                 "protocol": "m3u8_native",
             },
-        ]
+        ],
+        platform="twitter",
     )
 
     assert [selection.quality.height for selection in selections] == [320, 480, 720]
@@ -465,6 +466,93 @@ def test_x_hls_video_variants_pair_with_the_highest_bitrate_hls_audio_rendition(
         "hls-480+hls-audio-high",
         "hls-720+hls-audio-high",
     ]
+
+
+def test_x_video_only_fallback_exposes_direct_formats_without_audio() -> None:
+    selector = QualitySelector()
+
+    selections = selector.select_qualities(_x_video_only_formats(), platform="twitter")
+
+    assert [selection.quality.height for selection in selections] == [320, 480, 720]
+    assert [selection.selector for selection in selections] == [
+        "http-632",
+        "http-950",
+        "http-2176",
+    ]
+    assert all(selection.audio_format_id is None for selection in selections)
+
+
+@pytest.mark.parametrize("platform", [None, "youtube", "tiktok"])
+def test_x_video_only_fallback_does_not_apply_to_other_platforms(
+    platform: str | None,
+) -> None:
+    selector = QualitySelector()
+
+    assert selector.select_qualities(
+        _x_video_only_formats(),
+        platform=platform,
+    ) == []
+
+
+def test_x_video_only_fallback_rejects_ambiguous_direct_formats() -> None:
+    selector = QualitySelector()
+
+    selections = selector.select_qualities(
+        [
+            {
+                "format_id": "ambiguous-http",
+                "width": 720,
+                "height": 1280,
+                "ext": "mp4",
+                "vcodec": None,
+                "acodec": None,
+                "video_ext": "none",
+                "audio_ext": "none",
+                "protocol": "https",
+            }
+        ],
+        platform="twitter",
+    )
+
+    assert selections == []
+
+
+def _x_video_only_formats() -> list[dict]:
+    formats = []
+    for format_id, width, height, bitrate in (
+        ("http-632", 320, 568, 632),
+        ("http-950", 480, 852, 950),
+        ("http-2176", 720, 1280, 2176),
+    ):
+        formats.append(
+            {
+                "format_id": format_id,
+                "width": width,
+                "height": height,
+                "ext": "mp4",
+                "vcodec": None,
+                "acodec": None,
+                "video_ext": "mp4",
+                "audio_ext": "none",
+                "protocol": "https",
+                "tbr": bitrate,
+            }
+        )
+    formats.append(
+        {
+            "format_id": "hls-1694",
+            "width": 720,
+            "height": 1280,
+            "ext": "mp4",
+            "vcodec": "avc1.64001F",
+            "acodec": "none",
+            "video_ext": "mp4",
+            "audio_ext": "none",
+            "protocol": "m3u8_native",
+            "tbr": 1694,
+        }
+    )
+    return formats
 
 
 def test_debug_logging_traces_each_quality_selection_stage(caplog) -> None:
