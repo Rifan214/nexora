@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from copy import deepcopy
+from http.cookiejar import LoadError, MozillaCookieJar
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -42,6 +43,13 @@ _AUDIO_MP3_POSTPROCESSOR = {
 }
 _SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter"})
 _PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter"})
+_X_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
+    {
+        "X_MEDIA_NOT_AVAILABLE",
+        "X_EXTRACTION_UNAVAILABLE",
+        "VIDEO_PRIVATE",
+    }
+)
 _X_MEDIA_NOT_AVAILABLE_MESSAGE = (
     "Unable to access downloadable media from this X post. "
     "The post may be restricted, require login, or temporarily unavailable."
@@ -75,6 +83,18 @@ _PROCESSED_DOWNLOAD_FIELDS = frozenset(
         "__finaldir",
     }
 )
+_AUTHENTICATED_SNAPSHOT_SENSITIVE_KEYS = frozenset(
+    {
+        "authorization",
+        "auth_token",
+        "cookie",
+        "cookies",
+        "ct0",
+        "proxy-authorization",
+        "set-cookie",
+        "x-csrf-token",
+    }
+)
 
 
 def _payload_path(value: Any) -> str | None:
@@ -104,7 +124,7 @@ class MediaService:
         logger.info("Metadata extraction started url=%s", normalized_url)
 
         try:
-            info, platform = self._get_or_extract_supported_info(normalized_url)
+            info, platform, _ = self._get_or_extract_supported_info(normalized_url)
 
             metadata = self._build_metadata(info=info, platform=platform, url=normalized_url)
             logger.info("Metadata extraction completed url=%s platform=%s", normalized_url, platform)
@@ -182,7 +202,7 @@ class MediaService:
         )
 
         try:
-            info, platform = self._get_or_extract_supported_info(normalized_url)
+            info, platform, x_authenticated = self._get_or_extract_supported_info(normalized_url)
 
             formats = info.get("formats") or []
             if request.media_type == "audio":
@@ -231,6 +251,7 @@ class MediaService:
                 format_selector=format_selector,
                 output_type=request.media_type,
                 download_info=deepcopy(info),
+                x_authenticated=x_authenticated,
             ),
         )
         return job
@@ -243,10 +264,11 @@ class MediaService:
         format_selector: str,
         output_type: str,
         download_info: dict[str, Any] | None = None,
+        x_authenticated: bool = False,
     ) -> None:
         worker = threading.Thread(
             target=self._download_job_background,
-            args=(job_id, url, format_selector, output_type, download_info),
+            args=(job_id, url, format_selector, output_type, download_info, x_authenticated),
             daemon=True,
             name=f"nexora-download-{job_id}",
         )
@@ -264,6 +286,7 @@ class MediaService:
         format_selector: str,
         output_type: str,
         download_info: dict[str, Any] | None = None,
+        x_authenticated: bool = False,
     ) -> None:
         job_manager = self._get_job_manager()
         self._process_manager.register_job(job_id, worker=threading.current_thread())
@@ -287,11 +310,16 @@ class MediaService:
                 return
 
             self._process_manager.raise_if_cancelled(job_id)
+            x_auth_cookie_file = self._require_x_auth_cookie_file() if x_authenticated else None
             if download_info is not None:
                 extracted_info = download_info
             else:
                 with self._process_manager.worker_context(job_id):
-                    extracted_info = self._extract_info(url)
+                    extracted_info = (
+                        self._extract_info(url, cookie_file=x_auth_cookie_file)
+                        if x_auth_cookie_file is not None
+                        else self._extract_info(url)
+                    )
             self._process_manager.raise_if_cancelled(job_id)
             detected_platform = self._detect_platform(extracted_info)
             if detected_platform not in _SUPPORTED_MEDIA_PLATFORMS:
@@ -337,6 +365,7 @@ class MediaService:
                 job_manager=job_manager,
                 resume_state_manager=self._resume_state_manager,
                 continue_download=resume_state is not None,
+                cookie_file=x_auth_cookie_file,
             )
 
             with self._process_manager.worker_context(job_id):
@@ -373,6 +402,7 @@ class MediaService:
                             job_manager=job_manager,
                             resume_state_manager=self._resume_state_manager,
                             continue_download=False,
+                            cookie_file=x_auth_cookie_file,
                         )
                         with YoutubeDL(fallback_options) as fallback_youtube_dl:
                             self._process_manager.attach_downloader(job_id, fallback_youtube_dl)
@@ -586,21 +616,128 @@ class MediaService:
         resolved_download_info = self._sanitize_processed_download_fields(resolved_download_info)
         return youtube_dl.process_ie_result(resolved_download_info, download=True)
 
-    def _get_or_extract_supported_info(self, normalized_url: str) -> tuple[dict[str, Any], str]:
+    def _get_or_extract_supported_info(
+        self,
+        normalized_url: str,
+    ) -> tuple[dict[str, Any], str, bool]:
         snapshot = self._snapshot_cache.get(normalized_url)
         if snapshot is not None:
-            info = snapshot.extracted_info
+            if snapshot.authenticated and self._x_auth_cookie_file() is None:
+                self._snapshot_cache.delete(normalized_url)
+            else:
+                info = snapshot.extracted_info
+                platform = self._detect_platform(info)
+                self._ensure_supported_media_platform(platform)
+                self._ensure_platform_media_is_downloadable(info, platform)
+                return info, platform, snapshot.authenticated
+
+        try:
+            info = self._extract_info_or_raise_api_error(normalized_url)
             platform = self._detect_platform(info)
             self._ensure_supported_media_platform(platform)
             self._ensure_platform_media_is_downloadable(info, platform)
-            return info, platform
+            authenticated = False
+        except APIError as guest_error:
+            authenticated_result = self._try_authenticated_x_extraction(
+                normalized_url,
+                guest_error=guest_error,
+            )
+            if authenticated_result is None:
+                raise
+            info, platform = authenticated_result
+            authenticated = True
 
-        info = self._extract_info_or_raise_api_error(normalized_url)
-        platform = self._detect_platform(info)
-        self._ensure_supported_media_platform(platform)
-        self._ensure_platform_media_is_downloadable(info, platform)
-        self._snapshot_cache.put(normalized_url, info)
+        self._snapshot_cache.put(
+            normalized_url,
+            info,
+            authenticated=authenticated,
+        )
+        return info, platform, authenticated
+
+    def _try_authenticated_x_extraction(
+        self,
+        normalized_url: str,
+        *,
+        guest_error: APIError,
+    ) -> tuple[dict[str, Any], str] | None:
+        if (
+            detect_platform_from_url(normalized_url) != "twitter"
+            or guest_error.code not in _X_AUTHENTICATED_RETRY_ERROR_CODES
+        ):
+            return None
+
+        cookie_file = self._x_auth_cookie_file()
+        if cookie_file is None:
+            return None
+
+        logger.info("X authenticated fallback enabled=true attempted=true")
+        try:
+            info = self._extract_info_or_raise_api_error(
+                normalized_url,
+                cookie_file=cookie_file,
+            )
+            info = self._sanitize_authenticated_snapshot_info(info)
+            platform = self._detect_platform(info)
+            self._ensure_supported_media_platform(platform)
+            self._ensure_platform_media_is_downloadable(info, platform)
+        except APIError:
+            logger.warning(
+                "X authenticated fallback enabled=true attempted=true succeeded=false"
+            )
+            return None
+
+        logger.info("X authenticated fallback enabled=true attempted=true succeeded=true")
         return info, platform
+
+    def _x_auth_cookie_file(self) -> Path | None:
+        configured_path = self._settings.x_auth_cookie_file.strip()
+        if not configured_path:
+            return None
+
+        cookie_file = Path(configured_path).expanduser()
+        try:
+            if not cookie_file.is_file():
+                raise FileNotFoundError
+            cookie_jar = MozillaCookieJar(str(cookie_file))
+            cookie_jar.load(ignore_discard=True, ignore_expires=True)
+            cookie_names = {cookie.name for cookie in cookie_jar}
+            if {"auth_token", "ct0"}.issubset(cookie_names):
+                return cookie_file
+        except (LoadError, OSError):
+            logger.warning(
+                "X authenticated fallback enabled=true attempted=false reason=cookie_file_unavailable"
+            )
+            return None
+
+        logger.warning(
+            "X authenticated fallback enabled=true attempted=false reason=cookie_file_invalid"
+        )
+        return None
+
+    def _require_x_auth_cookie_file(self) -> Path:
+        cookie_file = self._x_auth_cookie_file()
+        if cookie_file is None:
+            raise DownloadError("Authenticated X session unavailable")
+        return cookie_file
+
+    @classmethod
+    def _sanitize_authenticated_snapshot_info(cls, info: dict[str, Any]) -> dict[str, Any]:
+        sanitized = cls._remove_authenticated_snapshot_secrets(deepcopy(info))
+        return sanitized if isinstance(sanitized, dict) else {}
+
+    @classmethod
+    def _remove_authenticated_snapshot_secrets(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: cls._remove_authenticated_snapshot_secrets(item)
+                for key, item in value.items()
+                if str(key).casefold() not in _AUTHENTICATED_SNAPSHOT_SENSITIVE_KEYS
+            }
+        if isinstance(value, list):
+            return [cls._remove_authenticated_snapshot_secrets(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(cls._remove_authenticated_snapshot_secrets(item) for item in value)
+        return value
 
     @staticmethod
     def _refresh_download_transport_info(
@@ -737,6 +874,7 @@ class MediaService:
         job_manager,
         resume_state_manager: ResumeStateManager,
         continue_download: bool,
+        cookie_file: Path | None = None,
     ) -> dict[str, Any]:
         options: dict[str, Any] = {
             "quiet": True,
@@ -756,6 +894,8 @@ class MediaService:
             # yt-dlp chooses its best audio stream, then FFmpeg produces a
             # playable MP3 at its highest VBR quality setting.
             options["postprocessors"] = [dict(_AUDIO_MP3_POSTPROCESSOR)]
+        if cookie_file is not None:
+            options["cookiefile"] = str(cookie_file)
         return options
 
     @staticmethod
@@ -786,7 +926,12 @@ class MediaService:
             return "Network interruption while downloading"
         return "yt-dlp failed to download the media"
 
-    def _extract_info(self, url: str) -> dict[str, Any]:
+    def _extract_info(
+        self,
+        url: str,
+        *,
+        cookie_file: Path | None = None,
+    ) -> dict[str, Any]:
         ydl_options = {
             "quiet": True,
             "no_warnings": True,
@@ -794,6 +939,8 @@ class MediaService:
             "skip_download": True,
             "cachedir": False,
         }
+        if cookie_file is not None:
+            ydl_options["cookiefile"] = str(cookie_file)
 
         with YoutubeDL(ydl_options) as youtube_dl:
             active_job_id = self._process_manager.current_job_id()
@@ -830,9 +977,16 @@ class MediaService:
 
         return extracted_info
 
-    def _extract_info_or_raise_api_error(self, url: str) -> dict[str, Any]:
+    def _extract_info_or_raise_api_error(
+        self,
+        url: str,
+        *,
+        cookie_file: Path | None = None,
+    ) -> dict[str, Any]:
         try:
-            return self._extract_info(url)
+            if cookie_file is None:
+                return self._extract_info(url)
+            return self._extract_info(url, cookie_file=cookie_file)
         except APIError:
             raise
         except (DownloadError, ExtractorError) as exc:

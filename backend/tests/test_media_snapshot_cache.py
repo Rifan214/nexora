@@ -74,6 +74,28 @@ def test_cache_hit_returns_a_defensive_snapshot_copy() -> None:
     assert cache.get(url).extracted_info["id"] == "youtube-cache-hit"
 
 
+def test_cache_preserves_only_the_authenticated_mode_flag() -> None:
+    cache = MediaSnapshotCache()
+    url = "https://x.com/nexora/status/1900000000000000001"
+
+    cache.put(url, {"id": "x-authenticated", "formats": []}, authenticated=True)
+
+    snapshot = cache.get(url)
+    assert snapshot is not None
+    assert snapshot.authenticated is True
+    assert set(snapshot.extracted_info) == {"id", "formats"}
+
+
+def test_cache_entry_can_be_deleted() -> None:
+    cache = MediaSnapshotCache()
+    url = "https://x.com/nexora/status/1900000000000000001"
+    cache.put(url, {"id": "x-authenticated", "formats": []}, authenticated=True)
+
+    cache.delete(url)
+
+    assert cache.get(url) is None
+
+
 def test_cache_expires_entries_after_its_ttl() -> None:
     now = datetime(2026, 7, 30, tzinfo=UTC)
     cache = MediaSnapshotCache(

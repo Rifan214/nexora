@@ -25,6 +25,12 @@ htmlcov/
 
 backend/.env
 
+# Browser session exports are credentials and must never be committed.
+cookies.txt
+*.cookies.txt
+*_cookies.txt
+cookies-*.txt
+
 # ==========================================================
 # Database
 # ==========================================================

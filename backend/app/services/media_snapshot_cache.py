@@ -15,6 +15,7 @@ class MediaSnapshot:
     extracted_info: dict[str, Any]
     created_at: datetime
     expires_at: datetime
+    authenticated: bool = False
 
 
 class MediaSnapshotCache:
@@ -48,13 +49,20 @@ class MediaSnapshotCache:
             self._entries.move_to_end(normalized_url)
             return _copy_snapshot(snapshot)
 
-    def put(self, normalized_url: str, extracted_info: dict[str, Any]) -> MediaSnapshot:
+    def put(
+        self,
+        normalized_url: str,
+        extracted_info: dict[str, Any],
+        *,
+        authenticated: bool = False,
+    ) -> MediaSnapshot:
         """Store an extraction result and evict the least recently used entry if needed."""
         now = self._now()
         snapshot = MediaSnapshot(
             extracted_info=deepcopy(extracted_info),
             created_at=now,
             expires_at=now + self._ttl,
+            authenticated=authenticated,
         )
         with self._lock:
             self._evict_expired_locked(now=now)
@@ -63,6 +71,10 @@ class MediaSnapshotCache:
             while len(self._entries) > self._capacity:
                 self._entries.popitem(last=False)
         return _copy_snapshot(snapshot)
+
+    def delete(self, normalized_url: str) -> None:
+        with self._lock:
+            self._entries.pop(normalized_url, None)
 
     def __len__(self) -> int:
         with self._lock:
@@ -89,4 +101,5 @@ def _copy_snapshot(snapshot: MediaSnapshot) -> MediaSnapshot:
         extracted_info=deepcopy(snapshot.extracted_info),
         created_at=snapshot.created_at,
         expires_at=snapshot.expires_at,
+        authenticated=snapshot.authenticated,
     )

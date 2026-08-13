@@ -12,3 +12,7 @@ storage/
 .coverage
 htmlcov/
 *.log
+cookies.txt
+*.cookies.txt
+*_cookies.txt
+cookies-*.txt
