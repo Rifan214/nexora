@@ -42,6 +42,10 @@ _AUDIO_MP3_POSTPROCESSOR = {
 }
 _SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter"})
 _PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter"})
+_X_MEDIA_NOT_AVAILABLE_MESSAGE = (
+    "Unable to access downloadable media from this X post. "
+    "The post may be restricted, require login, or temporarily unavailable."
+)
 _DOWNLOAD_TRANSPORT_FIELDS = frozenset(
     {
         "formats",
@@ -942,8 +946,8 @@ class MediaService:
 
         raise APIError(
             code="X_MEDIA_NOT_AVAILABLE",
-            message="No downloadable video found",
-            details="This X post does not contain downloadable video or audio media.",
+            message=_X_MEDIA_NOT_AVAILABLE_MESSAGE,
+            details=_X_MEDIA_NOT_AVAILABLE_MESSAGE,
             status_code=422,
         )
 
@@ -1060,8 +1064,8 @@ class MediaService:
         ):
             return APIError(
                 code="X_MEDIA_NOT_AVAILABLE",
-                message="No downloadable video found",
-                details="This X post does not contain downloadable video or audio media.",
+                message=_X_MEDIA_NOT_AVAILABLE_MESSAGE,
+                details=_X_MEDIA_NOT_AVAILABLE_MESSAGE,
                 status_code=422,
             )
 

@@ -18,6 +18,12 @@ from app.services.queue_manager import QueueManager
 from app.utils.platforms import detect_platform_from_url, is_x_status_url, normalize_media_url
 
 
+_X_MEDIA_NOT_AVAILABLE_MESSAGE = (
+    "Unable to access downloadable media from this X post. "
+    "The post may be restricted, require login, or temporarily unavailable."
+)
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -104,7 +110,9 @@ def test_x_post_without_downloadable_media_returns_a_friendly_error(
         service.get_metadata("https://x.com/nexora/status/1900000000000000001")
 
     assert error.value.code == "X_MEDIA_NOT_AVAILABLE"
-    assert error.value.message == "No downloadable video found"
+    assert error.value.message == _X_MEDIA_NOT_AVAILABLE_MESSAGE
+    assert error.value.details == _X_MEDIA_NOT_AVAILABLE_MESSAGE
+    assert error.value.status_code == 422
     assert "yt-dlp" not in error.value.details.lower()
 
 
@@ -233,6 +241,10 @@ def test_x_extraction_failures_use_standardized_errors(
         service.get_metadata("https://x.com/nexora/status/1900000000000000001")
 
     assert error.value.code == expected_code
+    if expected_code == "X_MEDIA_NOT_AVAILABLE":
+        assert error.value.message == _X_MEDIA_NOT_AVAILABLE_MESSAGE
+        assert error.value.details == _X_MEDIA_NOT_AVAILABLE_MESSAGE
+        assert error.value.status_code == 422
     assert "yt-dlp" not in error.value.details.lower()
 
 
