@@ -42,6 +42,13 @@ class QualitySelector:
     def build_qualities(self, formats: Iterable[dict[str, Any]]) -> list[AvailableQuality]:
         return [selection.quality for selection in self.select_qualities(formats)]
 
+    def has_audio_available(self, formats: Iterable[dict[str, Any]]) -> bool:
+        """Return whether yt-dlp exposed a usable standalone or progressive audio stream."""
+        return any(
+            isinstance(format_item, dict) and self._has_audio(format_item)
+            for format_item in formats
+        )
+
     def select_for_height(
         self,
         formats: Iterable[dict[str, Any]],
@@ -247,7 +254,27 @@ class QualitySelector:
 
     @staticmethod
     def _has_audio(format_item: dict[str, Any]) -> bool:
-        return QualitySelector._has_codec(format_item.get("acodec"))
+        if QualitySelector._has_codec(format_item.get("acodec")):
+            return True
+
+        # X's HLS master playlists expose audio renditions with an explicit
+        # audio extension but no acodec. yt-dlp can pair these renditions with
+        # HLS video variants, so treat only this fully specified HLS shape as
+        # audio. Do not broaden the rule to arbitrary video-less formats.
+        return QualitySelector._is_hls_audio_rendition(format_item)
+
+    @staticmethod
+    def _is_hls_audio_rendition(format_item: dict[str, Any]) -> bool:
+        protocol = str(format_item.get("protocol") or "").casefold()
+        video_codec = str(format_item.get("vcodec") or "").casefold()
+        video_extension = str(format_item.get("video_ext") or "").casefold()
+        audio_extension = str(format_item.get("audio_ext") or "").casefold()
+        return (
+            protocol.startswith("m3u8")
+            and video_codec == "none"
+            and video_extension == "none"
+            and audio_extension not in {"", "none"}
+        )
 
     @staticmethod
     def _has_codec(value: Any) -> bool:

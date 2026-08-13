@@ -317,6 +317,156 @@ def test_video_only_stream_without_audio_is_not_exposed() -> None:
     ) == []
 
 
+def test_x_style_hls_audio_rendition_without_an_acodec_is_recognized() -> None:
+    selector = QualitySelector()
+    audio_rendition = {
+        "format_id": "hls-audio-high",
+        "vcodec": "none",
+        "acodec": None,
+        "video_ext": "none",
+        "audio_ext": "mp4",
+        "protocol": "m3u8_native",
+        "abr": 128,
+    }
+
+    assert selector.has_audio_available([audio_rendition]) is True
+    assert selector._is_audio_only(audio_rendition) is True
+
+
+def test_conventional_audio_format_with_an_acodec_remains_recognized() -> None:
+    selector = QualitySelector()
+    audio_format = {
+        "format_id": "251",
+        "vcodec": "none",
+        "acodec": "opus",
+        "ext": "webm",
+        "protocol": "https",
+    }
+
+    assert selector.has_audio_available([audio_format]) is True
+    assert selector._is_audio_only(audio_format) is True
+
+
+def test_video_only_hls_format_is_not_recognized_as_audio() -> None:
+    selector = QualitySelector()
+    video_format = {
+        "format_id": "hls-720",
+        "width": 1280,
+        "height": 720,
+        "vcodec": "avc1.64001F",
+        "acodec": "none",
+        "video_ext": "mp4",
+        "audio_ext": "none",
+        "protocol": "m3u8_native",
+    }
+
+    assert selector.has_audio_available([video_format]) is False
+    assert selector._is_audio_only(video_format) is False
+    assert selector.build_qualities([video_format]) == []
+
+
+@pytest.mark.parametrize(
+    "format_item",
+    [
+        {
+            "format_id": "direct-video-less",
+            "vcodec": "none",
+            "acodec": None,
+            "video_ext": "none",
+            "audio_ext": "mp4",
+            "protocol": "https",
+        },
+        {
+            "format_id": "hls-with-video-extension",
+            "vcodec": "none",
+            "acodec": None,
+            "video_ext": "mp4",
+            "audio_ext": "mp4",
+            "protocol": "m3u8_native",
+        },
+        {
+            "format_id": "hls-without-audio-extension",
+            "vcodec": "none",
+            "acodec": None,
+            "video_ext": "none",
+            "audio_ext": "none",
+            "protocol": "m3u8_native",
+        },
+    ],
+)
+def test_invalid_hls_audio_marker_combinations_are_not_recognized(format_item: dict) -> None:
+    selector = QualitySelector()
+
+    assert selector.has_audio_available([format_item]) is False
+    assert selector._is_audio_only(format_item) is False
+
+
+def test_x_hls_video_variants_pair_with_the_highest_bitrate_hls_audio_rendition() -> None:
+    selector = QualitySelector()
+    selections = selector.select_qualities(
+        [
+            {
+                "format_id": "hls-audio-low",
+                "vcodec": "none",
+                "acodec": None,
+                "video_ext": "none",
+                "audio_ext": "mp4",
+                "protocol": "m3u8_native",
+                "abr": 32,
+            },
+            {
+                "format_id": "hls-audio-high",
+                "vcodec": "none",
+                "acodec": None,
+                "video_ext": "none",
+                "audio_ext": "mp4",
+                "protocol": "m3u8_native",
+                "abr": 128,
+            },
+            {
+                "format_id": "hls-320",
+                "width": 320,
+                "height": 568,
+                "ext": "mp4",
+                "vcodec": "avc1.4D401E",
+                "acodec": "none",
+                "video_ext": "mp4",
+                "audio_ext": "none",
+                "protocol": "m3u8_native",
+            },
+            {
+                "format_id": "hls-480",
+                "width": 480,
+                "height": 852,
+                "ext": "mp4",
+                "vcodec": "avc1.4D401F",
+                "acodec": "none",
+                "video_ext": "mp4",
+                "audio_ext": "none",
+                "protocol": "m3u8_native",
+            },
+            {
+                "format_id": "hls-720",
+                "width": 720,
+                "height": 1280,
+                "ext": "mp4",
+                "vcodec": "avc1.64001F",
+                "acodec": "none",
+                "video_ext": "mp4",
+                "audio_ext": "none",
+                "protocol": "m3u8_native",
+            },
+        ]
+    )
+
+    assert [selection.quality.height for selection in selections] == [320, 480, 720]
+    assert [selection.selector for selection in selections] == [
+        "hls-320+hls-audio-high",
+        "hls-480+hls-audio-high",
+        "hls-720+hls-audio-high",
+    ]
+
+
 def test_debug_logging_traces_each_quality_selection_stage(caplog) -> None:
     selector = QualitySelector()
     caplog.set_level(logging.DEBUG, logger="app.services.quality_selector")

@@ -28,7 +28,7 @@ from app.services.queue_manager import QueueManager, get_queue_manager
 from app.services.resume_state_manager import ResumeStateManager, get_resume_state_manager
 from app.services.quality_selector import QualitySelector
 from app.models.resume_state import ResumeState
-from app.utils.platforms import detect_platform_from_url
+from app.utils.platforms import detect_platform_from_url, is_x_status_url, normalize_media_url
 from app.utils.storage import build_download_outtmpl, find_downloaded_file, get_temp_storage_dir
 from app.utils.validators import validate_http_url
 
@@ -40,7 +40,8 @@ _AUDIO_MP3_POSTPROCESSOR = {
     "preferredcodec": "mp3",
     "preferredquality": "0",
 }
-_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok"})
+_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter"})
+_PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter"})
 _DOWNLOAD_TRANSPORT_FIELDS = frozenset(
     {
         "formats",
@@ -95,7 +96,7 @@ class MediaService:
         self._resume_state_manager = resume_state_manager or get_resume_state_manager()
 
     def get_metadata(self, url: str) -> MediaMetadata:
-        normalized_url = validate_http_url(url)
+        normalized_url = self._normalize_source_url(url)
         logger.info("Metadata extraction started url=%s", normalized_url)
 
         try:
@@ -167,7 +168,7 @@ class MediaService:
             raise api_error from None
 
     def create_download_job(self, request: MediaDownloadRequest) -> DownloadJob:
-        normalized_url = validate_http_url(request.url)
+        normalized_url = self._normalize_source_url(request.url)
         logger.info(
             "Download job request received url=%s media_type=%s quality_height=%s legacy_format_request=%s",
             normalized_url,
@@ -556,7 +557,7 @@ class MediaService:
             return youtube_dl.extract_info(url, download=True)
 
         resolved_download_info = download_info
-        if detected_platform == "youtube":
+        if detected_platform in _PLATFORMS_REQUIRING_TRANSPORT_REFRESH:
             resolved_download_info, legacy_download_info = self._refresh_download_transport_info(
                 youtube_dl,
                 url=url,
@@ -574,7 +575,10 @@ class MediaService:
                 legacy_info=legacy_download_info,
                 snapshot_info=resolved_download_info,
             )
-            resolved_download_info = self._sanitize_processed_download_fields(resolved_download_info)
+        # Snapshots may have passed through yt-dlp processing before they were
+        # cached. Runtime fields can hold expired transport URLs, so never pass
+        # them into a later process_ie_result call for any platform.
+        resolved_download_info = self._sanitize_processed_download_fields(resolved_download_info)
         return youtube_dl.process_ie_result(resolved_download_info, download=True)
 
     def _get_or_extract_supported_info(self, normalized_url: str) -> tuple[dict[str, Any], str]:
@@ -583,11 +587,13 @@ class MediaService:
             info = snapshot.extracted_info
             platform = self._detect_platform(info)
             self._ensure_supported_media_platform(platform)
+            self._ensure_platform_media_is_downloadable(info, platform)
             return info, platform
 
         info = self._extract_info_or_raise_api_error(normalized_url)
         platform = self._detect_platform(info)
         self._ensure_supported_media_platform(platform)
+        self._ensure_platform_media_is_downloadable(info, platform)
         self._snapshot_cache.put(normalized_url, info)
         return info, platform
 
@@ -880,6 +886,21 @@ class MediaService:
             ) from exc
 
     @staticmethod
+    def _normalize_source_url(url: str) -> str:
+        normalized_url = validate_http_url(url)
+        if detect_platform_from_url(normalized_url) != "twitter":
+            return normalized_url
+
+        if not is_x_status_url(normalized_url):
+            raise APIError(
+                code="INVALID_X_URL",
+                message="Invalid X post URL",
+                details="Use a public X post URL in the form x.com/<user>/status/<id>.",
+                status_code=422,
+            )
+        return normalize_media_url(normalized_url)
+
+    @staticmethod
     def _detect_platform(info: dict[str, Any]) -> str:
         extractor_key = str(info.get("extractor_key") or info.get("ie_key") or "").casefold()
         extractor_name = str(info.get("extractor") or "").casefold()
@@ -908,6 +929,22 @@ class MediaService:
             message="Unsupported platform",
             details="This media platform is not supported.",
             status_code=501,
+        )
+
+    def _ensure_platform_media_is_downloadable(self, info: dict[str, Any], platform: str) -> None:
+        """Reject X posts that yt-dlp resolved without playable media streams."""
+        if platform != "twitter":
+            return
+
+        formats = info.get("formats") or []
+        if self._quality_selector.build_qualities(formats) or self._has_audio_available(formats):
+            return
+
+        raise APIError(
+            code="X_MEDIA_NOT_AVAILABLE",
+            message="No downloadable video found",
+            details="This X post does not contain downloadable video or audio media.",
+            status_code=422,
         )
 
     def _build_metadata(self, *, info: dict[str, Any], platform: str, url: str) -> MediaMetadata:
@@ -954,7 +991,7 @@ class MediaService:
         # TikTok short/share URLs can succeed where a later extraction of the
         # canonical URL returned by yt-dlp fails. Returning the proven source
         # URL lets the existing Home, batch, and retry flows replay the request.
-        if platform == "tiktok":
+        if platform in {"tiktok", "twitter"}:
             return url
         return str(info.get("webpage_url") or url)
 
@@ -974,21 +1011,13 @@ class MediaService:
             return f"https://www.youtube.com/watch?v={quote(str(entry_id), safe='')}"
         return None
 
-    @classmethod
-    def _build_audio_options(cls, formats: list[dict[str, Any]]) -> list[AudioOption]:
-        if not cls._has_audio_available(formats):
+    def _build_audio_options(self, formats: list[dict[str, Any]]) -> list[AudioOption]:
+        if not self._has_audio_available(formats):
             return []
         return [AudioOption(label="MP3", extension="mp3")]
 
-    @staticmethod
-    def _has_audio_available(formats: list[dict[str, Any]]) -> bool:
-        for format_item in formats:
-            if not isinstance(format_item, dict):
-                continue
-            audio_codec = str(format_item.get("acodec") or "").strip().casefold()
-            if audio_codec and audio_codec != "none":
-                return True
-        return False
+    def _has_audio_available(self, formats: list[dict[str, Any]]) -> bool:
+        return self._quality_selector.has_audio_available(formats)
 
     @staticmethod
     def _select_thumbnail(info: dict[str, Any]) -> str | None:
@@ -1019,6 +1048,23 @@ class MediaService:
         message = str(exc)
         lowered = message.casefold()
 
+        is_twitter = url is not None and detect_platform_from_url(url) == "twitter"
+
+        if is_twitter and any(
+            token in lowered
+            for token in (
+                "no video could be found",
+                "no media could be found",
+                "no downloadable video",
+            )
+        ):
+            return APIError(
+                code="X_MEDIA_NOT_AVAILABLE",
+                message="No downloadable video found",
+                details="This X post does not contain downloadable video or audio media.",
+                status_code=422,
+            )
+
         if (
             url is not None
             and detect_platform_from_url(url) == "tiktok"
@@ -1031,7 +1077,7 @@ class MediaService:
                 status_code=502,
             )
 
-        if any(token in lowered for token in ("private", "members-only", "sign in")):
+        if any(token in lowered for token in ("private", "protected", "restricted", "members-only", "sign in")):
             return APIError(
                 code="VIDEO_PRIVATE",
                 message="Private video",
@@ -1052,6 +1098,14 @@ class MediaService:
                 code="NETWORK_FAILURE",
                 message="Network failure",
                 details="Unable to reach the media source",
+                status_code=502,
+            )
+
+        if is_twitter:
+            return APIError(
+                code="X_EXTRACTION_UNAVAILABLE",
+                message="X post temporarily unavailable",
+                details="X could not be accessed right now. Try the public post URL again later.",
                 status_code=502,
             )
 
