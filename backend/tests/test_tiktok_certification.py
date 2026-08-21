@@ -257,7 +257,7 @@ def test_tiktok_playlist_import_is_rejected_before_extraction() -> None:
 def test_tiktok_rehydration_failures_return_a_friendly_platform_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service = MediaService()
+    service = MediaService(sleep=lambda _: None, retry_jitter=lambda *_: 0.0)
 
     def raise_download_error(_: str) -> dict:
         raise DownloadError("Unable to extract universal data for rehydration")

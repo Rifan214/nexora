@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import logging
+import random
+import re
 import threading
+import time
+from contextlib import contextmanager
 from copy import deepcopy
+from dataclasses import dataclass, field
 from http.cookiejar import LoadError, MozillaCookieJar
 from pathlib import Path
-from typing import Any
-from urllib.parse import quote
+from typing import Any, Callable, Iterator
+from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
 from yt_dlp import YoutubeDL
@@ -53,6 +58,35 @@ _X_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
 _X_MEDIA_NOT_AVAILABLE_MESSAGE = (
     "Unable to access downloadable media from this X post. "
     "The post may be restricted, require login, or temporarily unavailable."
+)
+_YOUTUBE_MIX_SEED_PATTERN = re.compile(r"^RD(?P<seed>[A-Za-z0-9_-]{11})$")
+_YOUTUBE_MIX_FAILURE_MARKERS = (
+    "playlist type is unviewable",
+    "channel/playlist does not exist and the url redirected to youtube.com home page",
+)
+_YOUTUBE_MIX_UNAVAILABLE_MESSAGE = (
+    "This YouTube Mix could not be resolved. Open the Mix and copy its watch URL."
+)
+_TIKTOK_RETRY_DELAYS_SECONDS = (0.25, 0.5, 1.0)
+_TIKTOK_MAX_EXTRACTION_ATTEMPTS = len(_TIKTOK_RETRY_DELAYS_SECONDS) + 1
+_TIKTOK_TRANSIENT_EXTRACTION_MARKERS = (
+    "unable to extract universal data for rehydration",
+    "unexpected response from webpage request",
+    "unable to extract challenge data",
+    "incomplete rehydration",
+    "timed out",
+    "timeout",
+)
+_TIKTOK_PERMANENT_EXTRACTION_MARKERS = (
+    "private",
+    "login required",
+    "requiring login",
+    "sign in",
+    "removed",
+    "not available",
+    "not found",
+    "permission to view",
+    "ip address is blocked",
 )
 _DOWNLOAD_TRANSPORT_FIELDS = frozenset(
     {
@@ -101,6 +135,12 @@ def _payload_path(value: Any) -> str | None:
     return str(value) if isinstance(value, (str, Path)) and value else None
 
 
+@dataclass
+class _MetadataExtractionGate:
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    users: int = 0
+
+
 class MediaService:
     def __init__(
         self,
@@ -110,6 +150,8 @@ class MediaService:
         queue_manager: QueueManager | None = None,
         snapshot_cache: MediaSnapshotCache | None = None,
         resume_state_manager: ResumeStateManager | None = None,
+        sleep: Callable[[float], None] | None = None,
+        retry_jitter: Callable[[float, float], float] | None = None,
     ) -> None:
         self._settings = get_settings()
         self._quality_selector = QualitySelector()
@@ -118,15 +160,19 @@ class MediaService:
         self._queue_manager = queue_manager
         self._snapshot_cache = snapshot_cache or MediaSnapshotCache()
         self._resume_state_manager = resume_state_manager or get_resume_state_manager()
+        self._sleep = sleep or time.sleep
+        self._retry_jitter = retry_jitter or random.uniform
+        self._metadata_extraction_gates: dict[str, _MetadataExtractionGate] = {}
+        self._metadata_extraction_gates_lock = threading.RLock()
 
     def get_metadata(self, url: str) -> MediaMetadata:
         normalized_url = self._normalize_source_url(url)
         logger.info("Metadata extraction started url=%s", normalized_url)
 
         try:
-            info, platform, _ = self._get_or_extract_supported_info(normalized_url)
+            info, platform, _, source_url = self._get_or_extract_supported_info(normalized_url)
 
-            metadata = self._build_metadata(info=info, platform=platform, url=normalized_url)
+            metadata = self._build_metadata(info=info, platform=platform, url=source_url)
             logger.info("Metadata extraction completed url=%s platform=%s", normalized_url, platform)
             return metadata
         except APIError as exc:
@@ -155,7 +201,7 @@ class MediaService:
                     details="TikTok playlist import is not supported. Paste individual TikTok video URLs instead.",
                     status_code=501,
                 )
-            info = self._extract_playlist_info_or_raise_api_error(normalized_url)
+            info, _ = self._extract_playlist_info_with_youtube_mix_fallback(normalized_url)
             platform = self._detect_platform(info)
             if platform == "tiktok":
                 raise APIError(
@@ -202,7 +248,9 @@ class MediaService:
         )
 
         try:
-            info, platform, x_authenticated = self._get_or_extract_supported_info(normalized_url)
+            info, platform, x_authenticated, source_url = self._get_or_extract_supported_info(
+                normalized_url
+            )
 
             formats = info.get("formats") or []
             if request.media_type == "audio":
@@ -237,7 +285,7 @@ class MediaService:
 
         job_manager = self._get_job_manager()
         job = job_manager.create_job(
-            media_url=normalized_url,
+            media_url=source_url,
             platform=platform,
             title=str(info.get("title") or "Untitled media"),
             format_id=format_selector,
@@ -247,7 +295,7 @@ class MediaService:
             job.job_id,
             starter=lambda: self._start_download_worker(
                 job_id=job.job_id,
-                url=normalized_url,
+                url=source_url,
                 format_selector=format_selector,
                 output_type=request.media_type,
                 download_info=deepcopy(info),
@@ -619,20 +667,51 @@ class MediaService:
     def _get_or_extract_supported_info(
         self,
         normalized_url: str,
-    ) -> tuple[dict[str, Any], str, bool]:
+    ) -> tuple[dict[str, Any], str, bool, str]:
+        cached_result = self._get_cached_supported_info(normalized_url)
+        if cached_result is not None:
+            return cached_result
+
+        if detect_platform_from_url(normalized_url) != "tiktok":
+            return self._extract_and_cache_supported_info(normalized_url)
+
+        # A single in-flight TikTok extraction owns retries for this URL. Other
+        # callers wait, then reuse its snapshot instead of creating retry bursts.
+        with self._metadata_extraction_gate(normalized_url):
+            cached_result = self._get_cached_supported_info(normalized_url)
+            if cached_result is not None:
+                return cached_result
+            return self._extract_and_cache_supported_info(normalized_url)
+
+    def _get_cached_supported_info(
+        self,
+        normalized_url: str,
+    ) -> tuple[dict[str, Any], str, bool, str] | None:
         snapshot = self._snapshot_cache.get(normalized_url)
-        if snapshot is not None:
-            if snapshot.authenticated and self._x_auth_cookie_file() is None:
-                self._snapshot_cache.delete(normalized_url)
-            else:
-                info = snapshot.extracted_info
-                platform = self._detect_platform(info)
-                self._ensure_supported_media_platform(platform)
-                self._ensure_platform_media_is_downloadable(info, platform)
-                return info, platform, snapshot.authenticated
+        if snapshot is None:
+            return None
+        if snapshot.authenticated and self._x_auth_cookie_file() is None:
+            self._snapshot_cache.delete(normalized_url)
+            return None
+
+        info = snapshot.extracted_info
+        platform = self._detect_platform(info)
+        self._ensure_supported_media_platform(platform)
+        self._ensure_platform_media_is_downloadable(info, platform)
+        source_url = self._cached_source_url(
+            normalized_url,
+            info=info,
+            platform=platform,
+        )
+        return info, platform, snapshot.authenticated, source_url
+
+    def _extract_and_cache_supported_info(
+        self,
+        normalized_url: str,
+    ) -> tuple[dict[str, Any], str, bool, str]:
 
         try:
-            info = self._extract_info_or_raise_api_error(normalized_url)
+            info, source_url = self._extract_info_with_youtube_mix_fallback(normalized_url)
             platform = self._detect_platform(info)
             self._ensure_supported_media_platform(platform)
             self._ensure_platform_media_is_downloadable(info, platform)
@@ -646,13 +725,233 @@ class MediaService:
                 raise
             info, platform = authenticated_result
             authenticated = True
+            source_url = normalized_url
 
         self._snapshot_cache.put(
             normalized_url,
             info,
             authenticated=authenticated,
         )
-        return info, platform, authenticated
+        return info, platform, authenticated, source_url
+
+    @contextmanager
+    def _metadata_extraction_gate(self, normalized_url: str) -> Iterator[None]:
+        with self._metadata_extraction_gates_lock:
+            gate = self._metadata_extraction_gates.get(normalized_url)
+            if gate is None:
+                gate = _MetadataExtractionGate()
+                self._metadata_extraction_gates[normalized_url] = gate
+            gate.users += 1
+
+        gate.lock.acquire()
+        try:
+            yield
+        finally:
+            gate.lock.release()
+            with self._metadata_extraction_gates_lock:
+                gate.users -= 1
+                if gate.users == 0 and self._metadata_extraction_gates.get(normalized_url) is gate:
+                    self._metadata_extraction_gates.pop(normalized_url, None)
+
+    def _extract_info_with_youtube_mix_fallback(
+        self,
+        url: str,
+    ) -> tuple[dict[str, Any], str]:
+        original_error: APIError | None = None
+        candidate: tuple[str, str, str] | None = None
+        try:
+            return self._extract_info_or_raise_api_error(url), url
+        except APIError as exc:
+            candidate = self._youtube_mix_candidate(url, error=exc)
+            if candidate is None:
+                raise
+            original_error = exc
+
+        assert original_error is not None and candidate is not None
+        playlist_id, seed_id, watch_url = candidate
+        playlist_info = self._extract_validated_youtube_mix_playlist(
+            watch_url,
+            playlist_id=playlist_id,
+            seed_id=seed_id,
+            original_error=original_error,
+        )
+        try:
+            info = self._extract_info(watch_url)
+        except APIError:
+            raise self._youtube_mix_unavailable_error() from None
+        except (DownloadError, ExtractorError):
+            raise self._youtube_mix_unavailable_error() from None
+
+        if not self._is_valid_youtube_mix_media(info, seed_id=seed_id):
+            raise self._youtube_mix_unavailable_error()
+
+        logger.info(
+            "YouTube Mix seed fallback succeeded playlist_id=%s seed_id=%s entry_count=%s",
+            playlist_id,
+            seed_id,
+            len(playlist_info.get("entries") or []),
+        )
+        return info, watch_url
+
+    def _extract_playlist_info_with_youtube_mix_fallback(
+        self,
+        url: str,
+    ) -> tuple[dict[str, Any], str]:
+        original_error: APIError | None = None
+        candidate: tuple[str, str, str] | None = None
+        try:
+            return self._extract_playlist_info_or_raise_api_error(url), url
+        except APIError as exc:
+            candidate = self._youtube_mix_candidate(url, error=exc)
+            if candidate is None:
+                raise
+            original_error = exc
+
+        assert original_error is not None and candidate is not None
+        playlist_id, seed_id, watch_url = candidate
+        info = self._extract_validated_youtube_mix_playlist(
+            watch_url,
+            playlist_id=playlist_id,
+            seed_id=seed_id,
+            original_error=original_error,
+        )
+        logger.info(
+            "YouTube Mix seed fallback succeeded playlist_id=%s seed_id=%s entry_count=%s",
+            playlist_id,
+            seed_id,
+            len(info.get("entries") or []),
+        )
+        return info, watch_url
+
+    def _extract_validated_youtube_mix_playlist(
+        self,
+        watch_url: str,
+        *,
+        playlist_id: str,
+        seed_id: str,
+        original_error: APIError,
+    ) -> dict[str, Any]:
+        logger.info(
+            "YouTube Mix seed fallback attempted playlist_id=%s seed_id=%s",
+            playlist_id,
+            seed_id,
+        )
+        try:
+            info = self._extract_playlist_info(watch_url)
+        except APIError:
+            raise self._youtube_mix_unavailable_error() from None
+        except (DownloadError, ExtractorError):
+            raise self._youtube_mix_unavailable_error() from None
+
+        if not self._is_valid_youtube_mix_playlist(
+            info,
+            playlist_id=playlist_id,
+            seed_id=seed_id,
+        ):
+            raise self._youtube_mix_unavailable_error() from original_error
+        return info
+
+    @staticmethod
+    def _youtube_mix_candidate(
+        url: str,
+        *,
+        error: APIError,
+    ) -> tuple[str, str, str] | None:
+        if error.code != "YOUTUBE_MIX_UNAVAILABLE":
+            return None
+
+        parsed = urlsplit(url)
+        hostname = (parsed.hostname or "").casefold()
+        if hostname not in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
+            return None
+        if parsed.path.rstrip("/") != "/playlist":
+            return None
+
+        playlist_ids = parse_qs(parsed.query).get("list") or []
+        if len(playlist_ids) != 1:
+            return None
+        playlist_id = playlist_ids[0]
+        match = _YOUTUBE_MIX_SEED_PATTERN.fullmatch(playlist_id)
+        if match is None:
+            return None
+
+        seed_id = match.group("seed")
+        query = urlencode(
+            {
+                "v": seed_id,
+                "list": playlist_id,
+                "start_radio": "1",
+            }
+        )
+        watch_url = urlunsplit(("https", "www.youtube.com", "/watch", query, ""))
+        return playlist_id, seed_id, watch_url
+
+    @classmethod
+    def _cached_source_url(
+        cls,
+        original_url: str,
+        *,
+        info: dict[str, Any],
+        platform: str,
+    ) -> str:
+        if platform != "youtube":
+            return original_url
+
+        parsed = urlsplit(original_url)
+        playlist_ids = parse_qs(parsed.query).get("list") or []
+        if parsed.path.rstrip("/") != "/playlist" or len(playlist_ids) != 1:
+            return original_url
+        match = _YOUTUBE_MIX_SEED_PATTERN.fullmatch(playlist_ids[0])
+        if match is None or str(info.get("id") or "") != match.group("seed"):
+            return original_url
+
+        query = urlencode(
+            {
+                "v": match.group("seed"),
+                "list": playlist_ids[0],
+                "start_radio": "1",
+            }
+        )
+        return urlunsplit(("https", "www.youtube.com", "/watch", query, ""))
+
+    @classmethod
+    def _is_valid_youtube_mix_playlist(
+        cls,
+        info: dict[str, Any],
+        *,
+        playlist_id: str,
+        seed_id: str,
+    ) -> bool:
+        returned_playlist_id = str(info.get("id") or info.get("playlist_id") or "")
+        entries = [entry for entry in info.get("entries") or [] if isinstance(entry, dict)]
+        if returned_playlist_id != playlist_id or not entries:
+            return False
+
+        first_usable_entry = next(
+            (entry for entry in entries if cls._playlist_entry_webpage_url(entry) is not None),
+            None,
+        )
+        return (
+            first_usable_entry is not None
+            and str(first_usable_entry.get("id") or "") == seed_id
+        )
+
+    @staticmethod
+    def _is_valid_youtube_mix_media(info: dict[str, Any], *, seed_id: str) -> bool:
+        return (
+            str(info.get("id") or "") == seed_id
+            and bool(info.get("formats"))
+            and MediaService._detect_platform(info) == "youtube"
+        )
+
+    @staticmethod
+    def _youtube_mix_unavailable_error() -> APIError:
+        return APIError(
+            code="YOUTUBE_MIX_UNAVAILABLE",
+            message="YouTube Mix unavailable",
+            details=_YOUTUBE_MIX_UNAVAILABLE_MESSAGE,
+            status_code=422,
+        )
 
     def _try_authenticated_x_extraction(
         self,
@@ -983,6 +1282,9 @@ class MediaService:
         *,
         cookie_file: Path | None = None,
     ) -> dict[str, Any]:
+        if cookie_file is None and detect_platform_from_url(url) == "tiktok":
+            return self._extract_tiktok_info_with_retry(url)
+
         try:
             if cookie_file is None:
                 return self._extract_info(url)
@@ -998,6 +1300,46 @@ class MediaService:
                 details="An unexpected error occurred while extracting media metadata",
                 status_code=500,
             ) from exc
+
+    def _extract_tiktok_info_with_retry(self, url: str) -> dict[str, Any]:
+        for attempt in range(1, _TIKTOK_MAX_EXTRACTION_ATTEMPTS + 1):
+            logger.info(
+                "TikTok metadata extraction attempt attempt=%s max_attempts=%s",
+                attempt,
+                _TIKTOK_MAX_EXTRACTION_ATTEMPTS,
+            )
+            try:
+                return self._extract_info(url)
+            except APIError:
+                raise
+            except (DownloadError, ExtractorError) as exc:
+                if not self._is_transient_tiktok_extraction_error(exc):
+                    raise self._map_yt_dlp_error(exc, url=url) from None
+
+                if attempt >= _TIKTOK_MAX_EXTRACTION_ATTEMPTS:
+                    logger.warning(
+                        "TikTok metadata extraction retry exhausted attempts=%s",
+                        attempt,
+                    )
+                    raise self._map_yt_dlp_error(exc, url=url) from None
+
+                base_delay = _TIKTOK_RETRY_DELAYS_SECONDS[attempt - 1]
+                delay = base_delay + self._retry_jitter(0.0, base_delay * 0.2)
+                logger.warning(
+                    "TikTok transient extraction failure attempt=%s retrying=true delay_ms=%s",
+                    attempt,
+                    round(delay * 1000),
+                )
+                self._sleep(delay)
+            except Exception as exc:
+                raise APIError(
+                    code="METADATA_EXTRACTION_ERROR",
+                    message="Failed to extract media metadata",
+                    details="An unexpected error occurred while extracting media metadata",
+                    status_code=500,
+                ) from exc
+
+        raise AssertionError("TikTok extraction retry loop terminated unexpectedly")
 
     def _extract_playlist_info(self, url: str) -> dict[str, Any]:
         # Flat extraction intentionally avoids resolving each video's formats.
@@ -1211,6 +1553,11 @@ class MediaService:
         lowered = message.casefold()
 
         is_twitter = url is not None and detect_platform_from_url(url) == "twitter"
+        is_youtube = url is not None and detect_platform_from_url(url) == "youtube"
+        is_tiktok = url is not None and detect_platform_from_url(url) == "tiktok"
+
+        if is_youtube and any(marker in lowered for marker in _YOUTUBE_MIX_FAILURE_MARKERS):
+            return MediaService._youtube_mix_unavailable_error()
 
         if is_twitter and any(
             token in lowered
@@ -1227,11 +1574,7 @@ class MediaService:
                 status_code=422,
             )
 
-        if (
-            url is not None
-            and detect_platform_from_url(url) == "tiktok"
-            and "rehydration" in lowered
-        ):
+        if is_tiktok and MediaService._is_transient_tiktok_extraction_error(exc):
             return APIError(
                 code="TIKTOK_EXTRACTION_UNAVAILABLE",
                 message="TikTok video temporarily unavailable",
@@ -1277,6 +1620,23 @@ class MediaService:
             details="yt-dlp could not extract metadata from the provided URL",
             status_code=500,
         )
+
+    @staticmethod
+    def _is_transient_tiktok_extraction_error(exc: Exception) -> bool:
+        messages: list[str] = []
+        current: BaseException | None = exc
+        seen: set[int] = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            messages.append(str(current).casefold())
+            current = current.__cause__ or current.__context__
+
+        combined = " ".join(messages)
+        if any(marker in combined for marker in _TIKTOK_PERMANENT_EXTRACTION_MARKERS):
+            return False
+        if any(marker in combined for marker in _TIKTOK_TRANSIENT_EXTRACTION_MARKERS):
+            return True
+        return re.search(r"(?:http error|status(?: code)?)\s*5\d\d\b", combined) is not None
 
     def _log_failure(self, url: str, message: str, details: str, exc: Exception | None = None) -> None:
         if self._settings.debug and exc is not None:
