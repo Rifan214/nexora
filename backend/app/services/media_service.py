@@ -270,7 +270,7 @@ class MediaService:
         )
 
         try:
-            info, platform, x_authenticated, source_url = self._get_or_extract_supported_info(
+            info, platform, authenticated, source_url = self._get_or_extract_supported_info(
                 normalized_url
             )
 
@@ -321,7 +321,7 @@ class MediaService:
                 format_selector=format_selector,
                 output_type=request.media_type,
                 download_info=deepcopy(info),
-                x_authenticated=x_authenticated,
+                authenticated=authenticated,
             ),
         )
         return job
@@ -334,11 +334,11 @@ class MediaService:
         format_selector: str,
         output_type: str,
         download_info: dict[str, Any] | None = None,
-        x_authenticated: bool = False,
+        authenticated: bool = False,
     ) -> None:
         worker = threading.Thread(
             target=self._download_job_background,
-            args=(job_id, url, format_selector, output_type, download_info, x_authenticated),
+            args=(job_id, url, format_selector, output_type, download_info, authenticated),
             daemon=True,
             name=f"nexora-download-{job_id}",
         )
@@ -356,7 +356,7 @@ class MediaService:
         format_selector: str,
         output_type: str,
         download_info: dict[str, Any] | None = None,
-        x_authenticated: bool = False,
+        authenticated: bool = False,
     ) -> None:
         job_manager = self._get_job_manager()
         self._process_manager.register_job(job_id, worker=threading.current_thread())
@@ -380,7 +380,7 @@ class MediaService:
                 return
 
             self._process_manager.raise_if_cancelled(job_id)
-            auth_cookie_file = self._require_auth_cookie_file(initial_platform) if x_authenticated else None
+            auth_cookie_file = self._require_auth_cookie_file(initial_platform) if authenticated else None
             if download_info is not None:
                 extracted_info = download_info
             else:

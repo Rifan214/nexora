@@ -600,3 +600,258 @@ def test_instagram_carousel_metadata_filters_image_only_entries(client: TestClie
     assert data["items"][1]["title"] == "Slide 3 Video"
     assert data["items"][1]["duration_seconds"] == 20
     assert data["items"][1]["webpage_url"] == "https://www.instagram.com/p/slide3_vid/"
+
+
+def test_instagram_is_registered_for_transport_refresh() -> None:
+    from app.services.media_service import _PLATFORMS_REQUIRING_TRANSPORT_REFRESH
+
+    assert "instagram" in _PLATFORMS_REQUIRING_TRANSPORT_REFRESH
+
+
+def test_instagram_download_transport_refresh_is_invoked(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    from app.services.media_service import MediaService
+
+    service = MediaService()
+    initial_snapshot = {
+        "id": "C_refresh_test",
+        "title": "Refresh Test Video",
+        "extractor": "Instagram",
+        "extractor_key": "Instagram",
+        "webpage_url": "https://www.instagram.com/reel/C_refresh_test/",
+        "formats": [
+            {
+                "format_id": "0",
+                "ext": "mp4",
+                "vcodec": "avc1.64001f",
+                "acodec": None,
+                "width": 720,
+                "height": 1280,
+                "url": "https://instagram.fcdn.net/expired_token.mp4",
+            }
+        ],
+    }
+    refreshed_data = {
+        "id": "C_refresh_test",
+        "title": "Refresh Test Video",
+        "extractor": "Instagram",
+        "extractor_key": "Instagram",
+        "webpage_url": "https://www.instagram.com/reel/C_refresh_test/",
+        "formats": [
+            {
+                "format_id": "0",
+                "ext": "mp4",
+                "vcodec": "avc1.64001f",
+                "acodec": None,
+                "width": 720,
+                "height": 1280,
+                "url": "https://instagram.fcdn.net/fresh_token.mp4",
+            }
+        ],
+    }
+
+    mock_ydl = MagicMock()
+    mock_ydl.extract_info.return_value = refreshed_data
+    mock_ydl.process_ie_result.return_value = refreshed_data
+
+    resolved, legacy = service._refresh_download_transport_info(
+        mock_ydl,
+        url="https://www.instagram.com/reel/C_refresh_test/",
+        snapshot=initial_snapshot,
+    )
+
+    mock_ydl.extract_info.assert_called_once_with(
+        "https://www.instagram.com/reel/C_refresh_test/",
+        download=False,
+        process=False,
+    )
+    assert resolved["formats"][0]["url"] == "https://instagram.fcdn.net/fresh_token.mp4"
+    assert legacy["formats"][0]["url"] == "https://instagram.fcdn.net/fresh_token.mp4"
+
+
+def test_instagram_authenticated_snapshot_invalidation_when_cookie_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.media_service import MediaService
+    from app.services.media_snapshot_cache import MediaSnapshotCache
+
+    cookie_file = tmp_path / "instagram.cookies.txt"
+    cookie_file.write_text(
+        "# Netscape HTTP Cookie File\n"
+        ".instagram.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\tvalid_session\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NEXORA_INSTAGRAM_AUTH_COOKIE_FILE", str(cookie_file))
+
+    snapshot_cache = MediaSnapshotCache()
+    service = MediaService(snapshot_cache=snapshot_cache)
+
+    cached_info = {
+        "id": "C_auth_invalidate",
+        "title": "Authenticated Post",
+        "extractor": "Instagram",
+        "extractor_key": "Instagram",
+        "webpage_url": "https://www.instagram.com/p/C_auth_invalidate/",
+        "formats": [
+            {
+                "format_id": "0",
+                "ext": "mp4",
+                "vcodec": "avc1.64001f",
+                "acodec": None,
+                "width": 720,
+                "height": 1280,
+            }
+        ],
+    }
+    normalized_url = "https://www.instagram.com/p/C_auth_invalidate/"
+    service._snapshot_cache.put(normalized_url, cached_info, authenticated=True)
+
+    # 1. While cookie is set, cached result is returned
+    cached_result = service._get_cached_supported_info(normalized_url)
+    assert cached_result is not None
+    info, platform, authenticated, source_url = cached_result
+    assert authenticated is True
+    assert platform == "instagram"
+
+    # 2. When cookie setting is removed, cache is invalidated
+    monkeypatch.setenv("NEXORA_INSTAGRAM_AUTH_COOKIE_FILE", "")
+    get_settings.cache_clear()
+    service._settings = get_settings()
+    invalidated_result = service._get_cached_supported_info(normalized_url)
+    assert invalidated_result is None
+    assert service._snapshot_cache.get(normalized_url) is None
+
+
+def test_instagram_multi_resolution_progressive_sorting() -> None:
+    selector = QualitySelector()
+    formats = [
+        {
+            "format_id": "1080",
+            "ext": "mp4",
+            "vcodec": "avc1.640028",
+            "acodec": None,
+            "width": 1080,
+            "height": 1920,
+            "protocol": "https",
+            "fps": 30,
+            "tbr": 3500.0,
+        },
+        {
+            "format_id": "360",
+            "ext": "mp4",
+            "vcodec": "avc1.4d401f",
+            "acodec": None,
+            "width": 360,
+            "height": 640,
+            "protocol": "https",
+            "fps": 30,
+            "tbr": 500.0,
+        },
+        {
+            "format_id": "720",
+            "ext": "mp4",
+            "vcodec": "avc1.64001f",
+            "acodec": None,
+            "width": 720,
+            "height": 1280,
+            "protocol": "https",
+            "fps": 30,
+            "tbr": 1800.0,
+        },
+        {
+            "format_id": "480",
+            "ext": "mp4",
+            "vcodec": "avc1.4d401f",
+            "acodec": None,
+            "width": 480,
+            "height": 854,
+            "protocol": "https",
+            "fps": 30,
+            "tbr": 900.0,
+        },
+        # Malformed format (should be rejected)
+        {
+            "format_id": "bad",
+            "ext": "mp4",
+            "vcodec": "avc1.4d401f",
+            "acodec": None,
+            "width": 0,
+            "height": -1,
+            "protocol": "https",
+        },
+    ]
+
+    qualities = selector.build_qualities(formats, platform="instagram")
+    assert len(qualities) == 4
+    assert qualities[0].height == 360
+    assert qualities[0].label == "360p"
+    assert qualities[1].height == 480
+    assert qualities[1].label == "480p"
+    assert qualities[2].height == 720
+    assert qualities[2].label == "720p HD"
+    assert qualities[3].height == 1080
+    assert qualities[3].label == "1080p Full HD"
+
+    # Non-Instagram platform must reject these formats (missing acodec)
+    youtube_qualities = selector.build_qualities(formats, platform="youtube")
+    assert len(youtube_qualities) == 0
+
+
+def test_instagram_authenticated_fallback_after_502(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
+    from app.core.exceptions import APIError
+    from app.services.media_service import MediaService
+
+    cookie_file = tmp_path / "instagram.cookies.txt"
+    cookie_file.write_text(
+        "# Netscape HTTP Cookie File\n"
+        ".instagram.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\tvalid_session_502\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NEXORA_INSTAGRAM_AUTH_COOKIE_FILE", str(cookie_file))
+
+    service = MediaService()
+
+    authenticated_info = {
+        "id": "C_retry_502",
+        "title": "Post after 502",
+        "extractor": "Instagram",
+        "extractor_key": "Instagram",
+        "webpage_url": "https://www.instagram.com/reel/C_retry_502/",
+        "formats": [
+            {
+                "format_id": "0",
+                "ext": "mp4",
+                "vcodec": "avc1.64001f",
+                "acodec": None,
+                "width": 720,
+                "height": 1280,
+                "protocol": "https",
+            }
+        ],
+    }
+
+    guest_502_error = APIError(
+        code="INSTAGRAM_EXTRACTION_UNAVAILABLE",
+        message="Instagram post temporarily unavailable",
+        details="Instagram returned a temporary error.",
+        status_code=502,
+    )
+
+    with patch.object(service, "_extract_info_or_raise_api_error", return_value=authenticated_info) as mock_auth_extract:
+        result = service._try_authenticated_instagram_extraction(
+            "https://www.instagram.com/reel/C_retry_502/",
+            guest_error=guest_502_error,
+        )
+
+    assert result is not None
+    info, platform = result
+    assert platform == "instagram"
+    assert info["id"] == "C_retry_502"
+    mock_auth_extract.assert_called_once()

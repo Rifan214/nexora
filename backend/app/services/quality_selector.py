@@ -103,7 +103,7 @@ class QualitySelector:
         )
 
         audio_candidates = [item for item in usable_formats if self._is_audio_only(item, platform=platform)]
-        best_audio = self._select_best_audio(audio_candidates)
+        best_audio = self._select_best_audio(audio_candidates, platform=platform)
         by_height: dict[int, list[dict[str, Any]]] = {}
         video_candidates: list[dict[str, Any]] = []
 
@@ -270,8 +270,13 @@ class QualitySelector:
         )
 
     @classmethod
-    def _select_best_audio(cls, formats: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
-        audio_only = [item for item in formats if cls._is_audio_only(item)]
+    def _select_best_audio(
+        cls,
+        formats: Iterable[dict[str, Any]],
+        *,
+        platform: str | None = None,
+    ) -> dict[str, Any] | None:
+        audio_only = [item for item in formats if cls._is_audio_only(item, platform=platform)]
         if not audio_only:
             return None
         return max(audio_only, key=cls._audio_score)
