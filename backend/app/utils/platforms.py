@@ -31,6 +31,43 @@ _FACEBOOK_TRACKING_PREFIXES = (
     "paipv",
     "rdid",
 )
+_REDDIT_HOSTNAMES = frozenset(
+    {
+        "reddit.com",
+        "www.reddit.com",
+        "old.reddit.com",
+        "new.reddit.com",
+        "sh.reddit.com",
+        "m.reddit.com",
+        "nm.reddit.com",
+        "np.reddit.com",
+        "www.redditmedia.com",
+        "redditmedia.com",
+        "redd.it",
+        "v.redd.it",
+    }
+)
+_REDDIT_SHORT_HOSTNAMES = frozenset({"redd.it", "v.redd.it"})
+_REDDIT_SHORT_PATH = re.compile(r"^/[A-Za-z0-9_-]+/?$")
+_REDDIT_MEDIA_PATH_PATTERNS = (
+    re.compile(r"^/r/[^/]+/comments/[A-Za-z0-9_-]+(?:/[^/?#&]+)?/?$"),
+    re.compile(r"^/comments/[A-Za-z0-9_-]+(?:/[^/?#&]+)?/?$"),
+    re.compile(r"^/(?:user|u)/[^/]+/comments/[A-Za-z0-9_-]+(?:/[^/?#&]+)?/?$"),
+    re.compile(r"^/r/[^/]+/s/[A-Za-z0-9_-]+/?$"),
+)
+_REDDIT_TRACKING_PREFIXES = (
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_name",
+    "utm_term",
+    "utm_content",
+    "context",
+    "ref",
+    "ref_source",
+    "rdt",
+    "share_id",
+)
 
 
 def _is_facebook_tracking_param(key: str) -> bool:
@@ -38,6 +75,14 @@ def _is_facebook_tracking_param(key: str) -> bool:
     return any(
         k == prefix or k.startswith(f"{prefix}[") or k.startswith(f"{prefix}_")
         for prefix in _FACEBOOK_TRACKING_PREFIXES
+    )
+
+
+def _is_reddit_tracking_param(key: str) -> bool:
+    k = key.casefold()
+    return any(
+        k == prefix or k.startswith(f"{prefix}_")
+        for prefix in _REDDIT_TRACKING_PREFIXES
     )
 
 
@@ -54,6 +99,8 @@ def detect_platform_from_url(url: str) -> str:
         return "instagram"
     if hostname in _FACEBOOK_HOSTNAMES or hostname.endswith(".facebook.com") or hostname == "fb.watch":
         return "facebook"
+    if hostname in _REDDIT_HOSTNAMES or hostname.endswith(".reddit.com") or hostname.endswith(".redditmedia.com"):
+        return "reddit"
     if hostname.endswith("vimeo.com"):
         return "vimeo"
 
@@ -96,6 +143,25 @@ def is_facebook_media_url(url: str) -> bool:
         return True
 
     return False
+
+
+def is_reddit_media_url(url: str) -> bool:
+    """Return whether a URL addresses a supported Reddit post, comment, or video item."""
+    parsed = urlsplit(url)
+    hostname = (parsed.hostname or "").casefold()
+    is_reddit_host = (
+        hostname in _REDDIT_HOSTNAMES
+        or hostname.endswith(".reddit.com")
+        or hostname.endswith(".redditmedia.com")
+    )
+    if not is_reddit_host:
+        return False
+
+    if hostname in _REDDIT_SHORT_HOSTNAMES:
+        return _REDDIT_SHORT_PATH.fullmatch(parsed.path) is not None and parsed.path.strip("/") != ""
+
+    path = parsed.path
+    return any(pattern.fullmatch(path) is not None for pattern in _REDDIT_MEDIA_PATH_PATTERNS)
 
 
 def normalize_media_url(url: str) -> str:
@@ -145,5 +211,20 @@ def normalize_media_url(url: str) -> str:
             canonical_path = "/watch/"
 
         return urlunsplit(("https", "www.facebook.com", canonical_path, encoded_query, ""))
+
+    if hostname in _REDDIT_SHORT_HOSTNAMES:
+        return urlunsplit(("https", hostname, parsed.path.rstrip("/") + "/", "", ""))
+
+    if hostname in _REDDIT_HOSTNAMES or hostname.endswith(".reddit.com") or hostname.endswith(".redditmedia.com"):
+        from urllib.parse import parse_qs, urlencode
+
+        qs = parse_qs(parsed.query, keep_blank_values=False)
+        cleaned_query = {
+            k: v for k, v in qs.items()
+            if not _is_reddit_tracking_param(k)
+        }
+        encoded_query = urlencode(cleaned_query, doseq=True) if cleaned_query else ""
+        canonical_path = parsed.path.rstrip("/") + "/"
+        return urlunsplit(("https", "www.reddit.com", canonical_path, encoded_query, ""))
 
     return url

@@ -38,6 +38,7 @@ from app.utils.platforms import (
     detect_platform_from_url,
     is_facebook_media_url,
     is_instagram_media_url,
+    is_reddit_media_url,
     is_x_status_url,
     normalize_media_url,
 )
@@ -52,8 +53,8 @@ _AUDIO_MP3_POSTPROCESSOR = {
     "preferredcodec": "mp3",
     "preferredquality": "0",
 }
-_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter", "instagram", "facebook"})
-_PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter", "instagram", "facebook"})
+_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter", "instagram", "facebook", "reddit"})
+_PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter", "instagram", "facebook", "reddit"})
 _X_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
     {
         "X_MEDIA_NOT_AVAILABLE",
@@ -85,6 +86,17 @@ _FACEBOOK_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
 )
 _FACEBOOK_MEDIA_NOT_AVAILABLE_MESSAGE = (
     "Unable to access downloadable media from this Facebook post. "
+    "The post may be restricted, require login, or temporarily unavailable."
+)
+_REDDIT_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
+    {
+        "REDDIT_MEDIA_NOT_AVAILABLE",
+        "REDDIT_EXTRACTION_UNAVAILABLE",
+        "VIDEO_PRIVATE",
+    }
+)
+_REDDIT_MEDIA_NOT_AVAILABLE_MESSAGE = (
+    "Unable to access downloadable media from this Reddit post. "
     "The post may be restricted, require login, or temporarily unavailable."
 )
 _YOUTUBE_MIX_SEED_PATTERN = re.compile(r"^RD(?P<seed>[A-Za-z0-9_-]{11})$")
@@ -153,18 +165,24 @@ _AUTHENTICATED_SNAPSHOT_SENSITIVE_KEYS = frozenset(
         "cookie",
         "cookies",
         "csrftoken",
+        "csv",
         "ct0",
         "datr",
         "ds_user_id",
+        "edgebucket",
         "fr",
         "ig_did",
+        "loid",
         "mid",
         "presence",
         "proxy-authorization",
+        "reddit_session",
         "rur",
         "sb",
+        "session_tracker",
         "sessionid",
         "set-cookie",
+        "token_v2",
         "wd",
         "x-csrf-token",
         "xs",
@@ -772,6 +790,10 @@ class MediaService:
                     normalized_url,
                     guest_error=guest_error,
                 )
+                or self._try_authenticated_reddit_extraction(
+                    normalized_url,
+                    guest_error=guest_error,
+                )
             )
             if authenticated_result is None:
                 raise
@@ -1203,6 +1225,72 @@ class MediaService:
             raise DownloadError("Authenticated Facebook session unavailable")
         return cookie_file
 
+    def _try_authenticated_reddit_extraction(
+        self,
+        normalized_url: str,
+        *,
+        guest_error: APIError,
+    ) -> tuple[dict[str, Any], str] | None:
+        if (
+            detect_platform_from_url(normalized_url) != "reddit"
+            or guest_error.code not in _REDDIT_AUTHENTICATED_RETRY_ERROR_CODES
+        ):
+            return None
+
+        cookie_file = self._reddit_auth_cookie_file()
+        if cookie_file is None:
+            return None
+
+        logger.info("Reddit authenticated fallback enabled=true attempted=true")
+        try:
+            info = self._extract_info_or_raise_api_error(
+                normalized_url,
+                cookie_file=cookie_file,
+            )
+            info = self._sanitize_authenticated_snapshot_info(info)
+            platform = self._detect_platform(info)
+            self._ensure_supported_media_platform(platform)
+            self._ensure_platform_media_is_downloadable(info, platform)
+        except APIError:
+            logger.warning(
+                "Reddit authenticated fallback enabled=true attempted=true succeeded=false"
+            )
+            return None
+
+        logger.info("Reddit authenticated fallback enabled=true attempted=true succeeded=true")
+        return info, platform
+
+    def _reddit_auth_cookie_file(self) -> Path | None:
+        configured_path = self._settings.reddit_auth_cookie_file.strip()
+        if not configured_path:
+            return None
+
+        cookie_file = Path(configured_path).expanduser()
+        try:
+            if not cookie_file.is_file():
+                raise FileNotFoundError
+            cookie_jar = MozillaCookieJar(str(cookie_file))
+            cookie_jar.load(ignore_discard=True, ignore_expires=True)
+            cookie_names = {cookie.name for cookie in cookie_jar}
+            if any(name in cookie_names for name in ("reddit_session", "token_v2", "session_tracker", "loid", "csv", "edgebucket")):
+                return cookie_file
+        except (LoadError, OSError):
+            logger.warning(
+                "Reddit authenticated fallback enabled=true attempted=false reason=cookie_file_unavailable"
+            )
+            return None
+
+        logger.warning(
+            "Reddit authenticated fallback enabled=true attempted=false reason=cookie_file_invalid"
+        )
+        return None
+
+    def _require_reddit_auth_cookie_file(self) -> Path:
+        cookie_file = self._reddit_auth_cookie_file()
+        if cookie_file is None:
+            raise DownloadError("Authenticated Reddit session unavailable")
+        return cookie_file
+
     def _auth_cookie_file(self, platform: str) -> Path | None:
         if platform == "twitter":
             return self._x_auth_cookie_file()
@@ -1210,6 +1298,8 @@ class MediaService:
             return self._instagram_auth_cookie_file()
         if platform == "facebook":
             return self._facebook_auth_cookie_file()
+        if platform == "reddit":
+            return self._reddit_auth_cookie_file()
         return None
 
     def _require_auth_cookie_file(self, platform: str) -> Path:
@@ -1219,6 +1309,8 @@ class MediaService:
             return self._require_instagram_auth_cookie_file()
         if platform == "facebook":
             return self._require_facebook_auth_cookie_file()
+        if platform == "reddit":
+            return self._require_reddit_auth_cookie_file()
         raise DownloadError(f"Authenticated session unavailable for platform: {platform}")
 
     @classmethod
@@ -1622,6 +1714,16 @@ class MediaService:
                 )
             return normalize_media_url(normalized_url)
 
+        if platform == "reddit":
+            if not is_reddit_media_url(normalized_url):
+                raise APIError(
+                    code="INVALID_REDDIT_URL",
+                    message="Invalid Reddit URL",
+                    details="Use a public Reddit post, comment, or video URL in the form reddit.com/r/<subreddit>/comments/<id> or v.redd.it/<id>.",
+                    status_code=422,
+                )
+            return normalize_media_url(normalized_url)
+
         return normalized_url
 
     @staticmethod
@@ -1640,6 +1742,8 @@ class MediaService:
             return "instagram"
         if "facebook" in haystack or "fb" in haystack:
             return "facebook"
+        if "reddit" in haystack:
+            return "reddit"
         if "vimeo" in haystack:
             return "vimeo"
         return "unknown"
@@ -1727,11 +1831,12 @@ class MediaService:
         items: list[PlaylistItem] = []
         is_instagram = self._detect_platform(info) == "instagram"
         is_facebook = self._detect_platform(info) == "facebook"
+        is_reddit = self._detect_platform(info) == "reddit"
         for entry in info.get("entries") or []:
             if not isinstance(entry, dict):
                 continue
-            # For Instagram and Facebook multi-media, ignore image-only entries that have no playable video stream
-            if is_instagram or is_facebook or self._detect_platform(entry) in ("instagram", "facebook"):
+            # For Instagram, Facebook, and Reddit multi-media, ignore image-only entries that have no playable video stream
+            if is_instagram or is_facebook or is_reddit or self._detect_platform(entry) in ("instagram", "facebook", "reddit"):
                 entry_formats = entry.get("formats") or []
                 if not entry_formats and not entry.get("video_url") and not entry.get("duration"):
                     continue
@@ -1750,9 +1855,9 @@ class MediaService:
 
     @staticmethod
     def _download_source_url(*, info: dict[str, Any], platform: str, url: str) -> str:
-        # TikTok, Twitter, Instagram, and Facebook URLs can succeed where a later extraction
+        # TikTok, Twitter, Instagram, Facebook, and Reddit URLs can succeed where a later extraction
         # of the canonical URL returned by yt-dlp fails or misses query state.
-        if platform in {"tiktok", "twitter", "instagram", "facebook"}:
+        if platform in {"tiktok", "twitter", "instagram", "facebook", "reddit"}:
             return url
         return str(info.get("webpage_url") or url)
 
@@ -1773,6 +1878,9 @@ class MediaService:
                 return f"https://www.instagram.com/p/{quote(str(entry_id), safe='')}/"
             if "facebook" in ie_key:
                 return f"https://www.facebook.com/watch/?v={quote(str(entry_id), safe='')}"
+            if "reddit" in ie_key:
+                display_id = entry.get("display_id") or entry_id
+                return f"https://www.reddit.com/comments/{quote(str(display_id), safe='')}"
 
         # YouTube flat playlist extraction commonly returns only a video ID.
         if entry_id:
@@ -1831,6 +1939,7 @@ class MediaService:
         is_tiktok = url is not None and detect_platform_from_url(url) == "tiktok"
         is_instagram = url is not None and detect_platform_from_url(url) == "instagram"
         is_facebook = url is not None and detect_platform_from_url(url) == "facebook"
+        is_reddit = url is not None and detect_platform_from_url(url) == "reddit"
 
         if is_youtube and any(marker in lowered for marker in _YOUTUBE_MIX_FAILURE_MARKERS):
             return MediaService._youtube_mix_unavailable_error()
@@ -1888,6 +1997,29 @@ class MediaService:
                 status_code=422,
             )
 
+        if is_reddit and any(marker in lowered for marker in ("unsupported url", "is not a valid url")):
+            return APIError(
+                code="INVALID_REDDIT_URL",
+                message="Invalid Reddit URL",
+                details="Use a public Reddit post, comment, or video URL in the form reddit.com/r/<subreddit>/comments/<id> or v.redd.it/<id>.",
+                status_code=422,
+            )
+
+        if is_reddit and any(
+            token in lowered
+            for token in (
+                "no media found",
+                "there is no video in this post",
+                "this video is processing",
+            )
+        ):
+            return APIError(
+                code="NO_VIDEO_IN_POST",
+                message="No downloadable video found",
+                details="This Reddit post does not contain a downloadable video.",
+                status_code=422,
+            )
+
         if is_tiktok and MediaService._is_transient_tiktok_extraction_error(exc):
             return APIError(
                 code="TIKTOK_EXTRACTION_UNAVAILABLE",
@@ -1905,6 +2037,9 @@ class MediaService:
                 "members-only",
                 "sign in",
                 "registered users who follow this account",
+                "account authentication is required",
+                "quarantined subreddit",
+                "private subreddit",
             )
         ):
             return APIError(
@@ -1927,6 +2062,13 @@ class MediaService:
                     code="FACEBOOK_MEDIA_NOT_AVAILABLE",
                     message=_FACEBOOK_MEDIA_NOT_AVAILABLE_MESSAGE,
                     details=_FACEBOOK_MEDIA_NOT_AVAILABLE_MESSAGE,
+                    status_code=404,
+                )
+            if is_reddit:
+                return APIError(
+                    code="REDDIT_MEDIA_NOT_AVAILABLE",
+                    message=_REDDIT_MEDIA_NOT_AVAILABLE_MESSAGE,
+                    details=_REDDIT_MEDIA_NOT_AVAILABLE_MESSAGE,
                     status_code=404,
                 )
             return APIError(
@@ -1965,6 +2107,14 @@ class MediaService:
                 code="FACEBOOK_EXTRACTION_UNAVAILABLE",
                 message="Facebook post temporarily unavailable",
                 details=_FACEBOOK_MEDIA_NOT_AVAILABLE_MESSAGE,
+                status_code=502,
+            )
+
+        if is_reddit:
+            return APIError(
+                code="REDDIT_EXTRACTION_UNAVAILABLE",
+                message="Reddit post temporarily unavailable",
+                details=_REDDIT_MEDIA_NOT_AVAILABLE_MESSAGE,
                 status_code=502,
             )
 

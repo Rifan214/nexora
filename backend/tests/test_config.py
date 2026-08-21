@@ -94,3 +94,21 @@ def test_facebook_auth_cookie_file_is_read_from_environment(monkeypatch: pytest.
     monkeypatch.setenv("NEXORA_FACEBOOK_AUTH_COOKIE_FILE", "C:/run/secrets/facebook.cookies.txt")
 
     assert get_settings().facebook_auth_cookie_file == "C:/run/secrets/facebook.cookies.txt"
+
+
+def test_reddit_auth_cookie_file_is_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NEXORA_REDDIT_AUTH_COOKIE_FILE", raising=False)
+
+    assert get_settings().reddit_auth_cookie_file == ""
+
+
+def test_reddit_auth_cookie_file_accepts_an_empty_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXORA_REDDIT_AUTH_COOKIE_FILE", "")
+
+    assert get_settings().reddit_auth_cookie_file == ""
+
+
+def test_reddit_auth_cookie_file_is_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXORA_REDDIT_AUTH_COOKIE_FILE", "C:/run/secrets/reddit.cookies.txt")
+
+    assert get_settings().reddit_auth_cookie_file == "C:/run/secrets/reddit.cookies.txt"

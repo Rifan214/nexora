@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     x_auth_cookie_file: str = Field(default="", alias="NEXORA_X_AUTH_COOKIE_FILE")
     instagram_auth_cookie_file: str = Field(default="", alias="NEXORA_INSTAGRAM_AUTH_COOKIE_FILE")
     facebook_auth_cookie_file: str = Field(default="", alias="NEXORA_FACEBOOK_AUTH_COOKIE_FILE")
+    reddit_auth_cookie_file: str = Field(default="", alias="NEXORA_REDDIT_AUTH_COOKIE_FILE")
     cors_origins: str = Field(default="", alias="NEXORA_CORS_ORIGINS")
     # Keep a longer safety cap for completed files that are never requested.
     download_expiration_minutes: int = Field(default=30, ge=1, alias="DOWNLOAD_EXPIRATION_MINUTES")
