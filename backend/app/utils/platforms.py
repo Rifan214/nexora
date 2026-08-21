@@ -8,6 +8,37 @@ _X_HOSTNAMES = frozenset({"x.com", "www.x.com", "twitter.com", "www.twitter.com"
 _X_STATUS_PATH = re.compile(r"^/[A-Za-z0-9_]+/status/[0-9]+/?$")
 _INSTAGRAM_HOSTNAMES = frozenset({"instagram.com", "www.instagram.com", "m.instagram.com"})
 _INSTAGRAM_MEDIA_PATH = re.compile(r"^(?:/[A-Za-z0-9_.]+)?/(?:p|tv|reels?)/[A-Za-z0-9_-]+/?$")
+_FACEBOOK_HOSTNAMES = frozenset({"facebook.com", "www.facebook.com", "m.facebook.com", "web.facebook.com", "l.facebook.com", "fb.watch"})
+_FB_WATCH_PATH = re.compile(r"^/[A-Za-z0-9_-]+/?$")
+_FACEBOOK_MEDIA_PATH_PATTERNS = (
+    re.compile(r"^/(?:reel|reels)/[A-Za-z0-9_-]+/?$"),
+    re.compile(r"^(?:/[A-Za-z0-9_.]+)?/videos/(?:[A-Za-z0-9_.]+/)?(?:\d+|pfbid[A-Za-z0-9]+)/?$"),
+    re.compile(r"^(?:/[A-Za-z0-9_.]+)?/posts/(?:\d+|pfbid[A-Za-z0-9]+)/?$"),
+    re.compile(r"^/share/(?:v|r)/[A-Za-z0-9_-]+/?$"),
+    re.compile(r"^/watch(?:/live)?/?$"),
+    re.compile(r"^/(?:video|story|permalink)\.php$"),
+    re.compile(r"^/groups/[^/]+/(?:permalink|posts)/(?:[\da-f]+/)?(?:\d+|pfbid[A-Za-z0-9]+)/?$"),
+)
+_FACEBOOK_TRACKING_PREFIXES = (
+    "fbclid",
+    "mibextid",
+    "ref",
+    "__cft__",
+    "__tn__",
+    "fref",
+    "set",
+    "notif_t",
+    "paipv",
+    "rdid",
+)
+
+
+def _is_facebook_tracking_param(key: str) -> bool:
+    k = key.casefold()
+    return any(
+        k == prefix or k.startswith(f"{prefix}[") or k.startswith(f"{prefix}_")
+        for prefix in _FACEBOOK_TRACKING_PREFIXES
+    )
 
 
 def detect_platform_from_url(url: str) -> str:
@@ -21,7 +52,7 @@ def detect_platform_from_url(url: str) -> str:
         return "twitter"
     if hostname in _INSTAGRAM_HOSTNAMES or hostname.endswith(".instagram.com"):
         return "instagram"
-    if hostname.endswith("facebook.com"):
+    if hostname in _FACEBOOK_HOSTNAMES or hostname.endswith(".facebook.com") or hostname == "fb.watch":
         return "facebook"
     if hostname.endswith("vimeo.com"):
         return "vimeo"
@@ -42,6 +73,29 @@ def is_instagram_media_url(url: str) -> bool:
     hostname = (parsed.hostname or "").casefold()
     is_ig_host = hostname in _INSTAGRAM_HOSTNAMES or hostname.endswith(".instagram.com")
     return is_ig_host and _INSTAGRAM_MEDIA_PATH.fullmatch(parsed.path) is not None
+
+
+def is_facebook_media_url(url: str) -> bool:
+    """Return whether a URL addresses a supported Facebook Watch, Reel, or Video item."""
+    parsed = urlsplit(url)
+    hostname = (parsed.hostname or "").casefold()
+    is_fb_host = hostname in _FACEBOOK_HOSTNAMES or hostname.endswith(".facebook.com")
+    if not is_fb_host:
+        return False
+
+    if hostname == "fb.watch":
+        return _FB_WATCH_PATH.fullmatch(parsed.path) is not None and parsed.path.strip("/") != ""
+
+    path = parsed.path
+    if any(pattern.fullmatch(path) is not None for pattern in _FACEBOOK_MEDIA_PATH_PATTERNS):
+        if path.rstrip("/") in ("/watch", "/watch/live", "/video.php", "/story.php", "/permalink.php"):
+            from urllib.parse import parse_qs
+
+            qs = parse_qs(parsed.query)
+            return any(k in qs for k in ("v", "video_id", "story_fbid", "id"))
+        return True
+
+    return False
 
 
 def normalize_media_url(url: str) -> str:
@@ -68,5 +122,28 @@ def normalize_media_url(url: str) -> str:
         else:
             canonical_path = parsed.path.rstrip("/") + "/"
         return urlunsplit(("https", "www.instagram.com", canonical_path, "", ""))
+
+    if hostname == "fb.watch":
+        return urlunsplit(("https", "fb.watch", parsed.path.rstrip("/") + "/", "", ""))
+
+    if hostname in _FACEBOOK_HOSTNAMES or hostname.endswith(".facebook.com"):
+        from urllib.parse import parse_qs, urlencode
+
+        qs = parse_qs(parsed.query, keep_blank_values=False)
+        cleaned_query = {
+            k: v for k, v in qs.items()
+            if not _is_facebook_tracking_param(k)
+        }
+        encoded_query = urlencode(cleaned_query, doseq=True) if cleaned_query else ""
+        canonical_path = parsed.path
+        if canonical_path.startswith(("/reel/", "/reels/")):
+            parts = canonical_path.strip("/").split("/")
+            reel_id = parts[-1]
+            canonical_path = f"/reel/{reel_id}/"
+            encoded_query = ""
+        elif canonical_path.rstrip("/") in ("/watch", "/watch/live"):
+            canonical_path = "/watch/"
+
+        return urlunsplit(("https", "www.facebook.com", canonical_path, encoded_query, ""))
 
     return url

@@ -108,14 +108,14 @@ class QualitySelector:
         video_candidates: list[dict[str, Any]] = []
 
         for format_item in usable_formats:
-            height = self._quality_height(format_item)
+            height = self._quality_height(format_item, platform=platform)
             if height is None:
                 logger.debug(
                     "Quality format excluded from video candidates format_id=%s reason=missing_height",
                     self._format_id(format_item),
                 )
                 continue
-            if not self._has_video(format_item):
+            if not self._has_video(format_item, platform=platform):
                 logger.debug(
                     "Quality format excluded from video candidates format_id=%s reason=missing_video_codec",
                     self._format_id(format_item),
@@ -297,18 +297,18 @@ class QualitySelector:
 
     @classmethod
     def _is_progressive(cls, format_item: dict[str, Any], *, platform: str | None = None) -> bool:
-        return cls._has_video(format_item) and cls._has_audio(format_item, platform=platform)
+        return cls._has_video(format_item, platform=platform) and cls._has_audio(format_item, platform=platform)
 
     @classmethod
     def _is_audio_only(cls, format_item: dict[str, Any], *, platform: str | None = None) -> bool:
-        return cls._has_audio(format_item, platform=platform) and not cls._has_video(format_item)
+        return cls._has_audio(format_item, platform=platform) and not cls._has_video(format_item, platform=platform)
 
     @classmethod
     def _is_instagram_progressive_candidate(cls, format_item: dict[str, Any]) -> bool:
         """Identify Instagram direct MP4 formats that carry multiplexed audio despite missing acodec metadata."""
         if cls._quality_height(format_item) is None:
             return False
-        if not cls._has_video(format_item):
+        if not cls._has_codec(format_item.get("vcodec")):
             return False
 
         # Require HTTP/HTTPS transport
@@ -326,6 +326,32 @@ class QualitySelector:
         audio_ext = str(format_item.get("audio_ext") or "").casefold()
         acodec = str(format_item.get("acodec") or "").casefold()
         if audio_ext == "none" and acodec == "none":
+            return False
+
+        return True
+
+    @classmethod
+    def _is_facebook_progressive_candidate(cls, format_item: dict[str, Any]) -> bool:
+        """Identify Facebook direct progressive MP4 formats (sd, hd) that carry multiplexed audio."""
+        fmt_id = str(format_item.get("format_id") or "").casefold()
+        if fmt_id not in {"sd", "hd", "sd-0", "hd-0", "browser_native_sd", "browser_native_hd"}:
+            return False
+
+        # Require HTTP/HTTPS transport
+        protocol = str(format_item.get("protocol") or "").casefold()
+        if protocol not in {"", "http", "https"}:
+            return False
+
+        # Require MP4 container / extension
+        ext = str(format_item.get("ext") or "").casefold()
+        video_ext = str(format_item.get("video_ext") or "").casefold()
+        if ext not in {"", "mp4"} and video_ext not in {"", "mp4"}:
+            return False
+
+        # Ensure no explicit indication that stream is video-only
+        audio_ext = str(format_item.get("audio_ext") or "").casefold()
+        acodec = str(format_item.get("acodec") or "").casefold()
+        if audio_ext == "none" or acodec == "none":
             return False
 
         return True
@@ -352,9 +378,13 @@ class QualitySelector:
             and audio_extension in {"", "none"}
         )
 
-    @staticmethod
-    def _has_video(format_item: dict[str, Any]) -> bool:
-        return QualitySelector._has_codec(format_item.get("vcodec"))
+    @classmethod
+    def _has_video(cls, format_item: dict[str, Any], *, platform: str | None = None) -> bool:
+        if QualitySelector._has_codec(format_item.get("vcodec")):
+            return True
+        if platform == "facebook" and cls._is_facebook_progressive_candidate(format_item):
+            return True
+        return False
 
     @classmethod
     def _has_audio(cls, format_item: dict[str, Any], *, platform: str | None = None) -> bool:
@@ -362,6 +392,9 @@ class QualitySelector:
             return True
 
         if platform == "instagram" and cls._is_instagram_progressive_candidate(format_item):
+            return True
+
+        if platform == "facebook" and cls._is_facebook_progressive_candidate(format_item):
             return True
 
         # X's HLS master playlists expose audio renditions with an explicit
@@ -387,20 +420,24 @@ class QualitySelector:
     def _has_codec(value: Any) -> bool:
         return value not in (None, "", "none", "None")
 
-    @staticmethod
-    def _quality_height(format_item: dict[str, Any]) -> int | None:
+    @classmethod
+    def _quality_height(cls, format_item: dict[str, Any], *, platform: str | None = None) -> int | None:
         height = QualitySelector._int_or_none(format_item.get("height"))
         width = QualitySelector._int_or_none(format_item.get("width"))
-        if height is None or height <= 0:
-            return None
-        if width is None or width <= 0:
+        if height is not None and height > 0:
+            if width is not None and width > 0:
+                return min(width, height)
             return height
 
-        # yt-dlp reports the physical vertical edge as ``height``. For portrait
-        # video, a 720x1280 stream would otherwise be labelled "1280p", while
-        # viewers and source platforms conventionally call it 720p. Group by
-        # the short edge to keep portrait and landscape labels familiar.
-        return min(width, height)
+        # Conservative fallback for Facebook progressive formats lacking resolution metadata
+        if platform == "facebook" and cls._is_facebook_progressive_candidate(format_item):
+            fmt_id = str(format_item.get("format_id") or "").casefold()
+            if "hd" in fmt_id:
+                return 720
+            if "sd" in fmt_id:
+                return 480
+
+        return None
 
     @staticmethod
     def _format_id(format_item: dict[str, Any] | None) -> str:
@@ -489,6 +526,8 @@ class QualitySelector:
         extension = str(format_item.get("ext") or "mp4").casefold()
         is_h264 = "avc" in video_codec or "h264" in video_codec
         if platform == "instagram" and cls._is_instagram_progressive_candidate(format_item) and is_h264:
+            return True
+        if platform == "facebook" and cls._is_facebook_progressive_candidate(format_item):
             return True
         return extension == "mp4" and is_h264 and (
             "mp4a" in audio_codec or "aac" in audio_codec

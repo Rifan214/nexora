@@ -36,6 +36,7 @@ from app.services.quality_selector import QualitySelector
 from app.models.resume_state import ResumeState
 from app.utils.platforms import (
     detect_platform_from_url,
+    is_facebook_media_url,
     is_instagram_media_url,
     is_x_status_url,
     normalize_media_url,
@@ -51,8 +52,8 @@ _AUDIO_MP3_POSTPROCESSOR = {
     "preferredcodec": "mp3",
     "preferredquality": "0",
 }
-_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter", "instagram"})
-_PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter", "instagram"})
+_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter", "instagram", "facebook"})
+_PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter", "instagram", "facebook"})
 _X_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
     {
         "X_MEDIA_NOT_AVAILABLE",
@@ -73,6 +74,17 @@ _INSTAGRAM_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
 )
 _INSTAGRAM_MEDIA_NOT_AVAILABLE_MESSAGE = (
     "Unable to access downloadable media from this Instagram post. "
+    "The post may be restricted, require login, or temporarily unavailable."
+)
+_FACEBOOK_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
+    {
+        "FACEBOOK_MEDIA_NOT_AVAILABLE",
+        "FACEBOOK_EXTRACTION_UNAVAILABLE",
+        "VIDEO_PRIVATE",
+    }
+)
+_FACEBOOK_MEDIA_NOT_AVAILABLE_MESSAGE = (
+    "Unable to access downloadable media from this Facebook post. "
     "The post may be restricted, require login, or temporarily unavailable."
 )
 _YOUTUBE_MIX_SEED_PATTERN = re.compile(r"^RD(?P<seed>[A-Za-z0-9_-]{11})$")
@@ -137,18 +149,25 @@ _AUTHENTICATED_SNAPSHOT_SENSITIVE_KEYS = frozenset(
     {
         "authorization",
         "auth_token",
+        "c_user",
         "cookie",
         "cookies",
         "csrftoken",
         "ct0",
+        "datr",
         "ds_user_id",
+        "fr",
         "ig_did",
         "mid",
+        "presence",
         "proxy-authorization",
         "rur",
+        "sb",
         "sessionid",
         "set-cookie",
+        "wd",
         "x-csrf-token",
+        "xs",
     }
 )
 
@@ -740,12 +759,19 @@ class MediaService:
             self._ensure_platform_media_is_downloadable(info, platform)
             authenticated = False
         except APIError as guest_error:
-            authenticated_result = self._try_authenticated_x_extraction(
-                normalized_url,
-                guest_error=guest_error,
-            ) or self._try_authenticated_instagram_extraction(
-                normalized_url,
-                guest_error=guest_error,
+            authenticated_result = (
+                self._try_authenticated_x_extraction(
+                    normalized_url,
+                    guest_error=guest_error,
+                )
+                or self._try_authenticated_instagram_extraction(
+                    normalized_url,
+                    guest_error=guest_error,
+                )
+                or self._try_authenticated_facebook_extraction(
+                    normalized_url,
+                    guest_error=guest_error,
+                )
             )
             if authenticated_result is None:
                 raise
@@ -1111,11 +1137,79 @@ class MediaService:
             raise DownloadError("Authenticated Instagram session unavailable")
         return cookie_file
 
+    def _try_authenticated_facebook_extraction(
+        self,
+        normalized_url: str,
+        *,
+        guest_error: APIError,
+    ) -> tuple[dict[str, Any], str] | None:
+        if (
+            detect_platform_from_url(normalized_url) != "facebook"
+            or guest_error.code not in _FACEBOOK_AUTHENTICATED_RETRY_ERROR_CODES
+        ):
+            return None
+
+        cookie_file = self._facebook_auth_cookie_file()
+        if cookie_file is None:
+            return None
+
+        logger.info("Facebook authenticated fallback enabled=true attempted=true")
+        try:
+            info = self._extract_info_or_raise_api_error(
+                normalized_url,
+                cookie_file=cookie_file,
+            )
+            info = self._sanitize_authenticated_snapshot_info(info)
+            platform = self._detect_platform(info)
+            self._ensure_supported_media_platform(platform)
+            self._ensure_platform_media_is_downloadable(info, platform)
+        except APIError:
+            logger.warning(
+                "Facebook authenticated fallback enabled=true attempted=true succeeded=false"
+            )
+            return None
+
+        logger.info("Facebook authenticated fallback enabled=true attempted=true succeeded=true")
+        return info, platform
+
+    def _facebook_auth_cookie_file(self) -> Path | None:
+        configured_path = self._settings.facebook_auth_cookie_file.strip()
+        if not configured_path:
+            return None
+
+        cookie_file = Path(configured_path).expanduser()
+        try:
+            if not cookie_file.is_file():
+                raise FileNotFoundError
+            cookie_jar = MozillaCookieJar(str(cookie_file))
+            cookie_jar.load(ignore_discard=True, ignore_expires=True)
+            cookie_names = {cookie.name for cookie in cookie_jar}
+            if any(name in cookie_names for name in ("c_user", "xs", "fr", "datr", "sb")):
+                return cookie_file
+        except (LoadError, OSError):
+            logger.warning(
+                "Facebook authenticated fallback enabled=true attempted=false reason=cookie_file_unavailable"
+            )
+            return None
+
+        logger.warning(
+            "Facebook authenticated fallback enabled=true attempted=false reason=cookie_file_invalid"
+        )
+        return None
+
+    def _require_facebook_auth_cookie_file(self) -> Path:
+        cookie_file = self._facebook_auth_cookie_file()
+        if cookie_file is None:
+            raise DownloadError("Authenticated Facebook session unavailable")
+        return cookie_file
+
     def _auth_cookie_file(self, platform: str) -> Path | None:
         if platform == "twitter":
             return self._x_auth_cookie_file()
         if platform == "instagram":
             return self._instagram_auth_cookie_file()
+        if platform == "facebook":
+            return self._facebook_auth_cookie_file()
         return None
 
     def _require_auth_cookie_file(self, platform: str) -> Path:
@@ -1123,6 +1217,8 @@ class MediaService:
             return self._require_x_auth_cookie_file()
         if platform == "instagram":
             return self._require_instagram_auth_cookie_file()
+        if platform == "facebook":
+            return self._require_facebook_auth_cookie_file()
         raise DownloadError(f"Authenticated session unavailable for platform: {platform}")
 
     @classmethod
@@ -1516,6 +1612,16 @@ class MediaService:
                 )
             return normalize_media_url(normalized_url)
 
+        if platform == "facebook":
+            if not is_facebook_media_url(normalized_url):
+                raise APIError(
+                    code="INVALID_FACEBOOK_URL",
+                    message="Invalid Facebook URL",
+                    details="Use a public Facebook Watch, Reel, or Video URL.",
+                    status_code=422,
+                )
+            return normalize_media_url(normalized_url)
+
         return normalized_url
 
     @staticmethod
@@ -1532,7 +1638,7 @@ class MediaService:
             return "twitter"
         if "instagram" in haystack:
             return "instagram"
-        if "facebook" in haystack:
+        if "facebook" in haystack or "fb" in haystack:
             return "facebook"
         if "vimeo" in haystack:
             return "vimeo"
@@ -1550,7 +1656,7 @@ class MediaService:
         )
 
     def _ensure_platform_media_is_downloadable(self, info: dict[str, Any], platform: str) -> None:
-        """Reject X and Instagram posts that yt-dlp resolved without playable media streams."""
+        """Reject posts that yt-dlp resolved without playable media streams."""
         if platform == "twitter":
             formats = info.get("formats") or []
             if self._quality_selector.build_qualities(
@@ -1581,6 +1687,21 @@ class MediaService:
                 status_code=422,
             )
 
+        if platform == "facebook":
+            formats = info.get("formats") or []
+            if self._quality_selector.build_qualities(
+                formats,
+                platform=platform,
+            ) or self._has_audio_available(formats, platform=platform):
+                return
+
+            raise APIError(
+                code="FACEBOOK_MEDIA_NOT_AVAILABLE",
+                message=_FACEBOOK_MEDIA_NOT_AVAILABLE_MESSAGE,
+                details=_FACEBOOK_MEDIA_NOT_AVAILABLE_MESSAGE,
+                status_code=422,
+            )
+
     def _build_metadata(self, *, info: dict[str, Any], platform: str, url: str) -> MediaMetadata:
         formats = info.get("formats") or []
         video_qualities = self._quality_selector.build_qualities(formats, platform=platform)
@@ -1605,11 +1726,12 @@ class MediaService:
     def _build_playlist_items(self, info: dict[str, Any]) -> list[PlaylistItem]:
         items: list[PlaylistItem] = []
         is_instagram = self._detect_platform(info) == "instagram"
+        is_facebook = self._detect_platform(info) == "facebook"
         for entry in info.get("entries") or []:
             if not isinstance(entry, dict):
                 continue
-            # For Instagram carousels, ignore image-only entries that have no playable video stream
-            if is_instagram or self._detect_platform(entry) == "instagram":
+            # For Instagram and Facebook multi-media, ignore image-only entries that have no playable video stream
+            if is_instagram or is_facebook or self._detect_platform(entry) in ("instagram", "facebook"):
                 entry_formats = entry.get("formats") or []
                 if not entry_formats and not entry.get("video_url") and not entry.get("duration"):
                     continue
@@ -1628,9 +1750,9 @@ class MediaService:
 
     @staticmethod
     def _download_source_url(*, info: dict[str, Any], platform: str, url: str) -> str:
-        # TikTok, Twitter, and Instagram URLs can succeed where a later extraction
+        # TikTok, Twitter, Instagram, and Facebook URLs can succeed where a later extraction
         # of the canonical URL returned by yt-dlp fails or misses query state.
-        if platform in {"tiktok", "twitter", "instagram"}:
+        if platform in {"tiktok", "twitter", "instagram", "facebook"}:
             return url
         return str(info.get("webpage_url") or url)
 
@@ -1649,6 +1771,8 @@ class MediaService:
             ie_key = str(entry.get("ie_key") or entry.get("extractor_key") or "").casefold()
             if "instagram" in ie_key:
                 return f"https://www.instagram.com/p/{quote(str(entry_id), safe='')}/"
+            if "facebook" in ie_key:
+                return f"https://www.facebook.com/watch/?v={quote(str(entry_id), safe='')}"
 
         # YouTube flat playlist extraction commonly returns only a video ID.
         if entry_id:
@@ -1706,6 +1830,7 @@ class MediaService:
         is_youtube = url is not None and detect_platform_from_url(url) == "youtube"
         is_tiktok = url is not None and detect_platform_from_url(url) == "tiktok"
         is_instagram = url is not None and detect_platform_from_url(url) == "instagram"
+        is_facebook = url is not None and detect_platform_from_url(url) == "facebook"
 
         if is_youtube and any(marker in lowered for marker in _YOUTUBE_MIX_FAILURE_MARKERS):
             return MediaService._youtube_mix_unavailable_error()
@@ -1738,6 +1863,28 @@ class MediaService:
                 code="INVALID_INSTAGRAM_URL",
                 message="Invalid Instagram URL",
                 details="Use a public Instagram Reel or Post URL in the form instagram.com/reel/<id> or instagram.com/p/<id>.",
+                status_code=422,
+            )
+
+        if is_facebook and any(marker in lowered for marker in ("unsupported url", "is not a valid url")):
+            return APIError(
+                code="INVALID_FACEBOOK_URL",
+                message="Invalid Facebook URL",
+                details="Use a public Facebook Watch, Reel, or Video URL.",
+                status_code=422,
+            )
+
+        if is_facebook and any(
+            token in lowered
+            for token in (
+                "there is no video in this post",
+                "cannot parse data",
+            )
+        ):
+            return APIError(
+                code="NO_VIDEO_IN_POST",
+                message="No downloadable video found",
+                details="This Facebook post does not contain a downloadable video.",
                 status_code=422,
             )
 
@@ -1775,6 +1922,13 @@ class MediaService:
                     details=_INSTAGRAM_MEDIA_NOT_AVAILABLE_MESSAGE,
                     status_code=404,
                 )
+            if is_facebook:
+                return APIError(
+                    code="FACEBOOK_MEDIA_NOT_AVAILABLE",
+                    message=_FACEBOOK_MEDIA_NOT_AVAILABLE_MESSAGE,
+                    details=_FACEBOOK_MEDIA_NOT_AVAILABLE_MESSAGE,
+                    status_code=404,
+                )
             return APIError(
                 code="VIDEO_UNAVAILABLE",
                 message="Video unavailable",
@@ -1803,6 +1957,14 @@ class MediaService:
                 code="INSTAGRAM_EXTRACTION_UNAVAILABLE",
                 message="Instagram post temporarily unavailable",
                 details="Instagram could not be accessed right now. Try the public post URL again later.",
+                status_code=502,
+            )
+
+        if is_facebook:
+            return APIError(
+                code="FACEBOOK_EXTRACTION_UNAVAILABLE",
+                message="Facebook post temporarily unavailable",
+                details=_FACEBOOK_MEDIA_NOT_AVAILABLE_MESSAGE,
                 status_code=502,
             )
 
