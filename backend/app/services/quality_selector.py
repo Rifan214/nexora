@@ -50,10 +50,15 @@ class QualitySelector:
             for selection in self.select_qualities(formats, platform=platform)
         ]
 
-    def has_audio_available(self, formats: Iterable[dict[str, Any]]) -> bool:
+    def has_audio_available(
+        self,
+        formats: Iterable[dict[str, Any]],
+        *,
+        platform: str | None = None,
+    ) -> bool:
         """Return whether yt-dlp exposed a usable standalone or progressive audio stream."""
         return any(
-            isinstance(format_item, dict) and self._has_audio(format_item)
+            isinstance(format_item, dict) and self._has_audio(format_item, platform=platform)
             for format_item in formats
         )
 
@@ -97,7 +102,7 @@ class QualitySelector:
             [self._format_id(item) for item in usable_formats],
         )
 
-        audio_candidates = [item for item in usable_formats if self._is_audio_only(item)]
+        audio_candidates = [item for item in usable_formats if self._is_audio_only(item, platform=platform)]
         best_audio = self._select_best_audio(audio_candidates)
         by_height: dict[int, list[dict[str, Any]]] = {}
         video_candidates: list[dict[str, Any]] = []
@@ -141,6 +146,7 @@ class QualitySelector:
                 height=height,
                 video_candidates=by_height[height],
                 best_audio=best_audio,
+                platform=platform,
             )
             if selection is not None:
                 selections.append(selection)
@@ -193,9 +199,10 @@ class QualitySelector:
         height: int,
         video_candidates: list[dict[str, Any]],
         best_audio: dict[str, Any] | None,
+        platform: str | None = None,
     ) -> QualitySelection | None:
-        progressive = [item for item in video_candidates if self._is_progressive(item)]
-        compatible_progressive = [item for item in progressive if self._is_highly_compatible_progressive(item)]
+        progressive = [item for item in video_candidates if self._is_progressive(item, platform=platform)]
+        compatible_progressive = [item for item in progressive if self._is_highly_compatible_progressive(item, platform=platform)]
 
         # A progressive H.264/AAC MP4 is deliberately preferred over an AV1/VP9
         # adaptive stream at the same height. It is substantially more compatible
@@ -211,7 +218,7 @@ class QualitySelector:
             )
             return selection
 
-        adaptive_video = [item for item in video_candidates if not self._has_audio(item)]
+        adaptive_video = [item for item in video_candidates if not self._has_audio(item, platform=platform)]
         if adaptive_video and best_audio is not None:
             selected_video = max(adaptive_video, key=self._video_score)
             selection = self._build_selection(height, selected_video, best_audio)
@@ -284,12 +291,39 @@ class QualitySelector:
         return None
 
     @classmethod
-    def _is_progressive(cls, format_item: dict[str, Any]) -> bool:
-        return cls._has_video(format_item) and cls._has_audio(format_item)
+    def _is_progressive(cls, format_item: dict[str, Any], *, platform: str | None = None) -> bool:
+        return cls._has_video(format_item) and cls._has_audio(format_item, platform=platform)
 
     @classmethod
-    def _is_audio_only(cls, format_item: dict[str, Any]) -> bool:
-        return cls._has_audio(format_item) and not cls._has_video(format_item)
+    def _is_audio_only(cls, format_item: dict[str, Any], *, platform: str | None = None) -> bool:
+        return cls._has_audio(format_item, platform=platform) and not cls._has_video(format_item)
+
+    @classmethod
+    def _is_instagram_progressive_candidate(cls, format_item: dict[str, Any]) -> bool:
+        """Identify Instagram direct MP4 formats that carry multiplexed audio despite missing acodec metadata."""
+        if cls._quality_height(format_item) is None:
+            return False
+        if not cls._has_video(format_item):
+            return False
+
+        # Require HTTP/HTTPS transport
+        protocol = str(format_item.get("protocol") or "").casefold()
+        if protocol not in {"", "http", "https"}:
+            return False
+
+        # Require MP4 container / extension
+        ext = str(format_item.get("ext") or "").casefold()
+        video_ext = str(format_item.get("video_ext") or "").casefold()
+        if ext not in {"", "mp4"} and video_ext not in {"", "mp4"}:
+            return False
+
+        # Ensure no explicit indication that stream is video-only
+        audio_ext = str(format_item.get("audio_ext") or "").casefold()
+        acodec = str(format_item.get("acodec") or "").casefold()
+        if audio_ext == "none" and acodec == "none":
+            return False
+
+        return True
 
     @classmethod
     def _is_x_video_only_candidate(cls, format_item: dict[str, Any]) -> bool:
@@ -317,9 +351,12 @@ class QualitySelector:
     def _has_video(format_item: dict[str, Any]) -> bool:
         return QualitySelector._has_codec(format_item.get("vcodec"))
 
-    @staticmethod
-    def _has_audio(format_item: dict[str, Any]) -> bool:
+    @classmethod
+    def _has_audio(cls, format_item: dict[str, Any], *, platform: str | None = None) -> bool:
         if QualitySelector._has_codec(format_item.get("acodec")):
+            return True
+
+        if platform == "instagram" and cls._is_instagram_progressive_candidate(format_item):
             return True
 
         # X's HLS master playlists expose audio renditions with an explicit
@@ -436,11 +473,19 @@ class QualitySelector:
         return 0
 
     @classmethod
-    def _is_highly_compatible_progressive(cls, format_item: dict[str, Any]) -> bool:
+    def _is_highly_compatible_progressive(
+        cls,
+        format_item: dict[str, Any],
+        *,
+        platform: str | None = None,
+    ) -> bool:
         video_codec = str(format_item.get("vcodec") or "").casefold()
         audio_codec = str(format_item.get("acodec") or "").casefold()
-        extension = str(format_item.get("ext") or "").casefold()
-        return extension == "mp4" and ("avc" in video_codec or "h264" in video_codec) and (
+        extension = str(format_item.get("ext") or "mp4").casefold()
+        is_h264 = "avc" in video_codec or "h264" in video_codec
+        if platform == "instagram" and cls._is_instagram_progressive_candidate(format_item) and is_h264:
+            return True
+        return extension == "mp4" and is_h264 and (
             "mp4a" in audio_codec or "aac" in audio_codec
         )
 

@@ -34,7 +34,12 @@ from app.services.queue_manager import QueueManager, get_queue_manager
 from app.services.resume_state_manager import ResumeStateManager, get_resume_state_manager
 from app.services.quality_selector import QualitySelector
 from app.models.resume_state import ResumeState
-from app.utils.platforms import detect_platform_from_url, is_x_status_url, normalize_media_url
+from app.utils.platforms import (
+    detect_platform_from_url,
+    is_instagram_media_url,
+    is_x_status_url,
+    normalize_media_url,
+)
 from app.utils.storage import build_download_outtmpl, find_downloaded_file, get_temp_storage_dir
 from app.utils.validators import validate_http_url
 
@@ -46,8 +51,8 @@ _AUDIO_MP3_POSTPROCESSOR = {
     "preferredcodec": "mp3",
     "preferredquality": "0",
 }
-_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter"})
-_PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter"})
+_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter", "instagram"})
+_PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter", "instagram"})
 _X_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
     {
         "X_MEDIA_NOT_AVAILABLE",
@@ -57,6 +62,17 @@ _X_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
 )
 _X_MEDIA_NOT_AVAILABLE_MESSAGE = (
     "Unable to access downloadable media from this X post. "
+    "The post may be restricted, require login, or temporarily unavailable."
+)
+_INSTAGRAM_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
+    {
+        "INSTAGRAM_MEDIA_NOT_AVAILABLE",
+        "INSTAGRAM_EXTRACTION_UNAVAILABLE",
+        "VIDEO_PRIVATE",
+    }
+)
+_INSTAGRAM_MEDIA_NOT_AVAILABLE_MESSAGE = (
+    "Unable to access downloadable media from this Instagram post. "
     "The post may be restricted, require login, or temporarily unavailable."
 )
 _YOUTUBE_MIX_SEED_PATTERN = re.compile(r"^RD(?P<seed>[A-Za-z0-9_-]{11})$")
@@ -123,8 +139,14 @@ _AUTHENTICATED_SNAPSHOT_SENSITIVE_KEYS = frozenset(
         "auth_token",
         "cookie",
         "cookies",
+        "csrftoken",
         "ct0",
+        "ds_user_id",
+        "ig_did",
+        "mid",
         "proxy-authorization",
+        "rur",
+        "sessionid",
         "set-cookie",
         "x-csrf-token",
     }
@@ -254,7 +276,7 @@ class MediaService:
 
             formats = info.get("formats") or []
             if request.media_type == "audio":
-                if not self._has_audio_available(formats):
+                if not self._has_audio_available(formats, platform=platform):
                     raise APIError(
                         code="AUDIO_NOT_AVAILABLE",
                         message="Audio unavailable",
@@ -358,14 +380,14 @@ class MediaService:
                 return
 
             self._process_manager.raise_if_cancelled(job_id)
-            x_auth_cookie_file = self._require_x_auth_cookie_file() if x_authenticated else None
+            auth_cookie_file = self._require_auth_cookie_file(initial_platform) if x_authenticated else None
             if download_info is not None:
                 extracted_info = download_info
             else:
                 with self._process_manager.worker_context(job_id):
                     extracted_info = (
-                        self._extract_info(url, cookie_file=x_auth_cookie_file)
-                        if x_auth_cookie_file is not None
+                        self._extract_info(url, cookie_file=auth_cookie_file)
+                        if auth_cookie_file is not None
                         else self._extract_info(url)
                     )
             self._process_manager.raise_if_cancelled(job_id)
@@ -413,7 +435,7 @@ class MediaService:
                 job_manager=job_manager,
                 resume_state_manager=self._resume_state_manager,
                 continue_download=resume_state is not None,
-                cookie_file=x_auth_cookie_file,
+                cookie_file=auth_cookie_file,
             )
 
             with self._process_manager.worker_context(job_id):
@@ -450,7 +472,7 @@ class MediaService:
                             job_manager=job_manager,
                             resume_state_manager=self._resume_state_manager,
                             continue_download=False,
-                            cookie_file=x_auth_cookie_file,
+                            cookie_file=auth_cookie_file,
                         )
                         with YoutubeDL(fallback_options) as fallback_youtube_dl:
                             self._process_manager.attach_downloader(job_id, fallback_youtube_dl)
@@ -690,12 +712,13 @@ class MediaService:
         snapshot = self._snapshot_cache.get(normalized_url)
         if snapshot is None:
             return None
-        if snapshot.authenticated and self._x_auth_cookie_file() is None:
-            self._snapshot_cache.delete(normalized_url)
-            return None
 
         info = snapshot.extracted_info
         platform = self._detect_platform(info)
+        if snapshot.authenticated and self._auth_cookie_file(platform) is None:
+            self._snapshot_cache.delete(normalized_url)
+            return None
+
         self._ensure_supported_media_platform(platform)
         self._ensure_platform_media_is_downloadable(info, platform)
         source_url = self._cached_source_url(
@@ -718,6 +741,9 @@ class MediaService:
             authenticated = False
         except APIError as guest_error:
             authenticated_result = self._try_authenticated_x_extraction(
+                normalized_url,
+                guest_error=guest_error,
+            ) or self._try_authenticated_instagram_extraction(
                 normalized_url,
                 guest_error=guest_error,
             )
@@ -1018,6 +1044,86 @@ class MediaService:
         if cookie_file is None:
             raise DownloadError("Authenticated X session unavailable")
         return cookie_file
+
+    def _try_authenticated_instagram_extraction(
+        self,
+        normalized_url: str,
+        *,
+        guest_error: APIError,
+    ) -> tuple[dict[str, Any], str] | None:
+        if (
+            detect_platform_from_url(normalized_url) != "instagram"
+            or guest_error.code not in _INSTAGRAM_AUTHENTICATED_RETRY_ERROR_CODES
+        ):
+            return None
+
+        cookie_file = self._instagram_auth_cookie_file()
+        if cookie_file is None:
+            return None
+
+        logger.info("Instagram authenticated fallback enabled=true attempted=true")
+        try:
+            info = self._extract_info_or_raise_api_error(
+                normalized_url,
+                cookie_file=cookie_file,
+            )
+            info = self._sanitize_authenticated_snapshot_info(info)
+            platform = self._detect_platform(info)
+            self._ensure_supported_media_platform(platform)
+            self._ensure_platform_media_is_downloadable(info, platform)
+        except APIError:
+            logger.warning(
+                "Instagram authenticated fallback enabled=true attempted=true succeeded=false"
+            )
+            return None
+
+        logger.info("Instagram authenticated fallback enabled=true attempted=true succeeded=true")
+        return info, platform
+
+    def _instagram_auth_cookie_file(self) -> Path | None:
+        configured_path = self._settings.instagram_auth_cookie_file.strip()
+        if not configured_path:
+            return None
+
+        cookie_file = Path(configured_path).expanduser()
+        try:
+            if not cookie_file.is_file():
+                raise FileNotFoundError
+            cookie_jar = MozillaCookieJar(str(cookie_file))
+            cookie_jar.load(ignore_discard=True, ignore_expires=True)
+            cookie_names = {cookie.name for cookie in cookie_jar}
+            if "sessionid" in cookie_names or "csrftoken" in cookie_names or "ds_user_id" in cookie_names:
+                return cookie_file
+        except (LoadError, OSError):
+            logger.warning(
+                "Instagram authenticated fallback enabled=true attempted=false reason=cookie_file_unavailable"
+            )
+            return None
+
+        logger.warning(
+            "Instagram authenticated fallback enabled=true attempted=false reason=cookie_file_invalid"
+        )
+        return None
+
+    def _require_instagram_auth_cookie_file(self) -> Path:
+        cookie_file = self._instagram_auth_cookie_file()
+        if cookie_file is None:
+            raise DownloadError("Authenticated Instagram session unavailable")
+        return cookie_file
+
+    def _auth_cookie_file(self, platform: str) -> Path | None:
+        if platform == "twitter":
+            return self._x_auth_cookie_file()
+        if platform == "instagram":
+            return self._instagram_auth_cookie_file()
+        return None
+
+    def _require_auth_cookie_file(self, platform: str) -> Path:
+        if platform == "twitter":
+            return self._require_x_auth_cookie_file()
+        if platform == "instagram":
+            return self._require_instagram_auth_cookie_file()
+        raise DownloadError(f"Authenticated session unavailable for platform: {platform}")
 
     @classmethod
     def _sanitize_authenticated_snapshot_info(cls, info: dict[str, Any]) -> dict[str, Any]:
@@ -1389,17 +1495,28 @@ class MediaService:
     @staticmethod
     def _normalize_source_url(url: str) -> str:
         normalized_url = validate_http_url(url)
-        if detect_platform_from_url(normalized_url) != "twitter":
-            return normalized_url
+        platform = detect_platform_from_url(normalized_url)
+        if platform == "twitter":
+            if not is_x_status_url(normalized_url):
+                raise APIError(
+                    code="INVALID_X_URL",
+                    message="Invalid X post URL",
+                    details="Use a public X post URL in the form x.com/<user>/status/<id>.",
+                    status_code=422,
+                )
+            return normalize_media_url(normalized_url)
 
-        if not is_x_status_url(normalized_url):
-            raise APIError(
-                code="INVALID_X_URL",
-                message="Invalid X post URL",
-                details="Use a public X post URL in the form x.com/<user>/status/<id>.",
-                status_code=422,
-            )
-        return normalize_media_url(normalized_url)
+        if platform == "instagram":
+            if not is_instagram_media_url(normalized_url):
+                raise APIError(
+                    code="INVALID_INSTAGRAM_URL",
+                    message="Invalid Instagram URL",
+                    details="Use a public Instagram Reel or Post URL in the form instagram.com/reel/<id> or instagram.com/p/<id>.",
+                    status_code=422,
+                )
+            return normalize_media_url(normalized_url)
+
+        return normalized_url
 
     @staticmethod
     def _detect_platform(info: dict[str, Any]) -> str:
@@ -1433,23 +1550,36 @@ class MediaService:
         )
 
     def _ensure_platform_media_is_downloadable(self, info: dict[str, Any], platform: str) -> None:
-        """Reject X posts that yt-dlp resolved without playable media streams."""
-        if platform != "twitter":
-            return
+        """Reject X and Instagram posts that yt-dlp resolved without playable media streams."""
+        if platform == "twitter":
+            formats = info.get("formats") or []
+            if self._quality_selector.build_qualities(
+                formats,
+                platform=platform,
+            ) or self._has_audio_available(formats, platform=platform):
+                return
 
-        formats = info.get("formats") or []
-        if self._quality_selector.build_qualities(
-            formats,
-            platform=platform,
-        ) or self._has_audio_available(formats):
-            return
+            raise APIError(
+                code="X_MEDIA_NOT_AVAILABLE",
+                message=_X_MEDIA_NOT_AVAILABLE_MESSAGE,
+                details=_X_MEDIA_NOT_AVAILABLE_MESSAGE,
+                status_code=422,
+            )
 
-        raise APIError(
-            code="X_MEDIA_NOT_AVAILABLE",
-            message=_X_MEDIA_NOT_AVAILABLE_MESSAGE,
-            details=_X_MEDIA_NOT_AVAILABLE_MESSAGE,
-            status_code=422,
-        )
+        if platform == "instagram":
+            formats = info.get("formats") or []
+            if self._quality_selector.build_qualities(
+                formats,
+                platform=platform,
+            ) or self._has_audio_available(formats, platform=platform):
+                return
+
+            raise APIError(
+                code="INSTAGRAM_MEDIA_NOT_AVAILABLE",
+                message=_INSTAGRAM_MEDIA_NOT_AVAILABLE_MESSAGE,
+                details=_INSTAGRAM_MEDIA_NOT_AVAILABLE_MESSAGE,
+                status_code=422,
+            )
 
     def _build_metadata(self, *, info: dict[str, Any], platform: str, url: str) -> MediaMetadata:
         formats = info.get("formats") or []
@@ -1469,14 +1599,20 @@ class MediaService:
             like_count=self._int_or_none(info.get("like_count")),
             description=info.get("description"),
             video_qualities=video_qualities,
-            audio_options=self._build_audio_options(formats),
+            audio_options=self._build_audio_options(formats, platform=platform),
         )
 
     def _build_playlist_items(self, info: dict[str, Any]) -> list[PlaylistItem]:
         items: list[PlaylistItem] = []
+        is_instagram = self._detect_platform(info) == "instagram"
         for entry in info.get("entries") or []:
             if not isinstance(entry, dict):
                 continue
+            # For Instagram carousels, ignore image-only entries that have no playable video stream
+            if is_instagram or self._detect_platform(entry) == "instagram":
+                entry_formats = entry.get("formats") or []
+                if not entry_formats and not entry.get("video_url") and not entry.get("duration"):
+                    continue
             webpage_url = self._playlist_entry_webpage_url(entry)
             if webpage_url is None:
                 continue
@@ -1492,10 +1628,9 @@ class MediaService:
 
     @staticmethod
     def _download_source_url(*, info: dict[str, Any], platform: str, url: str) -> str:
-        # TikTok short/share URLs can succeed where a later extraction of the
-        # canonical URL returned by yt-dlp fails. Returning the proven source
-        # URL lets the existing Home, batch, and retry flows replay the request.
-        if platform in {"tiktok", "twitter"}:
+        # TikTok, Twitter, and Instagram URLs can succeed where a later extraction
+        # of the canonical URL returned by yt-dlp fails or misses query state.
+        if platform in {"tiktok", "twitter", "instagram"}:
             return url
         return str(info.get("webpage_url") or url)
 
@@ -1509,19 +1644,34 @@ class MediaService:
         if isinstance(entry_url, str) and entry_url.startswith(("http://", "https://")):
             return entry_url
 
+        entry_id = entry.get("id") or entry.get("code")
+        if entry_id:
+            ie_key = str(entry.get("ie_key") or entry.get("extractor_key") or "").casefold()
+            if "instagram" in ie_key:
+                return f"https://www.instagram.com/p/{quote(str(entry_id), safe='')}/"
+
         # YouTube flat playlist extraction commonly returns only a video ID.
-        entry_id = entry.get("id") or entry_url
         if entry_id:
             return f"https://www.youtube.com/watch?v={quote(str(entry_id), safe='')}"
         return None
 
-    def _build_audio_options(self, formats: list[dict[str, Any]]) -> list[AudioOption]:
-        if not self._has_audio_available(formats):
+    def _build_audio_options(
+        self,
+        formats: list[dict[str, Any]],
+        *,
+        platform: str | None = None,
+    ) -> list[AudioOption]:
+        if not self._has_audio_available(formats, platform=platform):
             return []
         return [AudioOption(label="MP3", extension="mp3")]
 
-    def _has_audio_available(self, formats: list[dict[str, Any]]) -> bool:
-        return self._quality_selector.has_audio_available(formats)
+    def _has_audio_available(
+        self,
+        formats: list[dict[str, Any]],
+        *,
+        platform: str | None = None,
+    ) -> bool:
+        return self._quality_selector.has_audio_available(formats, platform=platform)
 
     @staticmethod
     def _select_thumbnail(info: dict[str, Any]) -> str | None:
@@ -1555,6 +1705,7 @@ class MediaService:
         is_twitter = url is not None and detect_platform_from_url(url) == "twitter"
         is_youtube = url is not None and detect_platform_from_url(url) == "youtube"
         is_tiktok = url is not None and detect_platform_from_url(url) == "tiktok"
+        is_instagram = url is not None and detect_platform_from_url(url) == "instagram"
 
         if is_youtube and any(marker in lowered for marker in _YOUTUBE_MIX_FAILURE_MARKERS):
             return MediaService._youtube_mix_unavailable_error()
@@ -1574,6 +1725,22 @@ class MediaService:
                 status_code=422,
             )
 
+        if is_instagram and "there is no video in this post" in lowered:
+            return APIError(
+                code="NO_VIDEO_IN_POST",
+                message="No downloadable video found",
+                details="This Instagram post does not contain a downloadable video.",
+                status_code=422,
+            )
+
+        if is_instagram and any(marker in lowered for marker in ("unsupported url", "is not a valid url")):
+            return APIError(
+                code="INVALID_INSTAGRAM_URL",
+                message="Invalid Instagram URL",
+                details="Use a public Instagram Reel or Post URL in the form instagram.com/reel/<id> or instagram.com/p/<id>.",
+                status_code=422,
+            )
+
         if is_tiktok and MediaService._is_transient_tiktok_extraction_error(exc):
             return APIError(
                 code="TIKTOK_EXTRACTION_UNAVAILABLE",
@@ -1582,7 +1749,17 @@ class MediaService:
                 status_code=502,
             )
 
-        if any(token in lowered for token in ("private", "protected", "restricted", "members-only", "sign in")):
+        if any(
+            token in lowered
+            for token in (
+                "private",
+                "protected",
+                "restricted",
+                "members-only",
+                "sign in",
+                "registered users who follow this account",
+            )
+        ):
             return APIError(
                 code="VIDEO_PRIVATE",
                 message="Private video",
@@ -1590,7 +1767,14 @@ class MediaService:
                 status_code=403,
             )
 
-        if any(token in lowered for token in ("removed", "unavailable", "not available", "not found")):
+        if any(token in lowered for token in ("removed", "unavailable", "not available", "not found", "empty media response")):
+            if is_instagram:
+                return APIError(
+                    code="INSTAGRAM_MEDIA_NOT_AVAILABLE",
+                    message=_INSTAGRAM_MEDIA_NOT_AVAILABLE_MESSAGE,
+                    details=_INSTAGRAM_MEDIA_NOT_AVAILABLE_MESSAGE,
+                    status_code=404,
+                )
             return APIError(
                 code="VIDEO_UNAVAILABLE",
                 message="Video unavailable",
@@ -1611,6 +1795,14 @@ class MediaService:
                 code="X_EXTRACTION_UNAVAILABLE",
                 message="X post temporarily unavailable",
                 details="X could not be accessed right now. Try the public post URL again later.",
+                status_code=502,
+            )
+
+        if is_instagram:
+            return APIError(
+                code="INSTAGRAM_EXTRACTION_UNAVAILABLE",
+                message="Instagram post temporarily unavailable",
+                details="Instagram could not be accessed right now. Try the public post URL again later.",
                 status_code=502,
             )
 
