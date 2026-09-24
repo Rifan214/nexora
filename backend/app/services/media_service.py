@@ -234,12 +234,22 @@ class MediaService:
     def x_auth_manager(self) -> XAuthManager:
         return self._x_auth_manager
 
-    def get_metadata(self, url: str) -> MediaMetadata:
+    def get_metadata(
+        self,
+        url: str,
+        *,
+        auth_source: str = "guest",
+        auth_session_id: str | None = None,
+    ) -> MediaMetadata:
         normalized_url = self._normalize_source_url(url)
         logger.info("Metadata extraction started url=%s", normalized_url)
 
         try:
-            info, platform, _, source_url = self._get_or_extract_supported_info(normalized_url)
+            info, platform, _, source_url = self._get_or_extract_supported_info(
+                normalized_url,
+                auth_source=auth_source,
+                auth_session_id=auth_session_id,
+            )
 
             metadata = self._build_metadata(info=info, platform=platform, url=source_url)
             logger.info("Metadata extraction completed url=%s platform=%s", normalized_url, platform)
@@ -360,6 +370,10 @@ class MediaService:
             format_id=format_selector,
             output_type=request.media_type,
         )
+        snapshot = self._snapshot_cache.get(normalized_url)
+        auth_source = snapshot.auth_source if snapshot else "guest"
+        auth_session_id = snapshot.session_id if snapshot else None
+
         self._get_queue_manager().enqueue(
             job.job_id,
             starter=lambda: self._start_download_worker(
@@ -369,6 +383,8 @@ class MediaService:
                 output_type=request.media_type,
                 download_info=deepcopy(info),
                 authenticated=authenticated,
+                auth_source=auth_source,
+                auth_session_id=auth_session_id,
             ),
         )
         return job
@@ -382,10 +398,21 @@ class MediaService:
         output_type: str,
         download_info: dict[str, Any] | None = None,
         authenticated: bool = False,
+        auth_source: str = "guest",
+        auth_session_id: str | None = None,
     ) -> None:
         worker = threading.Thread(
             target=self._download_job_background,
-            args=(job_id, url, format_selector, output_type, download_info, authenticated),
+            args=(
+                job_id,
+                url,
+                format_selector,
+                output_type,
+                download_info,
+                authenticated,
+                auth_source,
+                auth_session_id,
+            ),
             daemon=True,
             name=f"nexora-download-{job_id}",
         )
@@ -404,10 +431,13 @@ class MediaService:
         output_type: str,
         download_info: dict[str, Any] | None = None,
         authenticated: bool = False,
+        auth_source: str = "guest",
+        auth_session_id: str | None = None,
     ) -> None:
         job_manager = self._get_job_manager()
         self._process_manager.register_job(job_id, worker=threading.current_thread())
 
+        session_lease_acquired = False
         try:
             self._process_manager.raise_if_cancelled(job_id)
             job_manager.update_progress(job_id, 0)
@@ -427,7 +457,21 @@ class MediaService:
                 return
 
             self._process_manager.raise_if_cancelled(job_id)
-            auth_cookie_file = self._require_auth_cookie_file(initial_platform) if authenticated else None
+            auth_cookie_file = (
+                self._require_auth_cookie_file(
+                    initial_platform,
+                    source=auth_source,
+                    session_id=auth_session_id,
+                )
+                if authenticated
+                else None
+            )
+            if auth_cookie_file is not None and initial_platform == "twitter":
+                self._x_auth_manager.acquire_session_lease(
+                    source=auth_source,
+                    session_id=auth_session_id,
+                )
+                session_lease_acquired = True
             if download_info is not None:
                 extracted_info = download_info
             else:
@@ -574,6 +618,11 @@ class MediaService:
                     logger.warning("Download failed job_id=%s error=%s", job_id, error_message)
                 self._mark_download_failed(job_id, error_message=error_message, job_manager=job_manager)
         finally:
+            if session_lease_acquired:
+                self._x_auth_manager.release_session_lease(
+                    source=auth_source,
+                    session_id=auth_session_id,
+                )
             self._process_manager.finish_job(job_id)
 
     def _mark_download_failed(
@@ -736,35 +785,66 @@ class MediaService:
     def _get_or_extract_supported_info(
         self,
         normalized_url: str,
+        *,
+        auth_source: str = "guest",
+        auth_session_id: str | None = None,
     ) -> tuple[dict[str, Any], str, bool, str]:
-        cached_result = self._get_cached_supported_info(normalized_url)
+        cached_result = self._get_cached_supported_info(
+            normalized_url,
+            auth_session_id=auth_session_id,
+        )
         if cached_result is not None:
             return cached_result
 
         if detect_platform_from_url(normalized_url) != "tiktok":
-            return self._extract_and_cache_supported_info(normalized_url)
+            return self._extract_and_cache_supported_info(
+                normalized_url,
+                auth_source=auth_source,
+                auth_session_id=auth_session_id,
+            )
 
         # A single in-flight TikTok extraction owns retries for this URL. Other
         # callers wait, then reuse its snapshot instead of creating retry bursts.
         with self._metadata_extraction_gate(normalized_url):
-            cached_result = self._get_cached_supported_info(normalized_url)
+            cached_result = self._get_cached_supported_info(
+                normalized_url,
+                auth_session_id=auth_session_id,
+            )
             if cached_result is not None:
                 return cached_result
-            return self._extract_and_cache_supported_info(normalized_url)
+            return self._extract_and_cache_supported_info(
+                normalized_url,
+                auth_source=auth_source,
+                auth_session_id=auth_session_id,
+            )
 
     def _get_cached_supported_info(
         self,
         normalized_url: str,
+        *,
+        auth_session_id: str | None = None,
     ) -> tuple[dict[str, Any], str, bool, str] | None:
-        snapshot = self._snapshot_cache.get(normalized_url)
+        snapshot = self._snapshot_cache.get(normalized_url, session_id=auth_session_id)
         if snapshot is None:
             return None
 
         info = snapshot.extracted_info
         platform = self._detect_platform(info)
-        if snapshot.authenticated and self._auth_cookie_file(platform) is None:
-            self._snapshot_cache.delete(normalized_url)
-            return None
+        if snapshot.authenticated:
+            if platform == "twitter":
+                if snapshot.auth_source == "user_session":
+                    if not self._x_auth_manager.is_authenticated_available(
+                        source=XAuthSource.USER_SESSION,
+                        session_id=snapshot.session_id,
+                    ):
+                        self._snapshot_cache.delete(normalized_url, session_id=snapshot.session_id)
+                        return None
+                elif self._auth_cookie_file(platform) is None:
+                    self._snapshot_cache.delete(normalized_url)
+                    return None
+            elif self._auth_cookie_file(platform) is None:
+                self._snapshot_cache.delete(normalized_url)
+                return None
 
         self._ensure_supported_media_platform(platform)
         self._ensure_platform_media_is_downloadable(info, platform)
@@ -778,6 +858,9 @@ class MediaService:
     def _extract_and_cache_supported_info(
         self,
         normalized_url: str,
+        *,
+        auth_source: str = "guest",
+        auth_session_id: str | None = None,
     ) -> tuple[dict[str, Any], str, bool, str]:
 
         try:
@@ -786,38 +869,56 @@ class MediaService:
             self._ensure_supported_media_platform(platform)
             self._ensure_platform_media_is_downloadable(info, platform)
             authenticated = False
-            auth_source = "guest"
+            snapshot_auth_source = "guest"
+            snapshot_session_id = None
         except APIError as guest_error:
-            authenticated_result = (
-                self._try_authenticated_x_extraction(
+            if auth_source == "user_session" and auth_session_id:
+                authenticated_result = self._try_authenticated_x_extraction(
                     normalized_url,
                     guest_error=guest_error,
+                    source=auth_source,
+                    session_id=auth_session_id,
                 )
-                or self._try_authenticated_instagram_extraction(
-                    normalized_url,
-                    guest_error=guest_error,
+                if authenticated_result is None:
+                    raise
+                info, platform = authenticated_result
+                authenticated = True
+                snapshot_auth_source = "user_session"
+                snapshot_session_id = auth_session_id
+                source_url = normalized_url
+            else:
+                authenticated_result = (
+                    self._try_authenticated_x_extraction(
+                        normalized_url,
+                        guest_error=guest_error,
+                    )
+                    or self._try_authenticated_instagram_extraction(
+                        normalized_url,
+                        guest_error=guest_error,
+                    )
+                    or self._try_authenticated_facebook_extraction(
+                        normalized_url,
+                        guest_error=guest_error,
+                    )
+                    or self._try_authenticated_reddit_extraction(
+                        normalized_url,
+                        guest_error=guest_error,
+                    )
                 )
-                or self._try_authenticated_facebook_extraction(
-                    normalized_url,
-                    guest_error=guest_error,
-                )
-                or self._try_authenticated_reddit_extraction(
-                    normalized_url,
-                    guest_error=guest_error,
-                )
-            )
-            if authenticated_result is None:
-                raise
-            info, platform = authenticated_result
-            authenticated = True
-            auth_source = "service_account"
-            source_url = normalized_url
+                if authenticated_result is None:
+                    raise
+                info, platform = authenticated_result
+                authenticated = True
+                snapshot_auth_source = "service_account"
+                snapshot_session_id = None
+                source_url = normalized_url
 
         self._snapshot_cache.put(
             normalized_url,
             info,
             authenticated=authenticated,
-            auth_source=auth_source,
+            auth_source=snapshot_auth_source,
+            session_id=snapshot_session_id,
         )
         return info, platform, authenticated, source_url
 
@@ -1045,6 +1146,8 @@ class MediaService:
         normalized_url: str,
         *,
         guest_error: APIError,
+        source: XAuthSource | str | None = None,
+        session_id: str | None = None,
     ) -> tuple[dict[str, Any], str] | None:
         if (
             detect_platform_from_url(normalized_url) != "twitter"
@@ -1052,15 +1155,18 @@ class MediaService:
         ):
             return None
 
-        provider = self._x_auth_manager.get_authenticated_provider()
+        provider = self._x_auth_manager.get_authenticated_provider(source=source, session_id=session_id)
         if provider is None:
             return None
 
-        cookie_file = provider.get_cookie_file()
+        cookie_file = self._x_auth_manager.acquire_session_lease(source=source, session_id=session_id)
         if cookie_file is None:
             return None
 
-        logger.info("X authenticated fallback enabled=true attempted=true")
+        logger.info(
+            "X authenticated fallback enabled=true attempted=true source=%s",
+            provider.source.value,
+        )
         try:
             info = self._extract_info_or_raise_api_error(
                 normalized_url,
@@ -1075,15 +1181,25 @@ class MediaService:
                 "X authenticated fallback enabled=true attempted=true succeeded=false"
             )
             return None
+        finally:
+            self._x_auth_manager.release_session_lease(source=source, session_id=session_id)
 
         logger.info("X authenticated fallback enabled=true attempted=true succeeded=true")
         return info, platform
 
-    def _x_auth_cookie_file(self) -> Path | None:
-        return self._x_auth_manager.get_cookie_file()
+    def _x_auth_cookie_file(
+        self,
+        source: XAuthSource | str | None = None,
+        session_id: str | None = None,
+    ) -> Path | None:
+        return self._x_auth_manager.get_cookie_file(source=source, session_id=session_id)
 
-    def _require_x_auth_cookie_file(self) -> Path:
-        return self._x_auth_manager.require_authenticated_cookie_file()
+    def _require_x_auth_cookie_file(
+        self,
+        source: XAuthSource | str | None = None,
+        session_id: str | None = None,
+    ) -> Path:
+        return self._x_auth_manager.require_authenticated_cookie_file(source=source, session_id=session_id)
 
     def _try_authenticated_instagram_extraction(
         self,
@@ -1283,9 +1399,15 @@ class MediaService:
             raise DownloadError("Authenticated Reddit session unavailable")
         return cookie_file
 
-    def _auth_cookie_file(self, platform: str) -> Path | None:
+    def _auth_cookie_file(
+        self,
+        platform: str,
+        *,
+        source: XAuthSource | str | None = None,
+        session_id: str | None = None,
+    ) -> Path | None:
         if platform == "twitter":
-            return self._x_auth_cookie_file()
+            return self._x_auth_cookie_file(source=source, session_id=session_id)
         if platform == "instagram":
             return self._instagram_auth_cookie_file()
         if platform == "facebook":
@@ -1294,9 +1416,15 @@ class MediaService:
             return self._reddit_auth_cookie_file()
         return None
 
-    def _require_auth_cookie_file(self, platform: str) -> Path:
+    def _require_auth_cookie_file(
+        self,
+        platform: str,
+        *,
+        source: XAuthSource | str | None = None,
+        session_id: str | None = None,
+    ) -> Path:
         if platform == "twitter":
-            return self._require_x_auth_cookie_file()
+            return self._require_x_auth_cookie_file(source=source, session_id=session_id)
         if platform == "instagram":
             return self._require_instagram_auth_cookie_file()
         if platform == "facebook":
@@ -1509,6 +1637,10 @@ class MediaService:
             return "Download cancelled"
         if any(token in lowered for token in ("timeout", "timed out", "network", "connection", "http error", "unable to download webpage")):
             return "Network interruption while downloading"
+        if "authenticated" in lowered and "session unavailable" in lowered:
+            if "x" in lowered:
+                return "Authenticated X session unavailable"
+            return "Authenticated session unavailable"
         return "yt-dlp failed to download the media"
 
     def _extract_info(

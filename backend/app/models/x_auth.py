@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -32,6 +33,9 @@ class XAuthSession(BaseModel):
     source: XAuthSource = XAuthSource.GUEST
     authenticated: bool = False
     status: XAuthStatus = XAuthStatus.AVAILABLE
+    session_id: str | None = None
+    created_at: datetime | None = None
+    expires_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @property
@@ -41,6 +45,12 @@ class XAuthSession(BaseModel):
     @property
     def is_available(self) -> bool:
         return self.status == XAuthStatus.AVAILABLE
+
+    def is_expired(self, now: datetime | None = None) -> bool:
+        if self.expires_at is None:
+            return False
+        current = now or datetime.now(UTC)
+        return current >= self.expires_at
 
 
 class XAuthContext(BaseModel):
@@ -52,9 +62,17 @@ class XAuthContext(BaseModel):
     source: XAuthSource = XAuthSource.GUEST
     authenticated: bool = False
     status: XAuthStatus = XAuthStatus.AVAILABLE
+    session_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def __repr__(self) -> str:
+        if self.session_id is not None:
+            return (
+                f"XAuthContext(source={self.source.value!r}, "
+                f"authenticated={self.authenticated!r}, "
+                f"status={self.status.value!r}, "
+                f"session_id={self.session_id!r})"
+            )
         return (
             f"XAuthContext(source={self.source.value!r}, "
             f"authenticated={self.authenticated!r}, "

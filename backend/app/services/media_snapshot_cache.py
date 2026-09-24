@@ -17,6 +17,7 @@ class MediaSnapshot:
     expires_at: datetime
     authenticated: bool = False
     auth_source: str = "guest"
+    session_id: str | None = None
 
 
 class MediaSnapshotCache:
@@ -40,14 +41,21 @@ class MediaSnapshotCache:
         self._entries: OrderedDict[str, MediaSnapshot] = OrderedDict()
         self._lock = RLock()
 
-    def get(self, normalized_url: str) -> MediaSnapshot | None:
+    @staticmethod
+    def _cache_key(normalized_url: str, session_id: str | None = None) -> str:
+        if session_id:
+            return f"{normalized_url}#session:{session_id}"
+        return normalized_url
+
+    def get(self, normalized_url: str, *, session_id: str | None = None) -> MediaSnapshot | None:
         """Return a defensive copy of an unexpired snapshot, if one exists."""
+        key = self._cache_key(normalized_url, session_id=session_id)
         with self._lock:
             self._evict_expired_locked()
-            snapshot = self._entries.get(normalized_url)
+            snapshot = self._entries.get(key)
             if snapshot is None:
                 return None
-            self._entries.move_to_end(normalized_url)
+            self._entries.move_to_end(key)
             return _copy_snapshot(snapshot)
 
     def put(
@@ -57,8 +65,10 @@ class MediaSnapshotCache:
         *,
         authenticated: bool = False,
         auth_source: str = "guest",
+        session_id: str | None = None,
     ) -> MediaSnapshot:
         """Store an extraction result and evict the least recently used entry if needed."""
+        key = self._cache_key(normalized_url, session_id=session_id)
         now = self._now()
         snapshot = MediaSnapshot(
             extracted_info=deepcopy(extracted_info),
@@ -66,18 +76,20 @@ class MediaSnapshotCache:
             expires_at=now + self._ttl,
             authenticated=authenticated,
             auth_source=auth_source,
+            session_id=session_id,
         )
         with self._lock:
             self._evict_expired_locked(now=now)
-            self._entries[normalized_url] = snapshot
-            self._entries.move_to_end(normalized_url)
+            self._entries[key] = snapshot
+            self._entries.move_to_end(key)
             while len(self._entries) > self._capacity:
                 self._entries.popitem(last=False)
         return _copy_snapshot(snapshot)
 
-    def delete(self, normalized_url: str) -> None:
+    def delete(self, normalized_url: str, *, session_id: str | None = None) -> None:
+        key = self._cache_key(normalized_url, session_id=session_id)
         with self._lock:
-            self._entries.pop(normalized_url, None)
+            self._entries.pop(key, None)
 
     def __len__(self) -> int:
         with self._lock:
@@ -109,4 +121,5 @@ def _copy_snapshot(snapshot: MediaSnapshot) -> MediaSnapshot:
         expires_at=snapshot.expires_at,
         authenticated=snapshot.authenticated,
         auth_source=snapshot.auth_source,
+        session_id=snapshot.session_id,
     )

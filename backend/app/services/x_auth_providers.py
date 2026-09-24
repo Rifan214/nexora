@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.models.x_auth import XAuthSession, XAuthSource, XAuthStatus
+from app.services.x_user_session_store import EphemeralXUserSessionStore
 
 logger = logging.getLogger("app.services.media_service")
 
@@ -21,24 +22,32 @@ class XAuthProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def is_available(self) -> bool:
+    def is_available(self, session_id: str | None = None) -> bool:
         """Return True if this provider can supply credentials or valid session."""
         raise NotImplementedError
 
     @abstractmethod
-    def get_session(self) -> XAuthSession:
+    def get_session(self, session_id: str | None = None) -> XAuthSession:
         """Return safe descriptor metadata for the current session."""
         raise NotImplementedError
 
     @abstractmethod
-    def get_cookie_file(self) -> Path | None:
+    def get_cookie_file(self, session_id: str | None = None) -> Path | None:
         """Return a path to a validated Netscape cookie file, if applicable."""
         raise NotImplementedError
 
     @abstractmethod
-    def invalidate(self) -> None:
+    def invalidate(self, session_id: str | None = None) -> None:
         """Invalidate cached session state."""
         raise NotImplementedError
+
+    def acquire_lease(self, session_id: str | None = None) -> Path | None:
+        """Acquire active execution lease on the cookie file."""
+        return self.get_cookie_file(session_id)
+
+    def release_lease(self, session_id: str | None = None) -> None:
+        """Release active execution lease."""
+        pass
 
 
 class GuestXAuthProvider(XAuthProvider):
@@ -48,10 +57,10 @@ class GuestXAuthProvider(XAuthProvider):
     def source(self) -> XAuthSource:
         return XAuthSource.GUEST
 
-    def is_available(self) -> bool:
+    def is_available(self, session_id: str | None = None) -> bool:
         return True
 
-    def get_session(self) -> XAuthSession:
+    def get_session(self, session_id: str | None = None) -> XAuthSession:
         return XAuthSession(
             source=XAuthSource.GUEST,
             authenticated=False,
@@ -59,10 +68,10 @@ class GuestXAuthProvider(XAuthProvider):
             metadata={"source": "guest"},
         )
 
-    def get_cookie_file(self) -> Path | None:
+    def get_cookie_file(self, session_id: str | None = None) -> Path | None:
         return None
 
-    def invalidate(self) -> None:
+    def invalidate(self, session_id: str | None = None) -> None:
         pass
 
 
@@ -115,10 +124,10 @@ class ServiceAccountXAuthProvider(XAuthProvider):
         )
         return None
 
-    def is_available(self) -> bool:
+    def is_available(self, session_id: str | None = None) -> bool:
         return self._resolve_cookie_file() is not None
 
-    def get_session(self) -> XAuthSession:
+    def get_session(self, session_id: str | None = None) -> XAuthSession:
         cookie_file = self._resolve_cookie_file()
         if cookie_file is not None:
             return XAuthSession(
@@ -134,36 +143,70 @@ class ServiceAccountXAuthProvider(XAuthProvider):
             metadata={"source": "service_account"},
         )
 
-    def get_cookie_file(self) -> Path | None:
+    def get_cookie_file(self, session_id: str | None = None) -> Path | None:
         return self._resolve_cookie_file()
 
-    def invalidate(self) -> None:
+    def invalidate(self, session_id: str | None = None) -> None:
         pass
 
 
 class UserSessionXAuthProvider(XAuthProvider):
-    """Extension point placeholder for future user-session authentication (e.g., mobile WebView)."""
+    """Ephemeral user-session authentication provider backed by an in-memory session store."""
 
-    def __init__(self, metadata: dict[str, Any] | None = None) -> None:
-        self._metadata = metadata or {}
+    def __init__(
+        self,
+        session_store: EphemeralXUserSessionStore | None = None,
+        *,
+        default_session_id: str | None = None,
+        auth_logger: logging.Logger | None = None,
+    ) -> None:
+        self._store = session_store or EphemeralXUserSessionStore()
+        self._default_session_id = default_session_id
+        self._logger = auth_logger or logger
 
     @property
     def source(self) -> XAuthSource:
         return XAuthSource.USER_SESSION
 
-    def is_available(self) -> bool:
-        return False
+    @property
+    def store(self) -> EphemeralXUserSessionStore:
+        return self._store
 
-    def get_session(self) -> XAuthSession:
-        return XAuthSession(
-            source=XAuthSource.USER_SESSION,
-            authenticated=False,
-            status=XAuthStatus.UNAVAILABLE,
-            metadata={"source": "user_session", "implemented": False, **self._metadata},
-        )
+    def is_available(self, session_id: str | None = None) -> bool:
+        target_id = session_id or self._default_session_id
+        if not target_id:
+            return False
+        return self._store.is_valid(target_id)
 
-    def get_cookie_file(self) -> Path | None:
-        return None
+    def get_session(self, session_id: str | None = None) -> XAuthSession:
+        target_id = session_id or self._default_session_id
+        if not target_id:
+            return XAuthSession(
+                source=XAuthSource.USER_SESSION,
+                authenticated=False,
+                status=XAuthStatus.UNAVAILABLE,
+                metadata={"source": "user_session"},
+            )
+        return self._store.get_session(target_id)
 
-    def invalidate(self) -> None:
-        pass
+    def get_cookie_file(self, session_id: str | None = None) -> Path | None:
+        target_id = session_id or self._default_session_id
+        if not target_id:
+            return None
+        return self._store.get_cookie_file(target_id)
+
+    def invalidate(self, session_id: str | None = None) -> None:
+        target_id = session_id or self._default_session_id
+        if target_id:
+            self._store.invalidate(target_id)
+
+    def acquire_lease(self, session_id: str | None = None) -> Path | None:
+        target_id = session_id or self._default_session_id
+        if not target_id:
+            return None
+        return self._store.acquire_lease(target_id)
+
+    def release_lease(self, session_id: str | None = None) -> None:
+        target_id = session_id or self._default_session_id
+        if target_id:
+            self._store.release_lease(target_id)
