@@ -34,6 +34,8 @@ from app.services.queue_manager import QueueManager, get_queue_manager
 from app.services.resume_state_manager import ResumeStateManager, get_resume_state_manager
 from app.services.quality_selector import QualitySelector
 from app.models.resume_state import ResumeState
+from app.models.x_auth import XAuthSource
+from app.services.x_auth_manager import XAuthManager
 from app.utils.platforms import (
     detect_platform_from_url,
     is_facebook_media_url,
@@ -211,18 +213,26 @@ class MediaService:
         resume_state_manager: ResumeStateManager | None = None,
         sleep: Callable[[float], None] | None = None,
         retry_jitter: Callable[[float, float], float] | None = None,
+        x_auth_manager: XAuthManager | None = None,
     ) -> None:
         self._settings = get_settings()
+        self._x_auth_manager = x_auth_manager or XAuthManager(
+            service_account_cookie_file=lambda: self._settings.x_auth_cookie_file
+        )
         self._quality_selector = QualitySelector()
         self._process_manager = process_manager or get_download_process_manager()
         self._job_manager = job_manager
         self._queue_manager = queue_manager
-        self._snapshot_cache = snapshot_cache or MediaSnapshotCache()
+        self._snapshot_cache = snapshot_cache if snapshot_cache is not None else MediaSnapshotCache()
         self._resume_state_manager = resume_state_manager or get_resume_state_manager()
         self._sleep = sleep or time.sleep
         self._retry_jitter = retry_jitter or random.uniform
         self._metadata_extraction_gates: dict[str, _MetadataExtractionGate] = {}
         self._metadata_extraction_gates_lock = threading.RLock()
+
+    @property
+    def x_auth_manager(self) -> XAuthManager:
+        return self._x_auth_manager
 
     def get_metadata(self, url: str) -> MediaMetadata:
         normalized_url = self._normalize_source_url(url)
@@ -776,6 +786,7 @@ class MediaService:
             self._ensure_supported_media_platform(platform)
             self._ensure_platform_media_is_downloadable(info, platform)
             authenticated = False
+            auth_source = "guest"
         except APIError as guest_error:
             authenticated_result = (
                 self._try_authenticated_x_extraction(
@@ -799,12 +810,14 @@ class MediaService:
                 raise
             info, platform = authenticated_result
             authenticated = True
+            auth_source = "service_account"
             source_url = normalized_url
 
         self._snapshot_cache.put(
             normalized_url,
             info,
             authenticated=authenticated,
+            auth_source=auth_source,
         )
         return info, platform, authenticated, source_url
 
@@ -1039,7 +1052,11 @@ class MediaService:
         ):
             return None
 
-        cookie_file = self._x_auth_cookie_file()
+        provider = self._x_auth_manager.get_authenticated_provider()
+        if provider is None:
+            return None
+
+        cookie_file = provider.get_cookie_file()
         if cookie_file is None:
             return None
 
@@ -1063,35 +1080,10 @@ class MediaService:
         return info, platform
 
     def _x_auth_cookie_file(self) -> Path | None:
-        configured_path = self._settings.x_auth_cookie_file.strip()
-        if not configured_path:
-            return None
-
-        cookie_file = Path(configured_path).expanduser()
-        try:
-            if not cookie_file.is_file():
-                raise FileNotFoundError
-            cookie_jar = MozillaCookieJar(str(cookie_file))
-            cookie_jar.load(ignore_discard=True, ignore_expires=True)
-            cookie_names = {cookie.name for cookie in cookie_jar}
-            if {"auth_token", "ct0"}.issubset(cookie_names):
-                return cookie_file
-        except (LoadError, OSError):
-            logger.warning(
-                "X authenticated fallback enabled=true attempted=false reason=cookie_file_unavailable"
-            )
-            return None
-
-        logger.warning(
-            "X authenticated fallback enabled=true attempted=false reason=cookie_file_invalid"
-        )
-        return None
+        return self._x_auth_manager.get_cookie_file()
 
     def _require_x_auth_cookie_file(self) -> Path:
-        cookie_file = self._x_auth_cookie_file()
-        if cookie_file is None:
-            raise DownloadError("Authenticated X session unavailable")
-        return cookie_file
+        return self._x_auth_manager.require_authenticated_cookie_file()
 
     def _try_authenticated_instagram_extraction(
         self,

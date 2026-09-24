@@ -16,6 +16,7 @@ class MediaSnapshot:
     created_at: datetime
     expires_at: datetime
     authenticated: bool = False
+    auth_source: str = "guest"
 
 
 class MediaSnapshotCache:
@@ -55,6 +56,7 @@ class MediaSnapshotCache:
         extracted_info: dict[str, Any],
         *,
         authenticated: bool = False,
+        auth_source: str = "guest",
     ) -> MediaSnapshot:
         """Store an extraction result and evict the least recently used entry if needed."""
         now = self._now()
@@ -63,6 +65,7 @@ class MediaSnapshotCache:
             created_at=now,
             expires_at=now + self._ttl,
             authenticated=authenticated,
+            auth_source=auth_source,
         )
         with self._lock:
             self._evict_expired_locked(now=now)
@@ -80,6 +83,9 @@ class MediaSnapshotCache:
         with self._lock:
             self._evict_expired_locked()
             return len(self._entries)
+
+    def __bool__(self) -> bool:
+        return True
 
     def _evict_expired_locked(self, *, now: datetime | None = None) -> None:
         current_time = now or self._now()
@@ -102,4 +108,5 @@ def _copy_snapshot(snapshot: MediaSnapshot) -> MediaSnapshot:
         created_at=snapshot.created_at,
         expires_at=snapshot.expires_at,
         authenticated=snapshot.authenticated,
+        auth_source=snapshot.auth_source,
     )
