@@ -27,6 +27,24 @@ def _error_response(*, message: str, code: str, details: str, status_code: int) 
     return JSONResponse(status_code=status_code, content=payload.model_dump(exclude_none=True))
 
 
+_SENSITIVE_LOC_PARTS = {"auth_token", "ct0", "password", "secret", "cookie", "cookies", "token", "credentials"}
+
+
+def _sanitize_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for err in errors:
+        err_copy = dict(err)
+        loc = err_copy.get("loc", ())
+        if any(str(part).lower() in _SENSITIVE_LOC_PARTS for part in loc):
+            err_copy.pop("input", None)
+            if "ctx" in err_copy and isinstance(err_copy["ctx"], dict):
+                ctx_copy = dict(err_copy["ctx"])
+                ctx_copy.pop("actual_length", None)
+                err_copy["ctx"] = ctx_copy
+        sanitized.append(err_copy)
+    return sanitized
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(APIError)
     async def api_error_handler(_: Request, exc: APIError) -> JSONResponse:
@@ -51,7 +69,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
-        logger.warning("Validation error: %s", exc.errors())
+        logger.warning("Validation error: %s", _sanitize_validation_errors(exc.errors()))
         payload = APIResponse[Any].fail(
             message="Validation failed",
             code="VALIDATION_ERROR",

@@ -309,9 +309,9 @@ class EphemeralXUserSessionStore:
 
         assert session_id is not None
         with self._lock:
-            self._invalidated_ids.add(session_id)
             record = self._sessions.pop(session_id, None)
             if record is not None:
+                self._invalidated_ids.add(session_id)
                 if record.active_leases > 0:
                     # Defer physical file deletion until running worker releases lease
                     self._pending_release_records[session_id] = record
