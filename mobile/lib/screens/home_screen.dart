@@ -98,6 +98,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           onAnalyze: () => _getMetadata(canRequestMetadata),
           onBatchImport: _showBatchImport,
           onOpenDownloadPreferences: _openDownloadPreferences,
+          onOpenServerSettings: _openServerSettings,
           statusContent: mediaState is MediaIdle
               ? null
               : _MediaStatus(mediaState: mediaState),
@@ -116,6 +117,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         onAnalyze: () => _getMetadata(canRequestMetadata),
         onBatchImport: _showBatchImport,
         onOpenDownloadPreferences: _openDownloadPreferences,
+        onOpenServerSettings: _openServerSettings,
         metadataContent: _MediaStatus(mediaState: mediaState),
       ),
     );
@@ -159,6 +161,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         builder: (_) => const DownloadPreferencesPage(),
       ),
     );
+  }
+
+  void _openServerSettings() {
+    setState(() => _selectedDestinationIndex = NexoraNavigationBar.settingsIndex);
   }
 
   Future<void> _retryFailedDownload(String jobId) async {
@@ -316,6 +322,7 @@ class _HomeReadyContent extends StatelessWidget {
     required this.onAnalyze,
     required this.onBatchImport,
     required this.onOpenDownloadPreferences,
+    this.onOpenServerSettings,
     this.statusContent,
   });
 
@@ -326,6 +333,7 @@ class _HomeReadyContent extends StatelessWidget {
   final VoidCallback onAnalyze;
   final VoidCallback onBatchImport;
   final Future<void> Function() onOpenDownloadPreferences;
+  final VoidCallback? onOpenServerSettings;
   final Widget? statusContent;
 
   @override
@@ -356,6 +364,7 @@ class _HomeReadyContent extends StatelessWidget {
                   const SizedBox(height: AppSpacing.md),
                   _HomeHeader(
                     onOpenDownloadPreferences: onOpenDownloadPreferences,
+                    onOpenServerSettings: onOpenServerSettings,
                   ),
                   SizedBox(height: heroTopSpacing),
                   Column(
@@ -464,12 +473,19 @@ class _HomeReadyContent extends StatelessWidget {
   }
 }
 
-enum _HomeOverflowAction { downloadPreferences }
+enum _HomeOverflowAction {
+  downloadPreferences,
+  serverSettings,
+}
 
 class _HomeHeader extends StatelessWidget {
-  const _HomeHeader({required this.onOpenDownloadPreferences});
+  const _HomeHeader({
+    required this.onOpenDownloadPreferences,
+    this.onOpenServerSettings,
+  });
 
   final Future<void> Function() onOpenDownloadPreferences;
+  final VoidCallback? onOpenServerSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -486,6 +502,8 @@ class _HomeHeader extends StatelessWidget {
           onSelected: (action) {
             if (action == _HomeOverflowAction.downloadPreferences) {
               unawaited(onOpenDownloadPreferences());
+            } else if (action == _HomeOverflowAction.serverSettings) {
+              onOpenServerSettings?.call();
             }
           },
           itemBuilder: (context) => const [
@@ -495,6 +513,14 @@ class _HomeHeader extends StatelessWidget {
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(Icons.tune_rounded),
                 title: Text('Download Preferences'),
+              ),
+            ),
+            PopupMenuItem(
+              value: _HomeOverflowAction.serverSettings,
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.dns_rounded),
+                title: Text('Server Settings'),
               ),
             ),
           ],
@@ -516,6 +542,7 @@ class _MetadataLoadedContent extends StatelessWidget {
     required this.onAnalyze,
     required this.onBatchImport,
     required this.onOpenDownloadPreferences,
+    this.onOpenServerSettings,
     required this.metadataContent,
   });
 
@@ -528,6 +555,7 @@ class _MetadataLoadedContent extends StatelessWidget {
   final VoidCallback onAnalyze;
   final VoidCallback onBatchImport;
   final Future<void> Function() onOpenDownloadPreferences;
+  final VoidCallback? onOpenServerSettings;
   final Widget metadataContent;
 
   @override
@@ -543,6 +571,7 @@ class _MetadataLoadedContent extends StatelessWidget {
               const SizedBox(height: AppSpacing.md),
               _HomeHeader(
                 onOpenDownloadPreferences: onOpenDownloadPreferences,
+                onOpenServerSettings: onOpenServerSettings,
               ),
               const SizedBox(height: AppSpacing.xxl),
               TextField(

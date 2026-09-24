@@ -4,14 +4,18 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../providers/server_config_provider.dart';
 import '../core/config/app_config.dart';
 
 final webSocketServiceProvider = Provider<WebSocketService>((ref) {
-  return const WebSocketService();
+  final serverConfig = ref.watch(effectiveServerConfigProvider);
+  return WebSocketService(baseUrl: serverConfig.webSocketBaseUrl);
 });
 
 class WebSocketService {
-  const WebSocketService();
+  const WebSocketService({this.baseUrl});
+
+  final String? baseUrl;
 
   static const _maxReconnectAttempts = 3;
 
@@ -51,14 +55,14 @@ class WebSocketService {
   }
 
   Uri _buildUri(String path) {
-    final baseUrl = AppConfig.webSocketBaseUrl.trim();
-    if (baseUrl.isEmpty) {
+    final effectiveBaseUrl = (baseUrl ?? AppConfig.webSocketBaseUrl).trim();
+    if (effectiveBaseUrl.isEmpty) {
       throw const WebSocketConfigurationException(
         'WebSocket base URL is not configured.',
       );
     }
 
-    final baseUri = Uri.tryParse(baseUrl);
+    final baseUri = Uri.tryParse(effectiveBaseUrl);
     if (baseUri == null || !baseUri.hasScheme || baseUri.host.isEmpty) {
       throw const WebSocketConfigurationException(
         'WebSocket base URL is invalid.',

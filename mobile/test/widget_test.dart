@@ -213,7 +213,7 @@ void main() {
   });
 
   testWidgets('shows the Nexora home screen', (WidgetTester tester) async {
-    await tester.pumpWidget(const NexoraApp());
+    await tester.pumpWidget(const ProviderScope(child: NexoraApp()));
 
     expect(find.text('Nexora'), findsOneWidget);
     expect(find.text('Ready to fetch.'), findsOneWidget);

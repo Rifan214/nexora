@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/theme/app_tokens.dart';
 import 'nexora_brand.dart';
+import 'server_configuration_card.dart';
 
 class SettingsContent extends StatelessWidget {
   const SettingsContent({super.key});
@@ -34,12 +35,14 @@ class SettingsContent extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(
-                'Application information and platform support.',
+                'Application information, connection settings, and platform support.',
                 style: textTheme.bodyLarge?.copyWith(
                   color: colorScheme.onSurfaceVariant,
                 ),
               ),
               const SizedBox(height: AppSpacing.xxl),
+              const ServerConfigurationCard(),
+              const SizedBox(height: AppSpacing.md),
               const _SettingsInformationCard(
                 icon: Icons.speed_rounded,
                 title: 'Nexora',

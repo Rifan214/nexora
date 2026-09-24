@@ -2,18 +2,20 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../providers/server_config_provider.dart';
 import '../config/app_config.dart';
 
 final dioProvider = Provider<Dio>((ref) {
-  final dio = createDioClient();
+  final serverConfig = ref.watch(effectiveServerConfigProvider);
+  final dio = createDioClient(baseUrl: serverConfig.apiBaseUrl);
   ref.onDispose(() => dio.close(force: true));
   return dio;
 });
 
-Dio createDioClient() {
+Dio createDioClient({String? baseUrl}) {
   final dio = Dio(
     BaseOptions(
-      baseUrl: AppConfig.apiBaseUrl,
+      baseUrl: baseUrl ?? AppConfig.apiBaseUrl,
       connectTimeout: AppConfig.connectTimeout,
       receiveTimeout: AppConfig.receiveTimeout,
       sendTimeout: AppConfig.sendTimeout,
