@@ -17,9 +17,15 @@ class ApiService {
 
   final Dio _dio;
 
-  Future<Map<String, dynamic>> getJson(String path) async {
+  Future<Map<String, dynamic>> getJson(
+    String path, {
+    Map<String, dynamic>? headers,
+  }) async {
     return _sendJson(
-      () => _dio.get<Object?>(path),
+      () => _dio.get<Object?>(
+        path,
+        options: headers != null ? Options(headers: headers) : null,
+      ),
       requestLabel: 'GET $path',
     );
   }
@@ -27,10 +33,28 @@ class ApiService {
   Future<Map<String, dynamic>> postJson(
     String path, {
     Map<String, dynamic>? data,
+    Map<String, dynamic>? headers,
   }) async {
     return _sendJson(
-      () => _dio.post<Object?>(path, data: data),
+      () => _dio.post<Object?>(
+        path,
+        data: data,
+        options: headers != null ? Options(headers: headers) : null,
+      ),
       requestLabel: 'POST $path',
+    );
+  }
+
+  Future<Map<String, dynamic>> deleteJson(
+    String path, {
+    Map<String, dynamic>? headers,
+  }) async {
+    return _sendJson(
+      () => _dio.delete<Object?>(
+        path,
+        options: headers != null ? Options(headers: headers) : null,
+      ),
+      requestLabel: 'DELETE $path',
     );
   }
 
@@ -154,7 +178,11 @@ class ApiService {
 
   void _logJsonResponse(String requestLabel, Map<String, dynamic> response) {
     if (kDebugMode) {
-      debugPrint('$requestLabel raw JSON response: ${jsonEncode(response)}');
+      if (requestLabel.contains('/auth/x/session')) {
+        debugPrint('$requestLabel raw JSON response: [SAFE AUTH METADATA]');
+      } else {
+        debugPrint('$requestLabel raw JSON response: ${jsonEncode(response)}');
+      }
     }
   }
 }

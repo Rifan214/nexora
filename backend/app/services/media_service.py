@@ -316,7 +316,13 @@ class MediaService:
             self._log_failure(normalized_url, api_error.message, api_error.details, exc)
             raise api_error from None
 
-    def create_download_job(self, request: MediaDownloadRequest) -> DownloadJob:
+    def create_download_job(
+        self,
+        request: MediaDownloadRequest,
+        *,
+        auth_source: str = "guest",
+        auth_session_id: str | None = None,
+    ) -> DownloadJob:
         normalized_url = self._normalize_source_url(request.url)
         logger.info(
             "Download job request received url=%s media_type=%s quality_height=%s legacy_format_request=%s",
@@ -328,7 +334,9 @@ class MediaService:
 
         try:
             info, platform, authenticated, source_url = self._get_or_extract_supported_info(
-                normalized_url
+                normalized_url,
+                auth_source=auth_source,
+                auth_session_id=auth_session_id,
             )
 
             formats = info.get("formats") or []
@@ -370,9 +378,11 @@ class MediaService:
             format_id=format_selector,
             output_type=request.media_type,
         )
-        snapshot = self._snapshot_cache.get(normalized_url)
-        auth_source = snapshot.auth_source if snapshot else "guest"
-        auth_session_id = snapshot.session_id if snapshot else None
+        snapshot = self._snapshot_cache.get(normalized_url, session_id=auth_session_id)
+        if snapshot is None:
+            snapshot = self._snapshot_cache.get(normalized_url)
+        resolved_auth_source = snapshot.auth_source if snapshot else auth_source
+        resolved_auth_session_id = snapshot.session_id if snapshot else auth_session_id
 
         self._get_queue_manager().enqueue(
             job.job_id,
@@ -383,8 +393,8 @@ class MediaService:
                 output_type=request.media_type,
                 download_info=deepcopy(info),
                 authenticated=authenticated,
-                auth_source=auth_source,
-                auth_session_id=auth_session_id,
+                auth_source=resolved_auth_source,
+                auth_session_id=resolved_auth_session_id,
             ),
         )
         return job

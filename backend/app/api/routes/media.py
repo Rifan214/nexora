@@ -1,14 +1,22 @@
+from __future__ import annotations
+
 import logging
 from functools import lru_cache
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 
-from app.api.dependencies import run_lazy_cleanup
+from app.api.dependencies import get_x_user_session_store, run_lazy_cleanup
+from app.core.exceptions import APIError
 from app.models.job import JobCreateResponse
 from app.models.media import MediaMetadata, PlaylistMetadata
 from app.models.requests import MediaDownloadRequest, MediaInfoRequest, PlaylistInfoRequest
 from app.models.response import APIResponse
+from app.models.x_auth import XAuthStatus
 from app.services.media_service import MediaService
+from app.services.x_user_session_store import (
+    EphemeralXUserSessionStore,
+    _is_safe_session_id,
+)
 
 router = APIRouter(prefix="/media", tags=["media"])
 logger = logging.getLogger(__name__)
@@ -19,22 +27,87 @@ def get_media_service() -> MediaService:
     return MediaService()
 
 
+def _resolve_x_session_context(
+    x_session_id: str | None,
+    store: EphemeralXUserSessionStore,
+) -> tuple[str, str | None]:
+    """Validate optional X-Session-ID request header.
+
+    Returns:
+        tuple of (auth_source, auth_session_id)
+        - If header is absent: ("guest", None)
+        - If header is valid: ("user_session", session_id)
+        - If header is invalid or expired: raises APIError (401 or 404)
+    """
+    if not x_session_id:
+        return "guest", None
+
+    clean_id = x_session_id.strip()
+    if not clean_id:
+        return "guest", None
+
+    if not _is_safe_session_id(clean_id):
+        raise APIError(
+            code="SESSION_NOT_FOUND",
+            message="X authentication session not found",
+            details="Session not found",
+            status_code=404,
+        )
+
+    session = store.get_session(clean_id)
+    if session.status == XAuthStatus.EXPIRED or session.is_expired():
+        raise APIError(
+            code="SESSION_EXPIRED",
+            message="X authentication session has expired",
+            details="Session has expired",
+            status_code=401,
+        )
+
+    if session.status == XAuthStatus.INVALID:
+        raise APIError(
+            code="SESSION_INVALID",
+            message="X authentication session has been revoked or is invalid",
+            details="Session is invalid",
+            status_code=401,
+        )
+
+    if session.status != XAuthStatus.AVAILABLE or not session.authenticated:
+        raise APIError(
+            code="SESSION_NOT_FOUND",
+            message="X authentication session not found",
+            details="Session not found",
+            status_code=404,
+        )
+
+    return "user_session", clean_id
+
+
 @router.post(
     "/info",
     response_model=APIResponse[MediaMetadata],
     summary="Get media metadata and playable download options",
     description=(
         "Returns UI-friendly video_qualities and audio_options. Raw yt-dlp stream identifiers are never "
-        "included in the response."
+        "included in the response. Supports optional X-Session-ID header for authenticated X downloads."
     ),
     response_model_exclude_none=True,
 )
 def media_info(
     request: MediaInfoRequest,
+    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
     media_service: MediaService = Depends(get_media_service),
+    store: EphemeralXUserSessionStore = Depends(get_x_user_session_store),
 ) -> APIResponse[MediaMetadata]:
     logger.info("Incoming media info request url=%s", request.url)
-    metadata = media_service.get_metadata(request.url)
+    auth_source, auth_session_id = _resolve_x_session_context(x_session_id, store)
+    if auth_session_id:
+        metadata = media_service.get_metadata(
+            request.url,
+            auth_source=auth_source,
+            auth_session_id=auth_session_id,
+        )
+    else:
+        metadata = media_service.get_metadata(request.url)
     return APIResponse.ok(data=metadata)
 
 
@@ -65,14 +138,16 @@ def playlist_info(
         "For video downloads, send quality_height from video_qualities. For audio downloads, send "
         "media_type=audio without a quality or format identifier; the backend selects bestaudio and "
         "converts it to MP3 with FFmpeg. The deprecated format_id and type fields remain accepted for "
-        "temporary legacy-client compatibility."
+        "temporary legacy-client compatibility. Supports optional X-Session-ID header for authenticated X downloads."
     ),
     response_model_exclude_none=True,
     dependencies=[Depends(run_lazy_cleanup)],
 )
 def media_download(
     request: MediaDownloadRequest,
+    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
     media_service: MediaService = Depends(get_media_service),
+    store: EphemeralXUserSessionStore = Depends(get_x_user_session_store),
 ) -> APIResponse[JobCreateResponse]:
     logger.info(
         "Incoming media download request url=%s media_type=%s quality_height=%s legacy_format_request=%s",
@@ -81,5 +156,13 @@ def media_download(
         request.quality_height,
         request.format_id is not None,
     )
-    job = media_service.create_download_job(request)
+    auth_source, auth_session_id = _resolve_x_session_context(x_session_id, store)
+    if auth_session_id:
+        job = media_service.create_download_job(
+            request,
+            auth_source=auth_source,
+            auth_session_id=auth_session_id,
+        )
+    else:
+        job = media_service.create_download_job(request)
     return APIResponse.ok(data=JobCreateResponse(job_id=job.job_id))

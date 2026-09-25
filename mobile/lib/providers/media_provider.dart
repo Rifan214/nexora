@@ -16,6 +16,7 @@ import '../repositories/media_repository.dart';
 import 'active_downloads_provider.dart';
 import 'download_preferences_provider.dart';
 import 'history_provider.dart';
+import 'x_auth_provider.dart';
 
 final mediaProvider = NotifierProvider<MediaController, MediaState>(
   MediaController.new,
@@ -55,8 +56,10 @@ class MediaController extends Notifier<MediaState> {
     state = const MediaState.loading();
 
     try {
-      final metadata =
-          await ref.read(mediaRepositoryProvider).getMediaInfo(trimmedUrl);
+      final authHeaders = _buildAuthHeadersForUrl(trimmedUrl);
+      final metadata = await ref
+          .read(mediaRepositoryProvider)
+          .getMediaInfo(trimmedUrl, headers: authHeaders);
       if (kDebugMode) {
         debugPrint(
           'MediaProvider received video quality count=${metadata.videoQualities.length} '
@@ -153,9 +156,8 @@ class MediaController extends Notifier<MediaState> {
     );
 
     try {
-      final update = await ref
-          .read(mediaRepositoryProvider)
-          .cancelDownloadJob(jobId);
+      final update =
+          await ref.read(mediaRepositoryProvider).cancelDownloadJob(jobId);
       if (update.jobId.toLowerCase() != jobId.toLowerCase()) {
         throw const ApiException('Invalid cancellation response from server.');
       }
@@ -166,8 +168,7 @@ class MediaController extends Notifier<MediaState> {
       }
     } on ApiException catch (error) {
       final latest = _successState;
-      if (latest == null ||
-          _isTerminalStatus(latest.currentStatus)) {
+      if (latest == null || _isTerminalStatus(latest.currentStatus)) {
         return;
       }
 
@@ -241,10 +242,12 @@ class MediaController extends Notifier<MediaState> {
     );
 
     try {
+      final authHeaders = _buildAuthHeadersForUrl(current.metadata.webpageUrl);
       final job = await ref.read(mediaRepositoryProvider).createDownloadJob(
             mediaUrl: current.metadata.webpageUrl,
             mediaType: mediaType,
             videoQuality: selectedVideoQuality,
+            headers: authHeaders,
           );
       final latest = _successState;
       if (latest == null) {
@@ -330,15 +333,16 @@ class MediaController extends Notifier<MediaState> {
     );
 
     try {
-      final savedFile = await ref.read(mediaRepositoryProvider).downloadCompletedFile(
-            downloadUrl: downloadUrl,
-            suggestedFilename: _suggestedFilename(current),
-            mediaType: current.currentMediaType ?? MediaDownloadType.video,
-            cancelToken: cancelToken,
-            onReceiveProgress: (received, total) {
-              _handleFileDownloadProgress(cancelToken, received, total);
-            },
-          );
+      final savedFile =
+          await ref.read(mediaRepositoryProvider).downloadCompletedFile(
+                downloadUrl: downloadUrl,
+                suggestedFilename: _suggestedFilename(current),
+                mediaType: current.currentMediaType ?? MediaDownloadType.video,
+                cancelToken: cancelToken,
+                onReceiveProgress: (received, total) {
+                  _handleFileDownloadProgress(cancelToken, received, total);
+                },
+              );
 
       if (!identical(_fileDownloadCancelToken, cancelToken)) {
         return;
@@ -419,11 +423,12 @@ class MediaController extends Notifier<MediaState> {
   }
 
   void _listenToJob(String jobId) {
-    _jobSubscription = ref.read(mediaRepositoryProvider).listenToJob(jobId).listen(
-          _handleJobUpdate,
-          onError: _handleJobStreamError,
-          onDone: _handleJobStreamDone,
-        );
+    _jobSubscription =
+        ref.read(mediaRepositoryProvider).listenToJob(jobId).listen(
+              _handleJobUpdate,
+              onError: _handleJobStreamError,
+              onDone: _handleJobStreamDone,
+            );
   }
 
   void _handleJobUpdate(JobUpdate update) {
@@ -439,7 +444,8 @@ class MediaController extends Notifier<MediaState> {
     }
 
     state = current.copyWith(
-      downloadError: update.isFailed ? update.error ?? 'Download failed.' : null,
+      downloadError:
+          update.isFailed ? update.error ?? 'Download failed.' : null,
       currentJobId: update.jobId,
       currentStatus: update.status,
       currentProgress: update.isCompleted ? 100 : update.progress,
@@ -550,7 +556,9 @@ class MediaController extends Notifier<MediaState> {
 
     try {
       await ref.read(downloadHistoryProvider.future);
-      await ref.read(downloadHistoryProvider.notifier).addCompletedDownload(item);
+      await ref
+          .read(downloadHistoryProvider.notifier)
+          .addCompletedDownload(item);
     } catch (error) {
       if (kDebugMode) {
         debugPrint('Unable to save download history: $error');
@@ -658,5 +666,24 @@ class MediaController extends Notifier<MediaState> {
     }
 
     return null;
+  }
+
+  Map<String, dynamic>? _buildAuthHeadersForUrl(String url) {
+    if (_isXUrl(url)) {
+      final xSessionId = ref.read(activeXSessionIdProvider);
+      if (xSessionId != null && xSessionId.isNotEmpty) {
+        return {'X-Session-ID': xSessionId};
+      }
+    }
+    return null;
+  }
+
+  static bool _isXUrl(String url) {
+    final uri = Uri.tryParse(url.trim());
+    final host = uri?.host.toLowerCase() ?? '';
+    return host == 'x.com' ||
+        host.endsWith('.x.com') ||
+        host == 'twitter.com' ||
+        host.endsWith('.twitter.com');
   }
 }

@@ -36,13 +36,18 @@ class MediaRepository {
   final WebSocketService _webSocketService;
   final DeviceFileService _deviceFileService;
 
-  Future<MediaMetadata> getMediaInfo(String url) async {
+  Future<MediaMetadata> getMediaInfo(
+    String url, {
+    Map<String, dynamic>? headers,
+  }) async {
     final response = await _apiService.postJson(
       ApiPaths.mediaInfo,
       data: {'url': url.trim()},
+      headers: headers,
     );
     final rawData = response['data'];
-    final rawVideoQualities = rawData is Map ? rawData['video_qualities'] : null;
+    final rawVideoQualities =
+        rawData is Map ? rawData['video_qualities'] : null;
     final rawAudioOptions = rawData is Map ? rawData['audio_options'] : null;
     if (kDebugMode) {
       debugPrint(
@@ -53,7 +58,8 @@ class MediaRepository {
         'MediaRepository /media/info audio_options present=${rawAudioOptions is List} '
         'count=${rawAudioOptions is List ? rawAudioOptions.length : 0}',
       );
-      debugPrint('MediaRepository /media/info payload: ${jsonEncode(response)}');
+      debugPrint(
+          'MediaRepository /media/info payload: ${jsonEncode(response)}');
     }
     final mediaResponse = MediaInfoResponse.fromJson(response);
 
@@ -106,6 +112,7 @@ class MediaRepository {
     required String mediaUrl,
     required MediaDownloadType mediaType,
     VideoQuality? videoQuality,
+    Map<String, dynamic>? headers,
   }) async {
     final qualityHeight = videoQuality?.height;
     if (mediaType == MediaDownloadType.video &&
@@ -122,6 +129,7 @@ class MediaRepository {
     final response = await _apiService.postJson(
       ApiPaths.mediaDownload,
       data: request.toJson(),
+      headers: headers,
     );
     final downloadResponse = DownloadJobResponse.fromJson(response);
 

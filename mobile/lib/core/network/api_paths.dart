@@ -4,6 +4,12 @@ abstract final class ApiPaths {
   static const mediaPlaylistInfo = '/media/playlist/info';
   static const mediaDownload = '/media/download';
 
+  static const xAuthSession = '/auth/x/session';
+
+  static String xAuthSessionDetail(String sessionId) {
+    return '/auth/x/session/${Uri.encodeComponent(sessionId)}';
+  }
+
   static String cancelJob(String jobId) {
     return '/jobs/${Uri.encodeComponent(jobId)}/cancel';
   }
