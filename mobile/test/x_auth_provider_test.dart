@@ -189,5 +189,62 @@ void main() {
       expect(await authStorage.readSessionId(), isNull);
       expect(container.read(activeXSessionIdProvider), isNull);
     });
+
+    test(
+        'authenticateWithCookies creates session and attaches to state without leaking credentials',
+        () async {
+      final controller = container.read(xAuthProvider.notifier);
+
+      await controller.authenticateWithCookies(
+        authToken: 'TEST_AUTH_TOKEN',
+        ct0: 'TEST_CT0',
+      );
+
+      final state = container.read(xAuthProvider);
+      expect(state.isAuthenticated, isTrue);
+      expect(state.session?.sessionId, 'created_session_123');
+      expect(await authStorage.readSessionId(), 'created_session_123');
+      expect(container.read(activeXSessionIdProvider), 'created_session_123');
+
+      // Verify raw credentials never exist in state or storage
+      expect(state.toString(), isNot(contains('TEST_AUTH_TOKEN')));
+      expect(state.toString(), isNot(contains('TEST_CT0')));
+    });
+
+    test('authenticateWithCookies handles service failure gracefully',
+        () async {
+      final failingContainer = ProviderContainer(
+        overrides: [
+          xAuthStorageProvider.overrideWithValue(authStorage),
+          xAuthServiceProvider.overrideWithValue(FailingXAuthService()),
+        ],
+      );
+
+      final controller = failingContainer.read(xAuthProvider.notifier);
+
+      await expectLater(
+        () => controller.authenticateWithCookies(
+          authToken: 'TEST_AUTH_TOKEN',
+          ct0: 'TEST_CT0',
+        ),
+        throwsA(isA<ApiException>()),
+      );
+
+      final state = failingContainer.read(xAuthProvider);
+      expect(state.status, XAuthStatusType.error);
+      expect(state.errorMessage, 'Backend failed to create session');
+      expect(await authStorage.readSessionId(), isNull);
+    });
   });
+}
+
+class FailingXAuthService implements XAuthService {
+  @override
+  Future<XAuthSession> createSession(
+      {required String authToken, required String ct0}) async {
+    throw const ApiException('Backend failed to create session');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

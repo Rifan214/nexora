@@ -5,10 +5,12 @@ import '../core/network/api_exception.dart';
 import '../models/x_auth_session.dart';
 import '../services/x_auth_service.dart';
 import '../services/x_auth_storage.dart';
+import '../services/x_cookie_manager.dart';
 
 enum XAuthStatusType {
   unauthenticated,
   restoring,
+  authenticating,
   authenticated,
   expired,
   error,
@@ -30,6 +32,7 @@ class XAuthState {
       status == XAuthStatusType.authenticated && session?.isAvailable == true;
 
   bool get isRestoring => status == XAuthStatusType.restoring;
+  bool get isAuthenticating => status == XAuthStatusType.authenticating;
   bool get isExpired => status == XAuthStatusType.expired;
 
   const XAuthState.unauthenticated()
@@ -39,6 +42,11 @@ class XAuthState {
 
   const XAuthState.restoring()
       : status = XAuthStatusType.restoring,
+        session = null,
+        errorMessage = null;
+
+  const XAuthState.authenticating()
+      : status = XAuthStatusType.authenticating,
         session = null,
         errorMessage = null;
 
@@ -147,11 +155,37 @@ class XAuthController extends Notifier<XAuthState> {
     state = XAuthState.authenticated(session);
   }
 
-  /// Revokes the active session on the backend and purges local secure storage.
+  /// Ephemerally bridges extracted WebView credentials to the backend.
+  ///
+  /// Credentials exist in memory strictly during this call and are never stored.
+  Future<void> authenticateWithCookies({
+    required String authToken,
+    required String ct0,
+  }) async {
+    state = const XAuthState.authenticating();
+    try {
+      final service = ref.read(xAuthServiceProvider);
+      final session = await service.createSession(
+        authToken: authToken,
+        ct0: ct0,
+      );
+      await attachSession(session);
+    } on ApiException catch (e) {
+      state = XAuthState.error(e.message);
+      rethrow;
+    } catch (_) {
+      state = const XAuthState.error('Failed to authenticate X session.');
+      rethrow;
+    }
+  }
+
+  /// Revokes the active session on the backend, purges local secure storage,
+  /// and cleans native WebView cookies for X/Twitter domains.
   Future<void> logout() async {
     final currentSession = state.session;
     final storage = ref.read(xAuthStorageProvider);
     final service = ref.read(xAuthServiceProvider);
+    final cookieManager = ref.read(xCookieManagerProvider);
 
     final sessionId =
         currentSession?.sessionId ?? await storage.readSessionId();
@@ -164,6 +198,13 @@ class XAuthController extends Notifier<XAuthState> {
     }
 
     await storage.clearSessionId();
+
+    try {
+      await cookieManager.clearXCookies();
+    } catch (_) {
+      // Safe fallback: continue logout state reset
+    }
+
     state = const XAuthState.unauthenticated();
   }
 }

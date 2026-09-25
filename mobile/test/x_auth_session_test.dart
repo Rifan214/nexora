@@ -28,18 +28,18 @@ void main() {
     });
 
     test('correctly calculates isExpired based on expiresAt', () {
-      final now = DateTime.utc(2026, 9, 25, 4, 0, 0);
+      final now = DateTime.now().toUtc();
 
       final unexpiredSession = XAuthSession(
         sessionId: 'test_id_1',
-        expiresAt: DateTime.utc(2026, 9, 25, 4, 30, 0),
+        expiresAt: now.add(const Duration(minutes: 30)),
       );
       expect(unexpiredSession.isExpired(now), isFalse);
       expect(unexpiredSession.isAvailable, isTrue);
 
       final expiredSession = XAuthSession(
         sessionId: 'test_id_2',
-        expiresAt: DateTime.utc(2026, 9, 25, 3, 59, 0),
+        expiresAt: now.subtract(const Duration(minutes: 1)),
       );
       expect(expiredSession.isExpired(now), isTrue);
       expect(expiredSession.isAvailable, isFalse);

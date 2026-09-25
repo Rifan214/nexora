@@ -12,6 +12,7 @@ import '../models/tracked_download.dart';
 import 'download_preferences_page.dart';
 import '../providers/active_downloads_provider.dart';
 import '../providers/media_provider.dart';
+import '../providers/x_auth_provider.dart';
 import '../widgets/download_progress_status.dart';
 import '../widgets/batch_import_sheet.dart';
 import '../widgets/downloads_content.dart';
@@ -42,6 +43,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void initState() {
     super.initState();
     _urlController.addListener(_onUrlChanged);
+    Future.microtask(() {
+      if (mounted) {
+        ref.read(xAuthProvider.notifier).restoreSession();
+      }
+    });
   }
 
   @override
@@ -164,7 +170,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _openServerSettings() {
-    setState(() => _selectedDestinationIndex = NexoraNavigationBar.settingsIndex);
+    setState(
+        () => _selectedDestinationIndex = NexoraNavigationBar.settingsIndex);
   }
 
   Future<void> _retryFailedDownload(String jobId) async {
@@ -344,12 +351,10 @@ class _HomeReadyContent extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isCompact = constraints.maxHeight < 760;
-        final heroTopSpacing = isCompact
-            ? AppSpacing.heroTopCompact
-            : AppSpacing.heroTop;
-        final panelTopSpacing = isCompact
-            ? AppSpacing.panelTopCompact
-            : AppSpacing.panelTop;
+        final heroTopSpacing =
+            isCompact ? AppSpacing.heroTopCompact : AppSpacing.heroTop;
+        final panelTopSpacing =
+            isCompact ? AppSpacing.panelTopCompact : AppSpacing.panelTop;
 
         return SingleChildScrollView(
           padding: AppSpacing.pageHorizontal,
@@ -436,7 +441,8 @@ class _HomeReadyContent extends StatelessWidget {
                                             onPaste();
                                           }
                                         : null,
-                                    icon: const Icon(Icons.content_paste_rounded),
+                                    icon:
+                                        const Icon(Icons.content_paste_rounded),
                                   ),
                                 ),
                               ),
@@ -448,7 +454,8 @@ class _HomeReadyContent extends StatelessWidget {
                               ),
                               const SizedBox(height: AppSpacing.sm),
                               OutlinedButton.icon(
-                                onPressed: isInputEnabled ? onBatchImport : null,
+                                onPressed:
+                                    isInputEnabled ? onBatchImport : null,
                                 icon: const Icon(Icons.playlist_add_rounded),
                                 label: const Text('Batch Import'),
                               ),
@@ -653,7 +660,7 @@ class _MediaStatus extends ConsumerWidget {
         );
         final hasDetachedSession =
             state.currentJobId?.trim().isNotEmpty == true &&
-            activeDownload == null;
+                activeDownload == null;
         return _MetadataSummary(
           metadata: state.metadata,
           selectedVideoQuality: state.selectedVideoQuality,
@@ -670,31 +677,27 @@ class _MediaStatus extends ConsumerWidget {
           currentProgress: hasDetachedSession
               ? 0
               : activeDownload?.progress ?? state.currentProgress,
-          fileDownloadLoading:
-              hasDetachedSession
-                  ? false
-                  : activeDownload?.fileDownloadLoading ??
-                      state.fileDownloadLoading,
+          fileDownloadLoading: hasDetachedSession
+              ? false
+              : activeDownload?.fileDownloadLoading ??
+                  state.fileDownloadLoading,
           fileDownloadProgress: activeDownload?.fileDownloadProgress ??
               (hasDetachedSession ? 0 : state.fileDownloadProgress),
-          fileDownloadError:
-              hasDetachedSession
-                  ? null
-                  : activeDownload?.fileDownloadError ?? state.fileDownloadError,
-          downloadedFilename:
-              hasDetachedSession
-                  ? null
-                  : activeDownload?.downloadedFilename ?? state.downloadedFilename,
+          fileDownloadError: hasDetachedSession
+              ? null
+              : activeDownload?.fileDownloadError ?? state.fileDownloadError,
+          downloadedFilename: hasDetachedSession
+              ? null
+              : activeDownload?.downloadedFilename ?? state.downloadedFilename,
           savedFilePath: hasDetachedSession
               ? null
               : activeDownload?.savedFilePath ?? state.savedFilePath,
           savedDirectory: hasDetachedSession
               ? null
               : activeDownload?.savedDirectory ?? state.savedDirectory,
-          fileOpenLoading:
-              hasDetachedSession
-                  ? false
-                  : activeDownload?.fileOpenLoading ?? state.fileOpenLoading,
+          fileOpenLoading: hasDetachedSession
+              ? false
+              : activeDownload?.fileOpenLoading ?? state.fileOpenLoading,
           onVideoQualitySelected: mediaController.selectVideoQuality,
           onAudioOptionSelected: mediaController.selectAudioOption,
           onVideoDownloadPressed: mediaController.createVideoDownloadJob,
@@ -812,9 +815,8 @@ class _MetadataSummary extends StatelessWidget {
     final isStartDownloadDisabled =
         !hasMediaSelection || isDownloadActionDisabled;
     final isMediaSelectionEnabled = !isDownloadActionDisabled;
-    final onStartDownloadPressed = isAudioSelected
-        ? onAudioDownloadPressed
-        : onVideoDownloadPressed;
+    final onStartDownloadPressed =
+        isAudioSelected ? onAudioDownloadPressed : onVideoDownloadPressed;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1398,8 +1400,8 @@ class _VideoQualitySelectionList extends StatelessWidget {
       return Text(
         'No video qualities are available.',
         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-          color: colorScheme.onSurfaceVariant,
-        ),
+              color: colorScheme.onSurfaceVariant,
+            ),
       );
     }
 
