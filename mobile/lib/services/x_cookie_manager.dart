@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../utils/x_auth_diagnostics.dart';
+
 /// In-memory ephemeral representation of extracted X credentials.
 ///
 /// Never serialized, stored to disk, or kept in persistent state.
@@ -10,12 +12,17 @@ class XExtractedCookies {
   const XExtractedCookies({
     required this.authToken,
     required this.ct0,
+    this.twid,
   });
 
   final String authToken;
   final String ct0;
+  final String? twid;
 
   bool get isValid => authToken.trim().isNotEmpty && ct0.trim().isNotEmpty;
+
+  @override
+  String toString() => 'XExtractedCookies([PROTECTED])';
 }
 
 abstract class XCookieManagerWrapper {
@@ -112,8 +119,10 @@ class XCookieManagerService {
     for (final target in searchUris) {
       try {
         final cookies = await _wrapper.getCookies(url: WebUri.uri(target));
+        XAuthDiagnostics.logCookieMetadata(cookies, targetDomain: target.host);
         String? authToken;
         String? ct0;
+        String? twid;
 
         for (final cookie in cookies) {
           final name = cookie.name.trim();
@@ -124,22 +133,43 @@ class XCookieManagerService {
             authToken = val;
           } else if (name == 'ct0') {
             ct0 = val;
+          } else if (name == 'twid') {
+            twid = val;
           }
         }
 
-        if (authToken != null &&
-            authToken.isNotEmpty &&
-            ct0 != null &&
-            ct0.isNotEmpty) {
+        final hasAuth = authToken != null && authToken.isNotEmpty;
+        final hasCt0 = ct0 != null && ct0.isNotEmpty;
+        final classification = XAuthDiagnostics.classifyAuth(
+          hasAuthToken: hasAuth,
+          hasCt0: hasCt0,
+        );
+
+        if (classification == XAuthClassification.authenticated) {
+          XAuthDiagnostics.logAuthMilestone('cookies_extracted_successfully', {
+            'targetDomain': target.host,
+            'auth_token_present': true,
+            'ct0_present': true,
+            'twid_present': twid != null,
+            'classification': classification.name,
+          });
           return XExtractedCookies(
-            authToken: authToken,
-            ct0: ct0,
+            authToken: authToken!,
+            ct0: ct0!,
+            twid: twid,
           );
         }
       } catch (_) {
         // Platform or extraction failure
       }
     }
+
+    XAuthDiagnostics.logAuthMilestone('cookies_extraction_incomplete_or_missing', {
+      'auth_token_present': false,
+      'ct0_present': false,
+      'twid_present': false,
+      'classification': XAuthClassification.guest.name,
+    });
 
     return null;
   }

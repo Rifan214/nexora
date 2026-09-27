@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme/app_tokens.dart';
 import '../providers/x_auth_provider.dart';
 import 'x_login_sheet.dart';
+import 'x_manual_cookie_dialog.dart';
 
 /// Settings card displaying X/Twitter authentication status and management controls.
 class XAuthCard extends ConsumerWidget {
@@ -25,6 +26,10 @@ class XAuthCard extends ConsumerWidget {
 
   Future<void> _handleConnect(BuildContext context) async {
     await XLoginSheet.show(context);
+  }
+
+  Future<void> _handleManualImport(BuildContext context) async {
+    await XManualCookieDialog.show(context);
   }
 
   Future<void> _handleDisconnect(WidgetRef ref) async {
@@ -210,17 +215,39 @@ class XAuthCard extends ConsumerWidget {
     }
 
     if (authState.isExpired) {
-      return FilledButton.icon(
-        onPressed: () => _handleConnect(context),
-        icon: const Icon(Icons.refresh_rounded),
-        label: const Text('Reconnect X Account'),
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          FilledButton.icon(
+            onPressed: () => _handleConnect(context),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Reconnect X Account'),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          OutlinedButton.icon(
+            onPressed: () => _handleManualImport(context),
+            icon: const Icon(Icons.key_rounded),
+            label: const Text('Import Browser Session'),
+          ),
+        ],
       );
     }
 
-    return FilledButton.icon(
-      onPressed: () => _handleConnect(context),
-      icon: const Icon(Icons.login_rounded),
-      label: const Text('Connect X Account'),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        FilledButton.icon(
+          onPressed: () => _handleConnect(context),
+          icon: const Icon(Icons.login_rounded),
+          label: const Text('Connect X Account'),
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        OutlinedButton.icon(
+          onPressed: () => _handleManualImport(context),
+          icon: const Icon(Icons.key_rounded),
+          label: const Text('Import Browser Session'),
+        ),
+      ],
     );
   }
 }

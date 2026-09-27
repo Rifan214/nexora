@@ -59,6 +59,8 @@ void main() {
       expect(find.text('Guest / Not Connected'), findsOneWidget);
       expect(find.text('Connect X Account'), findsOneWidget);
       expect(find.byIcon(Icons.login_rounded), findsOneWidget);
+      expect(find.text('Import Browser Session'), findsOneWidget);
+      expect(find.byIcon(Icons.key_rounded), findsOneWidget);
 
       // Security check: no credentials or raw tokens displayed
       expect(find.textContaining('session_id'), findsNothing);
@@ -146,6 +148,8 @@ void main() {
       expect(find.text('Session Expired'), findsOneWidget);
       expect(find.text('Reconnect X Account'), findsOneWidget);
       expect(find.byIcon(Icons.refresh_rounded), findsOneWidget);
+      expect(find.text('Import Browser Session'), findsOneWidget);
+      expect(find.byIcon(Icons.key_rounded), findsOneWidget);
 
       // Security check: no credential leaks
       expect(find.textContaining('auth_token'), findsNothing);
