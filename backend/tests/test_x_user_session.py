@@ -606,3 +606,112 @@ def test_invalidated_and_expired_records_release_credentials_memory(tmp_path: Pa
     assert record.auth_token == ""
     assert record.ct0 == ""
 
+
+def test_active_lease_multiple_acquisitions_and_releases(tmp_path: Path) -> None:
+    store = EphemeralXUserSessionStore(storage_dir=tmp_path)
+    session = store.create_session(auth_token=_TOKEN_A, ct0=_CT0_A)
+
+    # Acquire lease 1
+    p1 = store.acquire_lease(session.session_id)
+    assert p1 is not None and p1.is_file()
+    assert store._sessions[session.session_id].active_leases == 1
+
+    # Acquire lease 2 concurrently
+    p2 = store.acquire_lease(session.session_id)
+    assert p2 == p1
+    assert store._sessions[session.session_id].active_leases == 2
+
+    # Release lease 1: cookie file must remain on disk because lease 2 is still active
+    store.release_lease(session.session_id)
+    assert store._sessions[session.session_id].active_leases == 1
+    assert p1.is_file()
+
+    # Release lease 2: leases drop to 0, session still valid so file stays for next reuse
+    store.release_lease(session.session_id)
+    assert store._sessions[session.session_id].active_leases == 0
+    assert p1.is_file()
+
+    # Invalidate session: since active_leases == 0, file must be unlinked immediately
+    store.invalidate(session.session_id)
+    assert not p1.exists()
+
+
+def test_active_lease_double_acquire_invalidate_then_releases(tmp_path: Path) -> None:
+    store = EphemeralXUserSessionStore(storage_dir=tmp_path)
+    session = store.create_session(auth_token=_TOKEN_A, ct0=_CT0_A)
+
+    # Acquire lease twice
+    cookie_path = store.acquire_lease(session.session_id)
+    assert cookie_path is not None
+    store.acquire_lease(session.session_id)
+    assert store._sessions[session.session_id].active_leases == 2
+
+    # Invalidate while 2 leases are active
+    assert store.invalidate(session.session_id) is True
+    # Record moved to pending release
+    assert session.session_id in store._pending_release_records
+    assert cookie_path.is_file()
+
+    # Release first lease: 1 lease remains active, file MUST NOT be deleted yet
+    store.release_lease(session.session_id)
+    assert store._pending_release_records[session.session_id].active_leases == 1
+    assert cookie_path.is_file()
+
+    # Release second lease: last lease released, file MUST be deleted and memory wiped
+    store.release_lease(session.session_id)
+    assert not cookie_path.exists()
+    assert session.session_id not in store._pending_release_records
+
+
+def test_release_lease_no_negative_count(tmp_path: Path) -> None:
+    store = EphemeralXUserSessionStore(storage_dir=tmp_path)
+    session = store.create_session(auth_token=_TOKEN_A, ct0=_CT0_A)
+
+    # Call release_lease without acquiring: active_leases must stay 0, never negative
+    store.release_lease(session.session_id)
+    assert store._sessions[session.session_id].active_leases == 0
+    store.release_lease(session.session_id)
+    assert store._sessions[session.session_id].active_leases == 0
+
+
+def test_session_isolation_and_path_traversal(tmp_path: Path) -> None:
+    store = EphemeralXUserSessionStore(storage_dir=tmp_path)
+    session_a = store.create_session(auth_token=_TOKEN_A, ct0=_CT0_A)
+    session_b = store.create_session(auth_token=_TOKEN_B, ct0=_CT0_B)
+
+    # Session A and Session B have distinct session IDs
+    assert session_a.session_id != session_b.session_id
+
+    # Distinct cookie files
+    file_a = store.get_cookie_file(session_a.session_id)
+    file_b = store.get_cookie_file(session_b.session_id)
+    assert file_a is not None and file_b is not None
+    assert file_a != file_b
+    assert _TOKEN_A in file_a.read_text(encoding="utf-8")
+    assert _TOKEN_B not in file_a.read_text(encoding="utf-8")
+    assert _TOKEN_B in file_b.read_text(encoding="utf-8")
+    assert _TOKEN_A not in file_b.read_text(encoding="utf-8")
+
+    # Invalidate A does not affect B
+    store.invalidate(session_a.session_id)
+    assert not file_a.exists()
+    assert file_b.exists()
+    assert store.is_valid(session_b.session_id) is True
+    assert store.is_valid(session_a.session_id) is False
+
+    # Path traversal attempts
+    for bad_id in (
+        "../../etc/passwd",
+        "..\\..\\windows\\system32",
+        "0123456789abcdef/sub",
+        "0123456789abcdef\x00extra",
+        "",
+        "   ",
+        "short",
+    ):
+        assert store.get_cookie_file(bad_id) is None
+        assert store.acquire_lease(bad_id) is None
+        assert store.is_valid(bad_id) is False
+        assert store.invalidate(bad_id) is False
+
+

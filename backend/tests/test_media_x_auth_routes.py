@@ -261,3 +261,68 @@ def test_media_download_with_invalid_x_session_id(
     payload = response.json()
     assert payload["success"] is False
     assert payload["error"]["code"] == "SESSION_NOT_FOUND"
+
+
+def test_media_download_with_expired_x_session_id(
+    app_instance,
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    current_time = datetime.now(UTC)
+    time_travel_store = EphemeralXUserSessionStore(
+        storage_dir=tmp_path,
+        now=lambda: current_time,
+        cleanup_on_startup=False,
+    )
+    app_instance.dependency_overrides[get_x_user_session_store] = lambda: time_travel_store
+
+    try:
+        session = time_travel_store.create_session(
+            auth_token="TEST_AUTH_TOKEN_VALUE",
+            ct0="TEST_CT0_VALUE",
+            ttl_seconds=60,
+        )
+
+        current_time = current_time + timedelta(seconds=61)
+
+        response = client.post(
+            "/media/download",
+            json={
+                "url": "https://x.com/user/status/123",
+                "media_type": "video",
+                "quality_height": 720,
+            },
+            headers={"X-Session-ID": session.session_id},
+        )
+        assert response.status_code == 401
+        payload = response.json()
+        assert payload["success"] is False
+        assert payload["error"]["code"] == "SESSION_EXPIRED"
+    finally:
+        app_instance.dependency_overrides.pop(get_x_user_session_store, None)
+
+
+def test_media_download_with_revoked_x_session_id(
+    client: TestClient,
+    session_store: EphemeralXUserSessionStore,
+) -> None:
+    session = session_store.create_session(
+        auth_token="TEST_AUTH_TOKEN_VALUE",
+        ct0="TEST_CT0_VALUE",
+    )
+    session_store.invalidate(session.session_id)
+
+    response = client.post(
+        "/media/download",
+        json={
+            "url": "https://x.com/user/status/123",
+            "media_type": "video",
+            "quality_height": 720,
+        },
+        headers={"X-Session-ID": session.session_id},
+    )
+    assert response.status_code == 401
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "SESSION_INVALID"
+

@@ -34,6 +34,7 @@ class XAuthState {
   bool get isRestoring => status == XAuthStatusType.restoring;
   bool get isAuthenticating => status == XAuthStatusType.authenticating;
   bool get isExpired => status == XAuthStatusType.expired;
+  bool get isUnauthenticated => status == XAuthStatusType.unauthenticated;
 
   const XAuthState.unauthenticated()
       : status = XAuthStatusType.unauthenticated,
@@ -140,6 +141,20 @@ class XAuthController extends Notifier<XAuthState> {
       }
     } catch (_) {
       state = const XAuthState.error('Unable to verify X session.');
+    }
+  }
+
+  /// Handles session invalidation reported during media operations or verification.
+  /// Safely purges local secure storage and transitions to unauthenticated or expired state.
+  Future<void> handleSessionInvalidated({
+    bool isExpired = false,
+    String? reason,
+  }) async {
+    await ref.read(xAuthStorageProvider).clearSessionId();
+    if (isExpired) {
+      state = XAuthState.expired(reason ?? 'Session expired.');
+    } else {
+      state = const XAuthState.unauthenticated();
     }
   }
 

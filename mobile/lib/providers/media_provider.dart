@@ -75,6 +75,13 @@ class MediaController extends Notifier<MediaState> {
         currentMediaType: preferredSelection?.mediaType,
       );
     } on ApiException catch (error) {
+      if (_buildAuthHeadersForUrl(trimmedUrl) != null &&
+          _isSessionInvalidationMessage(error.message)) {
+        final isExpired = error.message.toLowerCase().contains('expired');
+        await ref
+            .read(xAuthProvider.notifier)
+            .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
+      }
       state = MediaState.error(error.message);
     } catch (_) {
       state = const MediaState.error('Unable to retrieve media metadata.');
@@ -270,6 +277,13 @@ class MediaController extends Notifier<MediaState> {
           );
       _listenToJob(job.jobId);
     } on ApiException catch (error) {
+      if (_buildAuthHeadersForUrl(current.metadata.webpageUrl) != null &&
+          _isSessionInvalidationMessage(error.message)) {
+        final isExpired = error.message.toLowerCase().contains('expired');
+        await ref
+            .read(xAuthProvider.notifier)
+            .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
+      }
       final latest = _successState;
       if (latest == null) {
         return;
@@ -685,5 +699,13 @@ class MediaController extends Notifier<MediaState> {
         host.endsWith('.x.com') ||
         host == 'twitter.com' ||
         host.endsWith('.twitter.com');
+  }
+
+  static bool _isSessionInvalidationMessage(String message) {
+    final msg = message.toLowerCase();
+    return msg.contains('session not found') ||
+        msg.contains('session has expired') ||
+        msg.contains('session is invalid') ||
+        msg.contains('x authentication session');
   }
 }
