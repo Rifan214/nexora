@@ -269,3 +269,8 @@ def reset_hanime_signature_provider() -> None:
     """Reset the global provider singleton (useful for isolated tests)."""
     global _global_provider
     _global_provider = None
+
+def reset_hanime_signature_provider() -> None:
+    """Reset the global provider singleton (useful for isolated tests)."""
+    global _global_provider
+    _global_provider = None

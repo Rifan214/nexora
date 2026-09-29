@@ -43,6 +43,16 @@ def configure_logging(*, debug: bool) -> None:
                     "level": level_name,
                     "propagate": False,
                 },
+                "httpcore": {
+                    "handlers": ["default"],
+                    "level": "INFO",
+                    "propagate": False,
+                },
+                "httpx": {
+                    "handlers": ["default"],
+                    "level": "INFO",
+                    "propagate": False,
+                },
             },
         }
     )

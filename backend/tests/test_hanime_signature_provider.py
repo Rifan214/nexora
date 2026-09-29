@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 from unittest.mock import AsyncMock, MagicMock
 
@@ -60,8 +61,13 @@ def _create_mock_playwright(
 ) -> tuple[AsyncMock, MagicMock, MagicMock, MagicMock]:
     """Create a fully mocked hierarchy of Playwright -> Browser -> Context -> Page."""
     mock_page = AsyncMock()
-    mock_page.url = "https://hanime.tv/"
-    mock_page.goto = AsyncMock()
+    mock_page.url = "about:blank"
+
+    async def _mock_goto(url: str, *args: Any, **kwargs: Any) -> None:
+        mock_page.url = url
+
+    mock_page.goto = AsyncMock(side_effect=_mock_goto)
+    mock_page.reload = AsyncMock()
     mock_page.wait_for_function = AsyncMock()
     mock_page.close = AsyncMock()
 
@@ -363,8 +369,184 @@ def test_singleton_get_and_reset() -> None:
     reset_hanime_signature_provider()
 
 
+
 # ==============================================================================
-# 8. OPTIONAL LIVE INTEGRATION TEST (SKIPPED BY DEFAULT)
+# 8. CROSS-EVENT-LOOP & THREAD-SAFETY REGRESSION TESTS
+# ==============================================================================
+
+@pytest.fixture
+def background_loop_runner():
+    """Helper fixture to run an asyncio event loop in a dedicated background thread."""
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+
+    try:
+        yield loop
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=3.0)
+        if not loop.is_closed():
+            loop.close()
+
+
+@pytest.mark.anyio
+async def test_cross_loop_signature_generation_and_caching(background_loop_runner: asyncio.AbstractEventLoop) -> None:
+    """Verify provider started on loop A safely returns signature when called from loop B."""
+    loop_a = background_loop_runner
+    mock_pw, _, _, mock_page = _create_mock_playwright(
+        signature_val="cross_loop_sig_123",
+        stime_val="1800000000",
+    )
+    provider = HanimeSignatureProvider(playwright_launcher=AsyncMock(return_value=mock_pw))
+
+    # Start provider on loop A
+    start_future = asyncio.run_coroutine_threadsafe(provider.start(), loop_a)
+    start_future.result(timeout=5.0)
+
+    assert provider.is_started is True
+    assert provider._loop is loop_a
+
+    # Current test runs on loop B (distinct from loop_a)
+    current_loop = asyncio.get_running_loop()
+    assert current_loop is not loop_a
+
+    # Call get_signature from loop B
+    sig = await provider.get_signature()
+    assert isinstance(sig, HanimeSignature)
+    assert sig.signature == "cross_loop_sig_123"
+    assert sig.stime == "1800000000"
+
+    # Second call uses cache without hitting loop A page evaluate again
+    sig_cached = await provider.get_signature()
+    assert sig_cached is sig
+    assert mock_page.evaluate.call_count == 2
+
+    # Clean shutdown from loop B
+    await provider.close()
+    assert provider.is_started is False
+    assert provider._loop is None
+
+
+@pytest.mark.anyio
+async def test_cross_loop_error_propagation(background_loop_runner: asyncio.AbstractEventLoop) -> None:
+    """Verify errors originating on loop A are propagated cleanly to caller on loop B."""
+    loop_a = background_loop_runner
+    mock_pw, _, _, _ = _create_mock_playwright(
+        evaluate_side_effect=RuntimeError("Page evaluation failed on loop A"),
+    )
+    provider = HanimeSignatureProvider(playwright_launcher=AsyncMock(return_value=mock_pw))
+
+    # Start on loop A
+    asyncio.run_coroutine_threadsafe(provider.start(), loop_a).result(timeout=5.0)
+
+    # Call from loop B should catch and wrap into HanimeSignatureProviderError
+    with pytest.raises(HanimeSignatureProviderError) as exc_info:
+        await provider.get_signature()
+
+    assert "after recovery attempt" in str(exc_info.value)
+    await provider.close()
+
+
+@pytest.mark.anyio
+async def test_cross_loop_closed_loop_raises_controlled_error() -> None:
+    """Verify call fails with controlled error if bound event loop is closed."""
+    loop_a = asyncio.new_event_loop()
+    mock_pw, _, _, _ = _create_mock_playwright()
+    provider = HanimeSignatureProvider(playwright_launcher=AsyncMock(return_value=mock_pw))
+
+    # Manually associate with loop_a then close it
+    provider._loop = loop_a
+    loop_a.close()
+
+    with pytest.raises(HanimeSignatureProviderError) as exc_info:
+        await provider.get_signature()
+
+    assert "Bound event loop is closed" in str(exc_info.value)
+
+
+def test_cross_thread_sync_signature_generation(background_loop_runner: asyncio.AbstractEventLoop) -> None:
+    """Verify a synchronous worker thread without a running loop can retrieve signature."""
+    loop_a = background_loop_runner
+    mock_pw, _, _, _ = _create_mock_playwright(
+        signature_val="sync_thread_sig_456",
+        stime_val="1800000001",
+    )
+    provider = HanimeSignatureProvider(playwright_launcher=AsyncMock(return_value=mock_pw))
+
+    # Start provider on loop A
+    asyncio.run_coroutine_threadsafe(provider.start(), loop_a).result(timeout=5.0)
+
+    # In current synchronous thread (no running event loop)
+    sig = provider.get_signature_sync()
+    assert sig.signature == "sync_thread_sig_456"
+    assert sig.stime == "1800000001"
+
+    # Close cleanly
+    asyncio.run_coroutine_threadsafe(provider.close(), loop_a).result(timeout=5.0)
+    assert provider.is_started is False
+
+
+@pytest.mark.anyio
+async def test_same_loop_signature_generation() -> None:
+    """Verify signature generation when start() and get_signature() are on the same loop."""
+    mock_pw, _, _, _ = _create_mock_playwright(
+        signature_val="same_loop_sig_789",
+        stime_val="1800000002",
+    )
+    provider = HanimeSignatureProvider(playwright_launcher=AsyncMock(return_value=mock_pw))
+    await provider.start()
+    assert provider._loop is asyncio.get_running_loop()
+
+    sig = await provider.get_signature()
+    assert sig.signature == "same_loop_sig_789"
+    assert sig.stime == "1800000002"
+
+    await provider.close()
+    assert provider.is_started is False
+    assert provider._loop is None
+
+
+@pytest.mark.anyio
+async def test_page_navigation_vs_reload_behavior() -> None:
+    """Verify goto() is called on blank page, reload() is called when already at root."""
+    mock_pw, _, _, mock_page = _create_mock_playwright(
+        signature_val="sig_v1",
+        stime_val="1000",
+    )
+    provider = HanimeSignatureProvider(playwright_launcher=AsyncMock(return_value=mock_pw))
+    await provider.start()
+
+    # 1. First retrieval: page starts at about:blank -> goto() should be called, reload() not called
+    sig1 = await provider.get_signature()
+    assert sig1.signature == "sig_v1"
+    assert sig1.stime == "1000"
+    assert mock_page.goto.call_count == 1
+    assert mock_page.reload.call_count == 0
+
+    # Simulate updated values after reload
+    async def _eval_v2(expr: str) -> Any:
+        if "ssignature" in expr:
+            return "sig_v2"
+        if "stime" in expr:
+            return "2000"
+        return None
+
+    mock_page.evaluate = AsyncMock(side_effect=_eval_v2)
+
+    # 2. Force refresh: page is now at https://hanime.tv/ -> reload() should be called, goto() not called again
+    sig2 = await provider.get_signature(force_refresh=True)
+    assert sig2.signature == "sig_v2"
+    assert sig2.stime == "2000"
+    assert mock_page.goto.call_count == 1
+    assert mock_page.reload.call_count == 1
+
+    await provider.close()
+
+
+
+# ==============================================================================
+# 9. OPTIONAL LIVE INTEGRATION TEST (SKIPPED BY DEFAULT)
 # ==============================================================================
 
 @pytest.mark.integration

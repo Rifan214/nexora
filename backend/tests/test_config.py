@@ -112,3 +112,19 @@ def test_reddit_auth_cookie_file_is_read_from_environment(monkeypatch: pytest.Mo
     monkeypatch.setenv("NEXORA_REDDIT_AUTH_COOKIE_FILE", "C:/run/secrets/reddit.cookies.txt")
 
     assert get_settings().reddit_auth_cookie_file == "C:/run/secrets/reddit.cookies.txt"
+
+
+def test_logging_configuration_silences_http_debug() -> None:
+    """Verify that httpcore and httpx loggers are pinned to INFO and do not propagate."""
+    import logging
+    from app.core.logging import configure_logging
+
+    configure_logging(debug=True)
+
+    httpcore_logger = logging.getLogger("httpcore")
+    httpx_logger = logging.getLogger("httpx")
+
+    assert httpcore_logger.level == logging.INFO
+    assert httpcore_logger.propagate is False
+    assert httpx_logger.level == logging.INFO
+    assert httpx_logger.propagate is False

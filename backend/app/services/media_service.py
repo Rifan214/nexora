@@ -1746,7 +1746,7 @@ class MediaService:
         if loop is not None and loop.is_running():
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 return executor.submit(asyncio.run, coro).result(timeout=timeout)
-        return asyncio.run(coro)
+        return asyncio.run(asyncio.wait_for(coro, timeout=timeout))
 
     def _extract_hanime_info(self, url: str) -> dict[str, Any]:
         extractor = self._get_hanime_extractor()

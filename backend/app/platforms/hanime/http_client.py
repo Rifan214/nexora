@@ -13,7 +13,7 @@ from app.platforms.hanime.signature_provider import HanimeSignature
 logger = logging.getLogger(__name__)
 
 _ALLOWED_HOSTS = frozenset({"hanime.tv", "www.hanime.tv", "auth.hanime.tv"})
-_DEFAULT_CONNECT_TIMEOUT = 5.0
+_DEFAULT_CONNECT_TIMEOUT = 10.0
 _DEFAULT_READ_TIMEOUT = 15.0
 _DEFAULT_WRITE_TIMEOUT = 10.0
 _DEFAULT_POOL_TIMEOUT = 15.0

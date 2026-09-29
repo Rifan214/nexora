@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
@@ -235,3 +236,22 @@ def test_credential_hygiene_in_metadata_and_errors(dummy_hanime_info_dict: dict)
     assert "x-time" not in meta_str
     assert "x-token" not in meta_str
     assert "sign.bin" not in meta_str
+
+
+def test_run_coroutine_sync_fallback_timeout() -> None:
+    """8. Verify _run_coroutine_sync fallback branch enforces timeout when no loop is running."""
+    async def hanging_coroutine():
+        await asyncio.sleep(5.0)
+        return "finished"
+
+    with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+        MediaService._run_coroutine_sync(hanging_coroutine(), timeout=0.1)
+
+
+def test_run_coroutine_sync_fallback_success() -> None:
+    """9. Verify _run_coroutine_sync fallback branch completes successfully."""
+    async def fast_coroutine():
+        return "quick_result"
+
+    res = MediaService._run_coroutine_sync(fast_coroutine(), timeout=2.0)
+    assert res == "quick_result"

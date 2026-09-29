@@ -242,3 +242,11 @@ async def test_12_credentials_not_logged(dummy_signature: HanimeSignature, caplo
     assert dummy_signature.signature not in full_log_text
     assert str(dummy_signature.stime) not in full_log_text
     assert token not in full_log_text
+
+
+def test_13_default_connect_timeout() -> None:
+    """13. Verify default connect timeout is configured to 10.0 seconds."""
+    from app.platforms.hanime.http_client import _DEFAULT_CONNECT_TIMEOUT
+    client = HttpHanimeClient()
+    assert _DEFAULT_CONNECT_TIMEOUT == 10.0
+    assert client._timeout.connect == 10.0
