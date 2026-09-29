@@ -201,6 +201,11 @@ class _FutureSupportCard extends StatelessWidget {
               isAvailable: true,
             ),
             const Divider(),
+            const _PlatformSupportRow(
+              platform: 'Hanime',
+              isAvailable: true,
+            ),
+            const Divider(),
             const _PlatformSupportRow(platform: 'Instagram'),
             const Divider(),
             const _PlatformSupportRow(platform: 'Facebook'),
