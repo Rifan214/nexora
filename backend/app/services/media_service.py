@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
 import random
 import re
@@ -11,7 +13,7 @@ from dataclasses import dataclass, field
 from http.cookiejar import LoadError, MozillaCookieJar
 from pathlib import Path
 from typing import Any, Callable, Iterator
-from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
 from yt_dlp import YoutubeDL
@@ -36,9 +38,26 @@ from app.services.quality_selector import QualitySelector
 from app.models.resume_state import ResumeState
 from app.models.x_auth import XAuthSource
 from app.services.x_auth_manager import XAuthManager
+from app.platforms.hanime import (
+    HanimeExtractionError,
+    HanimeExtractor,
+    HanimeHandshakeAuthError,
+    HanimeNetworkError,
+    HanimeNoPlayableFormatsError,
+    HanimeRateLimitError,
+    HanimeSecurityError,
+    HanimeServerError,
+    HanimeSignatureError,
+    HanimeUrlError,
+    get_hanime_signature_provider,
+    install_hanime_dns_resolver,
+)
+from app.platforms.hanime.signature_provider import HanimeSignatureProvider
 from app.utils.platforms import (
+    _HANIME_HOSTNAMES,
     detect_platform_from_url,
     is_facebook_media_url,
+    is_hanime_media_url,
     is_instagram_media_url,
     is_reddit_media_url,
     is_x_status_url,
@@ -46,6 +65,9 @@ from app.utils.platforms import (
 )
 from app.utils.storage import build_download_outtmpl, find_downloaded_file, get_temp_storage_dir
 from app.utils.validators import validate_http_url
+
+# Ensure Hanime Cloudflare Anycast IPs resolve properly even on censored/poisoned networks
+install_hanime_dns_resolver()
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +77,8 @@ _AUDIO_MP3_POSTPROCESSOR = {
     "preferredcodec": "mp3",
     "preferredquality": "0",
 }
-_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter", "instagram", "facebook", "reddit"})
-_PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter", "instagram", "facebook", "reddit"})
+_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter", "instagram", "facebook", "reddit", "hanime"})
+_PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter", "instagram", "facebook", "reddit", "hanime"})
 _X_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
     {
         "X_MEDIA_NOT_AVAILABLE",
@@ -214,11 +236,15 @@ class MediaService:
         sleep: Callable[[float], None] | None = None,
         retry_jitter: Callable[[float, float], float] | None = None,
         x_auth_manager: XAuthManager | None = None,
+        hanime_extractor: HanimeExtractor | None = None,
+        hanime_signature_provider: HanimeSignatureProvider | None = None,
     ) -> None:
         self._settings = get_settings()
         self._x_auth_manager = x_auth_manager or XAuthManager(
             service_account_cookie_file=lambda: self._settings.x_auth_cookie_file
         )
+        self._hanime_signature_provider = hanime_signature_provider or get_hanime_signature_provider()
+        self._hanime_extractor = hanime_extractor
         self._quality_selector = QualitySelector()
         self._process_manager = process_manager or get_download_process_manager()
         self._job_manager = job_manager
@@ -448,6 +474,8 @@ class MediaService:
         self._process_manager.register_job(job_id, worker=threading.current_thread())
 
         session_lease_acquired = False
+        detected_platform: str | None = None
+        temp_dir: Path | None = None
         try:
             self._process_manager.raise_if_cancelled(job_id)
             job_manager.update_progress(job_id, 0)
@@ -527,6 +555,10 @@ class MediaService:
                     extractor=str(extracted_info.get("extractor_key") or detected_platform),
                 )
 
+            http_headers = extracted_info.get("http_headers")
+            if not http_headers and extracted_info.get("formats"):
+                http_headers = extracted_info["formats"][0].get("http_headers")
+
             ydl_options = self._build_download_options(
                 job_id=job_id,
                 format_selector=format_selector,
@@ -537,6 +569,8 @@ class MediaService:
                 resume_state_manager=self._resume_state_manager,
                 continue_download=resume_state is not None,
                 cookie_file=auth_cookie_file,
+                enable_file_urls=(detected_platform == "hanime"),
+                http_headers=http_headers,
             )
 
             with self._process_manager.worker_context(job_id):
@@ -549,7 +583,7 @@ class MediaService:
                             url=url,
                             output_type=output_type,
                             format_selector=format_selector,
-                            download_info=download_info,
+                            download_info=(download_info if detected_platform != "hanime" else (download_info or extracted_info)),
                             detected_platform=detected_platform,
                         )
                     except YoutubeDLError:
@@ -574,6 +608,8 @@ class MediaService:
                             resume_state_manager=self._resume_state_manager,
                             continue_download=False,
                             cookie_file=auth_cookie_file,
+                            enable_file_urls=(detected_platform == "hanime"),
+                            http_headers=http_headers,
                         )
                         with YoutubeDL(fallback_options) as fallback_youtube_dl:
                             self._process_manager.attach_downloader(job_id, fallback_youtube_dl)
@@ -584,7 +620,7 @@ class MediaService:
                                     url=url,
                                     output_type=output_type,
                                     format_selector=format_selector,
-                                    download_info=download_info,
+                                    download_info=(download_info if detected_platform != "hanime" else (download_info or extracted_info)),
                                     detected_platform=detected_platform,
                                 )
                             finally:
@@ -628,6 +664,12 @@ class MediaService:
                     logger.warning("Download failed job_id=%s error=%s", job_id, error_message)
                 self._mark_download_failed(job_id, error_message=error_message, job_manager=job_manager)
         finally:
+            if detected_platform == "hanime" and temp_dir is not None:
+                try:
+                    for manifest in temp_dir.glob(f"{job_id}.*.m3u8"):
+                        manifest.unlink(missing_ok=True)
+                except OSError:
+                    pass
             if session_lease_acquired:
                 self._x_auth_manager.release_session_lease(
                     source=auth_source,
@@ -774,6 +816,8 @@ class MediaService:
                 url=url,
                 snapshot=download_info,
             )
+            if detected_platform == "hanime":
+                self._prepare_hanime_manifests(resolved_download_info, job_id=job_id)
             settings = self._settings
             logger.info(
                 "Diagnostics checkpoint reached enabled=%s",
@@ -1462,15 +1506,18 @@ class MediaService:
             return tuple(cls._remove_authenticated_snapshot_secrets(item) for item in value)
         return value
 
-    @staticmethod
     def _refresh_download_transport_info(
+        self,
         youtube_dl: YoutubeDL,
         *,
         url: str,
         snapshot: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Refresh transient stream data without replacing cached presentation metadata."""
-        refreshed_info = youtube_dl.extract_info(url, download=False, process=False)
+        if self._detect_platform(snapshot) == "hanime" or is_hanime_media_url(url):
+            refreshed_info = self._extract_info(url)
+        else:
+            refreshed_info = youtube_dl.extract_info(url, download=False, process=False)
         if not isinstance(refreshed_info, dict):
             raise DownloadError("yt-dlp did not return download metadata")
 
@@ -1479,6 +1526,29 @@ class MediaService:
             if field in refreshed_info:
                 resolved_info[field] = deepcopy(refreshed_info[field])
         return resolved_info, refreshed_info
+
+    def _prepare_hanime_manifests(self, info: dict[str, Any], *, job_id: UUID) -> None:
+        """Fetch Hanime M3U8 playlists in Python to bypass OS-level DNS sinkholes on external FFmpeg."""
+        formats = info.get("formats") or []
+        temp_dir = get_temp_storage_dir()
+        for idx, fmt in enumerate(formats):
+            if not isinstance(fmt, dict):
+                continue
+            stream_url = str(fmt.get("url") or "")
+            if not stream_url.startswith(("http://hanime.tv/", "https://hanime.tv/")):
+                continue
+            fmt_id = str(fmt.get("format_id") or idx)
+            manifest_file = temp_dir / f"{job_id}.{fmt_id}.m3u8"
+            headers = fmt.get("http_headers") or info.get("http_headers") or {}
+
+            import httpx
+            with httpx.Client(headers=headers, timeout=15.0) as client:
+                resp = client.get(stream_url)
+                resp.raise_for_status()
+                m3u8_text = resp.text
+
+            manifest_file.write_text(m3u8_text, encoding="utf-8")
+            fmt["url"] = unquote(manifest_file.as_uri())
 
     @staticmethod
     def _sanitize_processed_download_fields(info: dict[str, Any]) -> dict[str, Any]:
@@ -1598,6 +1668,8 @@ class MediaService:
         resume_state_manager: ResumeStateManager,
         continue_download: bool,
         cookie_file: Path | None = None,
+        enable_file_urls: bool = False,
+        http_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         options: dict[str, Any] = {
             "quiet": True,
@@ -1613,6 +1685,10 @@ class MediaService:
             "progress_hooks": [self._build_progress_hook(job_id, job_manager, resume_state_manager)],
             "postprocessor_hooks": [self._build_postprocessor_hook(job_id)],
         }
+        if enable_file_urls:
+            options["enable_file_urls"] = True
+        if http_headers:
+            options["http_headers"] = dict(http_headers)
         if output_type == "audio":
             # yt-dlp chooses its best audio stream, then FFmpeg produces a
             # playable MP3 at its highest VBR quality setting.
@@ -1653,12 +1729,104 @@ class MediaService:
             return "Authenticated session unavailable"
         return "yt-dlp failed to download the media"
 
+    def _get_hanime_extractor(self) -> HanimeExtractor:
+        if self._hanime_extractor is None:
+            self._hanime_extractor = HanimeExtractor(
+                signature_provider=self._hanime_signature_provider,
+            )
+        return self._hanime_extractor
+
+    @staticmethod
+    def _run_coroutine_sync(coro: Any, timeout: float = 60.0) -> Any:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                return executor.submit(asyncio.run, coro).result(timeout=timeout)
+        return asyncio.run(coro)
+
+    def _extract_hanime_info(self, url: str) -> dict[str, Any]:
+        extractor = self._get_hanime_extractor()
+        try:
+            return self._run_coroutine_sync(extractor.extract(url))
+        except HanimeUrlError as exc:
+            raise APIError(
+                code="INVALID_HANIME_URL",
+                message="Invalid Hanime URL",
+                details="Use a public Hanime video URL in the form https://hanime.tv/videos/hentai/<slug>.",
+                status_code=422,
+            ) from exc
+        except HanimeHandshakeAuthError as exc:
+            raise APIError(
+                code="HANIME_AUTH_ERROR",
+                message="Hanime authentication failed",
+                details="Failed to authenticate with Hanime servers. Please try again later.",
+                status_code=502,
+            ) from exc
+        except HanimeRateLimitError as exc:
+            raise APIError(
+                code="HANIME_RATE_LIMITED",
+                message="Hanime rate limit reached",
+                details="Hanime rate limit reached. Please wait before retrying.",
+                status_code=429,
+            ) from exc
+        except HanimeServerError as exc:
+            raise APIError(
+                code="HANIME_SERVER_ERROR",
+                message="Hanime service error",
+                details="Hanime upstream servers returned an error. Please try again later.",
+                status_code=502,
+            ) from exc
+        except HanimeNoPlayableFormatsError as exc:
+            raise APIError(
+                code="HANIME_NO_PLAYABLE_FORMATS",
+                message="No playable formats available",
+                details="No downloadable media streams were found for this Hanime video.",
+                status_code=422,
+            ) from exc
+        except HanimeNetworkError as exc:
+            raise APIError(
+                code="NETWORK_FAILURE",
+                message="Network failure",
+                details="Unable to reach Hanime servers.",
+                status_code=502,
+            ) from exc
+        except HanimeSignatureError as exc:
+            raise APIError(
+                code="HANIME_SIGNATURE_ERROR",
+                message="Hanime signature error",
+                details="Failed to acquire browser signature for Hanime.",
+                status_code=502,
+            ) from exc
+        except HanimeExtractionError as exc:
+            raise APIError(
+                code="HANIME_EXTRACTION_ERROR",
+                message="Hanime extraction failed",
+                details="Failed to extract video information from Hanime.",
+                status_code=502,
+            ) from exc
+        except APIError:
+            raise
+        except Exception as exc:
+            raise APIError(
+                code="METADATA_EXTRACTION_ERROR",
+                message="Failed to extract media metadata",
+                details="An unexpected error occurred while extracting Hanime metadata.",
+                status_code=500,
+            ) from exc
+
     def _extract_info(
         self,
         url: str,
         *,
         cookie_file: Path | None = None,
     ) -> dict[str, Any]:
+        if is_hanime_media_url(url) or detect_platform_from_url(url) == "hanime":
+            return self._extract_hanime_info(url)
+
         ydl_options = {
             "quiet": True,
             "no_warnings": True,
@@ -1858,6 +2026,17 @@ class MediaService:
                 )
             return normalize_media_url(normalized_url)
 
+        hostname = (urlsplit(normalized_url).hostname or "").casefold()
+        if platform == "hanime" or hostname in _HANIME_HOSTNAMES:
+            if not is_hanime_media_url(normalized_url):
+                raise APIError(
+                    code="INVALID_HANIME_URL",
+                    message="Invalid Hanime URL",
+                    details="Use a public Hanime video URL in the form https://hanime.tv/videos/hentai/<slug>.",
+                    status_code=422,
+                )
+            return normalize_media_url(normalized_url)
+
         return normalized_url
 
     @staticmethod
@@ -1878,6 +2057,8 @@ class MediaService:
             return "facebook"
         if "reddit" in haystack:
             return "reddit"
+        if "hanime" in haystack:
+            return "hanime"
         if "vimeo" in haystack:
             return "vimeo"
         return "unknown"
@@ -1940,6 +2121,21 @@ class MediaService:
                 status_code=422,
             )
 
+        if platform == "hanime":
+            formats = info.get("formats") or []
+            if self._quality_selector.build_qualities(
+                formats,
+                platform=platform,
+            ) or self._has_audio_available(formats, platform=platform):
+                return
+
+            raise APIError(
+                code="HANIME_NO_PLAYABLE_FORMATS",
+                message="No playable formats available",
+                details="No downloadable media streams were found for this Hanime video.",
+                status_code=422,
+            )
+
     def _build_metadata(self, *, info: dict[str, Any], platform: str, url: str) -> MediaMetadata:
         formats = info.get("formats") or []
         video_qualities = self._quality_selector.build_qualities(formats, platform=platform)
@@ -1989,9 +2185,9 @@ class MediaService:
 
     @staticmethod
     def _download_source_url(*, info: dict[str, Any], platform: str, url: str) -> str:
-        # TikTok, Twitter, Instagram, Facebook, and Reddit URLs can succeed where a later extraction
+        # TikTok, Twitter, Instagram, Facebook, Reddit, and Hanime URLs can succeed where a later extraction
         # of the canonical URL returned by yt-dlp fails or misses query state.
-        if platform in {"tiktok", "twitter", "instagram", "facebook", "reddit"}:
+        if platform in {"tiktok", "twitter", "instagram", "facebook", "reddit", "hanime"}:
             return url
         return str(info.get("webpage_url") or url)
 

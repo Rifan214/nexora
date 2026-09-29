@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     instagram_auth_cookie_file: str = Field(default="", alias="NEXORA_INSTAGRAM_AUTH_COOKIE_FILE")
     facebook_auth_cookie_file: str = Field(default="", alias="NEXORA_FACEBOOK_AUTH_COOKIE_FILE")
     reddit_auth_cookie_file: str = Field(default="", alias="NEXORA_REDDIT_AUTH_COOKIE_FILE")
+    hanime_signature_provider_enabled: bool = Field(
+        default=True,
+        alias="NEXORA_HANIME_SIGNATURE_PROVIDER_ENABLED",
+    )
+    hanime_signature_ttl: float = Field(
+        default=60.0,
+        gt=0.0,
+        alias="NEXORA_HANIME_SIGNATURE_TTL",
+    )
     cors_origins: str = Field(default="", alias="NEXORA_CORS_ORIGINS")
     # Keep a longer safety cap for completed files that are never requested.
     download_expiration_minutes: int = Field(default=30, ge=1, alias="DOWNLOAD_EXPIRATION_MINUTES")

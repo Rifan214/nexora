@@ -16,3 +16,4 @@ cookies.txt
 *.cookies.txt
 *_cookies.txt
 cookies-*.txt
+pytest-cache-*

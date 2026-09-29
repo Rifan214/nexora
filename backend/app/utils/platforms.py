@@ -86,6 +86,28 @@ def _is_reddit_tracking_param(key: str) -> bool:
     )
 
 
+_HANIME_HOSTNAMES = frozenset({"hanime.tv", "www.hanime.tv"})
+_HANIME_MEDIA_PATH = re.compile(r"^/videos/hentai/([A-Za-z0-9_-]+)/?$")
+_HANIME_TRACKING_PREFIXES = (
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_name",
+    "utm_term",
+    "utm_content",
+    "ref",
+    "share_id",
+)
+
+
+def _is_hanime_tracking_param(key: str) -> bool:
+    k = key.casefold()
+    return any(
+        k == prefix or k.startswith(f"{prefix}_")
+        for prefix in _HANIME_TRACKING_PREFIXES
+    )
+
+
 def detect_platform_from_url(url: str) -> str:
     hostname = (urlparse(url).hostname or "").casefold()
 
@@ -101,6 +123,8 @@ def detect_platform_from_url(url: str) -> str:
         return "facebook"
     if hostname in _REDDIT_HOSTNAMES or hostname.endswith(".reddit.com") or hostname.endswith(".redditmedia.com"):
         return "reddit"
+    if is_hanime_media_url(url):
+        return "hanime"
     if hostname.endswith("vimeo.com"):
         return "vimeo"
 
@@ -162,6 +186,20 @@ def is_reddit_media_url(url: str) -> bool:
 
     path = parsed.path
     return any(pattern.fullmatch(path) is not None for pattern in _REDDIT_MEDIA_PATH_PATTERNS)
+
+
+def is_hanime_media_url(url: str) -> bool:
+    """Return whether a URL addresses a supported Hanime video item."""
+    try:
+        parsed = urlsplit(url)
+    except Exception:
+        return False
+    if parsed.scheme.casefold() != "https":
+        return False
+    hostname = (parsed.hostname or "").casefold()
+    if hostname not in _HANIME_HOSTNAMES:
+        return False
+    return _HANIME_MEDIA_PATH.fullmatch(parsed.path) is not None
 
 
 def normalize_media_url(url: str) -> str:
@@ -226,5 +264,23 @@ def normalize_media_url(url: str) -> str:
         encoded_query = urlencode(cleaned_query, doseq=True) if cleaned_query else ""
         canonical_path = parsed.path.rstrip("/") + "/"
         return urlunsplit(("https", "www.reddit.com", canonical_path, encoded_query, ""))
+
+    if hostname in _HANIME_HOSTNAMES:
+        match = _HANIME_MEDIA_PATH.fullmatch(parsed.path)
+        if match is not None:
+            slug = match.group(1)
+            canonical_path = f"/videos/hentai/{slug}"
+            from urllib.parse import parse_qs, urlencode
+
+            qs = parse_qs(parsed.query, keep_blank_values=False)
+            cleaned_query = {
+                k: v for k, v in qs.items()
+                if not _is_hanime_tracking_param(k)
+            }
+            encoded_query = urlencode(cleaned_query, doseq=True) if cleaned_query else ""
+            return urlunsplit(("https", "hanime.tv", canonical_path, encoded_query, ""))
+
+        canonical_path = parsed.path.rstrip("/")
+        return urlunsplit(("https", "hanime.tv", canonical_path, parsed.query, ""))
 
     return url

@@ -8,13 +8,14 @@ from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
+from app.platforms.hanime import get_hanime_signature_provider
 from app.services.cleanup_service import CleanupWorker, get_cleanup_service
 from app.services.download_process_manager import get_download_process_manager
 from app.services.job_manager import get_job_manager
 
 
 @asynccontextmanager
-async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     cleanup_worker = CleanupWorker(
         cleanup_service=get_cleanup_service(),
@@ -22,10 +23,23 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
         process_manager=get_download_process_manager(),
     )
     await cleanup_worker.start()
+
+    hanime_provider = getattr(app.state, "hanime_signature_provider", None)
+    if hanime_provider is None:
+        hanime_provider = get_hanime_signature_provider()
+        app.state.hanime_signature_provider = hanime_provider
+
+    if hanime_provider.enabled:
+        await hanime_provider.start()
+
     try:
         yield
     finally:
-        await cleanup_worker.stop()
+        try:
+            if hanime_provider.enabled:
+                await hanime_provider.close()
+        finally:
+            await cleanup_worker.stop()
 
 
 def create_app() -> FastAPI:

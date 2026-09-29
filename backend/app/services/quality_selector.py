@@ -357,6 +357,24 @@ class QualitySelector:
         return True
 
     @classmethod
+    def _is_hanime_multiplexed_candidate(cls, format_item: dict[str, Any]) -> bool:
+        """Identify Hanime HLS formats that carry multiplexed video+audio."""
+        if cls._quality_height(format_item) is None:
+            return False
+
+        protocol = str(format_item.get("protocol") or "").casefold()
+        if not protocol.startswith("m3u8"):
+            return False
+
+        # Ensure no explicit indication that stream is video-only or audio-only
+        vcodec = str(format_item.get("vcodec") or "").casefold()
+        acodec = str(format_item.get("acodec") or "").casefold()
+        if vcodec == "none" or acodec == "none":
+            return False
+
+        return True
+
+    @classmethod
     def _is_x_video_only_candidate(cls, format_item: dict[str, Any]) -> bool:
         if cls._has_audio(format_item) or cls._quality_height(format_item) is None:
             return False
@@ -384,6 +402,8 @@ class QualitySelector:
             return True
         if platform == "facebook" and cls._is_facebook_progressive_candidate(format_item):
             return True
+        if platform == "hanime" and cls._is_hanime_multiplexed_candidate(format_item):
+            return True
         return False
 
     @classmethod
@@ -395,6 +415,9 @@ class QualitySelector:
             return True
 
         if platform == "facebook" and cls._is_facebook_progressive_candidate(format_item):
+            return True
+
+        if platform == "hanime" and cls._is_hanime_multiplexed_candidate(format_item):
             return True
 
         # X's HLS master playlists expose audio renditions with an explicit
@@ -528,6 +551,8 @@ class QualitySelector:
         if platform == "instagram" and cls._is_instagram_progressive_candidate(format_item) and is_h264:
             return True
         if platform == "facebook" and cls._is_facebook_progressive_candidate(format_item):
+            return True
+        if platform == "hanime" and cls._is_hanime_multiplexed_candidate(format_item):
             return True
         return extension == "mp4" and is_h264 and (
             "mp4a" in audio_codec or "aac" in audio_codec
