@@ -79,6 +79,7 @@ class HanimeSignatureProvider:
         self._context: Any = None
         self._page: Any = None
         self._started = False
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def _lock(self) -> asyncio.Lock:
@@ -109,6 +110,8 @@ class HanimeSignatureProvider:
             if self._started:
                 return
             try:
+                # Capture the event loop that owns the Playwright resources
+                self._loop = asyncio.get_running_loop()
                 await self._init_browser_resources()
                 self._started = True
                 logger.info("HanimeSignatureProvider started successfully")
@@ -121,25 +124,67 @@ class HanimeSignatureProvider:
 
     async def close(self) -> None:
         """Close browser, context, and Playwright subprocess cleanly (idempotent)."""
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if self._loop is not None and current_loop is not self._loop and not self._loop.is_closed():
+            future = asyncio.run_coroutine_threadsafe(self._close_on_owner_loop(), self._loop)
+            await asyncio.wrap_future(future)
+            return
+
+        await self._close_on_owner_loop()
+
+    async def _close_on_owner_loop(self) -> None:
+        """Perform actual close operation; must be called on the owner loop."""
         async with self._lock:
             if not self._started and self._playwright is None:
+                self._loop = None
                 return
             await self._dispose_browser_resources()
             self._cached_signature = None
             self._started = False
+            self._loop = None
             logger.info("HanimeSignatureProvider closed successfully")
 
     async def get_signature(self, *, force_refresh: bool = False) -> HanimeSignature:
         """Retrieve a valid Hanime web signature, using cache when valid.
 
         Concurrent calls are serialized to prevent duplicate browser executions.
+        Cross-event-loop calls are dispatched safely to the Playwright owner loop.
         """
-        # Fast path: unexpired cache check
+        # Fast path: unexpired cache check (safe from any loop/thread)
         cached = self._cached_signature
         if not force_refresh and cached is not None and not cached.is_expired(self._ttl_seconds):
             logger.debug("Hanime signature cache hit")
             return cached
 
+        # Determine if we need cross-loop dispatch
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        owner_loop = self._loop
+
+        if owner_loop is not None and current_loop is not owner_loop:
+            # Cross-event-loop: owner loop differs from caller loop
+            if owner_loop.is_closed():
+                raise HanimeSignatureProviderError(
+                    "Bound event loop is closed; cannot dispatch signature request."
+                )
+            future = asyncio.run_coroutine_threadsafe(
+                self._get_signature_on_owner_loop(force_refresh=force_refresh),
+                owner_loop,
+            )
+            return await asyncio.wrap_future(future)
+
+        # Same loop (or no loop captured yet): execute directly
+        return await self._get_signature_on_owner_loop(force_refresh=force_refresh)
+
+    async def _get_signature_on_owner_loop(self, *, force_refresh: bool = False) -> HanimeSignature:
+        """Core signature retrieval logic; must execute on the Playwright owner loop."""
         async with self._lock:
             # Double-checked locking inside the lock
             cached = self._cached_signature
@@ -151,6 +196,28 @@ class HanimeSignatureProvider:
             self._cached_signature = sig
             logger.info("Hanime signature refreshed successfully (version=%s)", sig.version)
             return sig
+
+    def get_signature_sync(self, *, force_refresh: bool = False) -> HanimeSignature:
+        """Synchronous bridge for worker threads without a running event loop.
+
+        Dispatches to the Playwright owner loop and blocks until the result is ready.
+        Does NOT use asyncio.run() to execute Playwright operations directly.
+        """
+        owner_loop = self._loop
+        if owner_loop is None:
+            raise HanimeSignatureProviderError(
+                "HanimeSignatureProvider has not been started; cannot retrieve signature synchronously."
+            )
+        if owner_loop.is_closed():
+            raise HanimeSignatureProviderError(
+                "Bound event loop is closed; cannot retrieve signature synchronously."
+            )
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._get_signature_on_owner_loop(force_refresh=force_refresh),
+            owner_loop,
+        )
+        return future.result()
 
     async def _init_browser_resources(self) -> None:
         """Launch Playwright Chromium and prepare a single reusable page."""
@@ -221,13 +288,23 @@ class HanimeSignatureProvider:
                 ) from retry_exc
 
     async def _extract_signature_from_page(self) -> HanimeSignature:
-        """Navigate to root page and read window.ssignature and window.stime."""
+        """Navigate to root page and read window.ssignature and window.stime.
+
+        If the page is already at the Hanime root, perform a reload to obtain
+        fresh Wasm-generated credentials instead of rereading stale DOM values.
+        """
         if self._page is None:
             raise HanimeSignatureProviderError("Browser page is not initialized.")
 
-        # Navigate only if not already on the Hanime root
         current_url = self._page.url or ""
-        if not current_url.startswith(_HANIME_ROOT_URL):
+        if current_url.startswith(_HANIME_ROOT_URL):
+            # Page is already on Hanime root; reload to get fresh Wasm credentials
+            await self._page.reload(
+                timeout=_DEFAULT_NAV_TIMEOUT_MS,
+                wait_until="domcontentloaded",
+            )
+        else:
+            # Navigate to Hanime root for the first time
             await self._page.goto(
                 _HANIME_ROOT_URL,
                 timeout=_DEFAULT_NAV_TIMEOUT_MS,
@@ -264,11 +341,6 @@ def get_hanime_signature_provider() -> HanimeSignatureProvider:
         _global_provider = HanimeSignatureProvider(enabled=is_hanime_provider_enabled())
     return _global_provider
 
-
-def reset_hanime_signature_provider() -> None:
-    """Reset the global provider singleton (useful for isolated tests)."""
-    global _global_provider
-    _global_provider = None
 
 def reset_hanime_signature_provider() -> None:
     """Reset the global provider singleton (useful for isolated tests)."""
