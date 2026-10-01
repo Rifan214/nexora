@@ -1517,7 +1517,7 @@ class MediaService:
         if self._detect_platform(snapshot) == "hanime" or is_hanime_media_url(url):
             refreshed_info = self._extract_info(url)
         else:
-            refreshed_info = youtube_dl.extract_info(url, download=False, process=False)
+            refreshed_info = youtube_dl.extract_info(url, download=False)
         if not isinstance(refreshed_info, dict):
             raise DownloadError("yt-dlp did not return download metadata")
 

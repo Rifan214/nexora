@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from yt_dlp.utils import DownloadCancelled, DownloadError
@@ -317,3 +319,145 @@ def test_create_download_job_returns_before_the_worker_finishes(monkeypatch: pyt
     assert job.status is JobStatus.pending
     assert started.wait(timeout=0.2)
     release_worker.set()
+
+
+def test_youtube_transport_refresh_invokes_extraction_without_process_false_and_merges_transport() -> None:
+    service = MediaService()
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    initial_snapshot = {
+        "id": "dQw4w9WgXcQ",
+        "title": "Initial YouTube Video Title",
+        "uploader": "RickAstleyVEVO",
+        "extractor": "youtube",
+        "extractor_key": "Youtube",
+        "formats": [
+            {
+                "format_id": "18",
+                "url": "https://rr1---sn-expired.googlevideo.com/videoplayback?expire=1",
+                "width": 640,
+                "height": 360,
+                "http_headers": {"User-Agent": "old-agent"},
+            }
+        ],
+    }
+    refreshed_data = {
+        "id": "dQw4w9WgXcQ",
+        "title": "Fresh Title From Backend",
+        "formats": [
+            {
+                "format_id": "18",
+                "url": "https://rr1---sn-fresh.googlevideo.com/videoplayback?expire=9999",
+                "width": 640,
+                "height": 360,
+                "http_headers": {"User-Agent": "new-agent"},
+            }
+        ],
+        "http_headers": {"Authorization": "Bearer fresh-token"},
+    }
+
+    mock_ydl = MagicMock()
+    mock_ydl.extract_info.return_value = refreshed_data
+
+    resolved, refreshed = service._refresh_download_transport_info(
+        mock_ydl,
+        url=url,
+        snapshot=initial_snapshot,
+    )
+
+    # Must invoke extraction with download=False and without process=False
+    mock_ydl.extract_info.assert_called_once_with(url, download=False)
+    call_kwargs = mock_ydl.extract_info.call_args.kwargs
+    assert "process" not in call_kwargs or call_kwargs["process"] is not False
+
+    # Presentation metadata from snapshot is preserved
+    assert resolved["id"] == "dQw4w9WgXcQ"
+    assert resolved["title"] == "Initial YouTube Video Title"
+    assert resolved["uploader"] == "RickAstleyVEVO"
+
+    # Transport fields are updated from refreshed info
+    assert resolved["formats"][0]["url"] == "https://rr1---sn-fresh.googlevideo.com/videoplayback?expire=9999"
+    assert resolved["formats"][0]["http_headers"] == {"User-Agent": "new-agent"}
+    assert resolved["http_headers"] == {"Authorization": "Bearer fresh-token"}
+    assert refreshed == refreshed_data
+
+
+def test_youtube_background_download_with_snapshot_refreshes_transport_without_process_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extract_info_calls: list[dict[str, Any]] = []
+
+    class _CaptureYoutubeDL:
+        instances: list["_CaptureYoutubeDL"] = []
+
+        def __init__(self, options: dict) -> None:
+            self.options = options
+            self.instances.append(self)
+
+        def __enter__(self) -> "_CaptureYoutubeDL":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def extract_info(self, url: str, **kwargs: Any) -> dict:
+            extract_info_calls.append({"url": url, "kwargs": kwargs})
+            if not kwargs.get("download", True):
+                return {
+                    "id": "dQw4w9WgXcQ",
+                    "extractor_key": "Youtube",
+                    "formats": [{"format_id": "18", "url": "https://fresh.googlevideo.com/stream"}],
+                }
+            progress_hook = self.options["progress_hooks"][0]
+            progress_hook({"status": "downloading", "downloaded_bytes": 100, "total_bytes": 100})
+            progress_hook({"status": "finished"})
+            output_path = Path(self.options["outtmpl"].replace("%(ext)s", "mp4"))
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"yt-video")
+            return {"title": "YouTube Video"}
+
+        def process_ie_result(self, info: dict, *, download: bool) -> dict:
+            output_path = Path(self.options["outtmpl"].replace("%(ext)s", "mp4"))
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"yt-video")
+            return info
+
+    monkeypatch.setattr(media_service_module, "YoutubeDL", _CaptureYoutubeDL)
+
+    service = MediaService()
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    snapshot = {
+        "id": "dQw4w9WgXcQ",
+        "title": "Cached YouTube Video",
+        "extractor": "youtube",
+        "extractor_key": "Youtube",
+        "formats": [{"format_id": "18", "url": "https://expired.googlevideo.com/stream"}],
+    }
+    job = get_job_manager().create_job(
+        media_url=url,
+        platform="youtube",
+        format_id="18",
+        output_type="video",
+    )
+    downloaded_file = get_temp_storage_dir() / f"{job.job_id}.mp4"
+
+    try:
+        service._download_job_background(
+            job.job_id,
+            url,
+            "18",
+            "video",
+            snapshot,
+        )
+
+        completed_job = get_job_manager().get_job(job.job_id)
+        assert completed_job is not None
+        assert completed_job.status is JobStatus.completed
+
+        # Transport refresh must be invoked with download=False and without process=False
+        refresh_call = extract_info_calls[0]
+        assert refresh_call["url"] == url
+        assert refresh_call["kwargs"].get("download") is False
+        assert refresh_call["kwargs"].get("process") is not False
+    finally:
+        downloaded_file.unlink(missing_ok=True)
+

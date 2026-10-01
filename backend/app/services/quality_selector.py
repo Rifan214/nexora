@@ -204,6 +204,21 @@ class QualitySelector:
         progressive = [item for item in video_candidates if self._is_progressive(item, platform=platform)]
         compatible_progressive = [item for item in progressive if self._is_highly_compatible_progressive(item, platform=platform)]
 
+        adaptive_video = [item for item in video_candidates if not self._has_audio(item, platform=platform)]
+
+        # For YouTube 360p, progressive format 18 is hard-blocked with HTTP 403
+        # on unauthenticated requests. When a valid adaptive video + audio pair
+        # is available, prefer the adaptive pair over progressive format 18.
+        if platform == "youtube" and height == 360 and adaptive_video and best_audio is not None:
+            selected_video = max(adaptive_video, key=self._video_score)
+            selection = self._build_selection(height, selected_video, best_audio)
+            logger.debug(
+                "Quality resolution selected height=%s reason=youtube_adaptive_360p_preferred selector=%s",
+                height,
+                selection.selector,
+            )
+            return selection
+
         # A progressive H.264/AAC MP4 is deliberately preferred over an AV1/VP9
         # adaptive stream at the same height. It is substantially more compatible
         # and needs no merge. Adaptive streams also prioritize H.264 because it
@@ -218,7 +233,6 @@ class QualitySelector:
             )
             return selection
 
-        adaptive_video = [item for item in video_candidates if not self._has_audio(item, platform=platform)]
         if adaptive_video and best_audio is not None:
             selected_video = max(adaptive_video, key=self._video_score)
             selection = self._build_selection(height, selected_video, best_audio)

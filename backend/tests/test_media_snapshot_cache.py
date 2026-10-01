@@ -229,7 +229,7 @@ def test_snapshot_workers_refresh_youtube_transport_info_only(
         )
 
         downloader = _RefreshingYoutubeDL.instances[0]
-        assert downloader.refresh_calls == ([(url, False, False)] if expected_refresh else [])
+        assert downloader.refresh_calls == ([(url, False, True)] if expected_refresh else [])
         expected_url = (
             "https://fresh.example.test/media"
             if expected_refresh

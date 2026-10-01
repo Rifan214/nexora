@@ -163,7 +163,7 @@ class _ResumeYoutubeDL:
 
     def extract_info(self, _url: str, *, download: bool, process: bool = True) -> dict:
         assert download is False
-        assert process is False
+        assert process is True
         return _youtube_info()
 
     def process_ie_result(self, info: dict, *, download: bool) -> dict:

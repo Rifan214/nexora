@@ -590,3 +590,47 @@ def test_debug_logging_traces_each_quality_selection_stage(caplog) -> None:
     assert "audio_candidate_count=1" in messages
     assert "grouped_resolutions={1080: ['399']}" in messages
     assert "selected_quality_count=1" in messages
+
+
+def test_quality_selector_youtube_avoids_blocked_progressive_18() -> None:
+    selector = QualitySelector()
+    formats = [
+        {
+            "format_id": "18",
+            "height": 360,
+            "ext": "mp4",
+            "vcodec": "avc1.42001E",
+            "acodec": "mp4a.40.2",
+            "filesize": 12_000,
+        },
+        {
+            "format_id": "134",
+            "height": 360,
+            "ext": "mp4",
+            "vcodec": "avc1.4d401e",
+            "acodec": "none",
+            "filesize": 8_000,
+        },
+        {
+            "format_id": "251",
+            "ext": "webm",
+            "vcodec": "none",
+            "acodec": "opus",
+            "abr": 160,
+            "filesize": 3_000,
+        },
+    ]
+
+    # For YouTube, adaptive 134+251 must be selected and format 18 must be avoided
+    youtube_selection = selector.select_for_height(formats, 360, platform="youtube")
+    assert youtube_selection is not None
+    assert youtube_selection.selector == "134+251"
+    assert youtube_selection.video_format_id == "134"
+    assert youtube_selection.audio_format_id == "251"
+    assert youtube_selection.selector != "18"
+
+    # For generic / other platforms, progressive format 18 continues to be selected without merge
+    generic_selection = selector.select_for_height(formats, 360)
+    assert generic_selection is not None
+    assert generic_selection.selector == "18"
+

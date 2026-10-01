@@ -266,7 +266,7 @@ def test_x_snapshot_download_refreshes_transport_and_discards_processed_fields()
     )
 
     assert downloader.refresh_calls == [
-        ("https://x.com/nexora/status/1900000000000000001", False, False)
+        ("https://x.com/nexora/status/1900000000000000001", False, True)
     ]
     assert downloader.processed_info["formats"][0]["url"] == "https://fresh.example.test/video"
     assert "requested_formats" not in downloader.processed_info

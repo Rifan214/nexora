@@ -316,7 +316,7 @@ def test_authenticated_cookie_configuration_reaches_the_download_worker(
         assert completed.status is JobStatus.completed
         assert _WorkerYoutubeDL.instances
         assert all(instance.options["cookiefile"] == str(cookie_file) for instance in _WorkerYoutubeDL.instances)
-        assert _WorkerYoutubeDL.instances[0].refresh_calls == [(_X_URL, False, False)]
+        assert _WorkerYoutubeDL.instances[0].refresh_calls == [(_X_URL, False, True)]
     finally:
         downloaded_file.unlink(missing_ok=True)
         resume_manager.delete(job.job_id)

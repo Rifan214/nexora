@@ -569,7 +569,6 @@ def test_reddit_enters_transport_refresh_path() -> None:
     mock_ydl.extract_info.assert_called_once_with(
         normalized,
         download=False,
-        process=False,
     )
     assert resolved["formats"][0]["url"] == "https://v.redd.it/gyh95hiqc0b11/DASH_720.mp4?fresh=1"
     assert legacy["formats"][0]["url"] == "https://v.redd.it/gyh95hiqc0b11/DASH_720.mp4?fresh=1"

@@ -565,7 +565,6 @@ def test_facebook_enters_transport_refresh_path() -> None:
     mock_ydl.extract_info.assert_called_once_with(
         normalized,
         download=False,
-        process=False,
     )
     assert resolved["formats"][0]["url"] == "https://video.fbcdn.net/fresh.mp4"
     assert legacy["formats"][0]["url"] == "https://video.fbcdn.net/fresh.mp4"

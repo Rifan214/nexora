@@ -438,8 +438,8 @@ def test_service_account_worker_and_transport_refresh(
             inst.options.get("cookiefile") == str(valid_file)
             for inst in _CaptureWorkerYoutubeDL.instances
         )
-        # Transport refresh occurred with download=False, process=False
-        assert _CaptureWorkerYoutubeDL.instances[0].refresh_calls == [(_X_URL, False, False)]
+        # Transport refresh occurred with download=False (default process=True)
+        assert _CaptureWorkerYoutubeDL.instances[0].refresh_calls == [(_X_URL, False, True)]
     finally:
         downloaded_file.unlink(missing_ok=True)
         resume_manager.delete(job.job_id)

@@ -665,7 +665,6 @@ def test_instagram_download_transport_refresh_is_invoked(
     mock_ydl.extract_info.assert_called_once_with(
         "https://www.instagram.com/reel/C_refresh_test/",
         download=False,
-        process=False,
     )
     assert resolved["formats"][0]["url"] == "https://instagram.fcdn.net/fresh_token.mp4"
     assert legacy["formats"][0]["url"] == "https://instagram.fcdn.net/fresh_token.mp4"
