@@ -100,8 +100,9 @@ class XAuthController extends Notifier<XAuthState> {
     return const XAuthState.unauthenticated();
   }
 
-  /// Checks local storage for a previously saved session ID and validates it
-  /// against the backend API.
+  /// Checks local storage for an active session ID and validates it against the backend.
+  /// If the session is missing, expired, or rejected (e.g. after a backend restart),
+  /// attempts to auto-restore a fresh session using securely persisted credentials.
   Future<void> restoreSession() async {
     state = const XAuthState.restoring();
 
@@ -109,43 +110,50 @@ class XAuthController extends Notifier<XAuthState> {
     final service = ref.read(xAuthServiceProvider);
 
     final storedId = await storage.readSessionId();
-    if (storedId == null || storedId.isEmpty) {
-      state = const XAuthState.unauthenticated();
-      return;
+    if (storedId != null && storedId.isNotEmpty) {
+      try {
+        final session = await service.getSession(storedId);
+
+        if (session.isAvailable) {
+          state = XAuthState.authenticated(session);
+          return;
+        } else {
+          await storage.clearSessionId();
+        }
+      } on ApiException {
+        await storage.clearSessionId();
+      } catch (_) {
+        await storage.clearSessionId();
+      }
     }
 
-    try {
-      final session = await service.getSession(storedId);
-
-      if (session.isAvailable) {
-        state = XAuthState.authenticated(session);
-      } else if (session.isExpired()) {
-        await storage.clearSessionId();
-        state = const XAuthState.expired('Session expired.');
-      } else {
-        await storage.clearSessionId();
+    // Stored session ID was absent, expired, or invalid.
+    // Attempt auto-restoration using securely persisted credentials.
+    final credentials = await storage.readCredentials();
+    if (credentials != null && credentials.isValid) {
+      try {
+        final newSession = await service.createSession(
+          authToken: credentials.authToken,
+          ct0: credentials.ct0,
+        );
+        await attachSession(newSession);
+        return;
+      } on ApiException {
+        // Re-registration failed; credentials remain stored for future retry.
         state = const XAuthState.unauthenticated();
-      }
-    } on ApiException catch (e) {
-      final msg = e.message.toLowerCase();
-      if (msg.contains('not found') ||
-          msg.contains('invalid') ||
-          msg.contains('404')) {
-        await storage.clearSessionId();
+        return;
+      } catch (_) {
         state = const XAuthState.unauthenticated();
-      } else if (msg.contains('expired') || msg.contains('401')) {
-        await storage.clearSessionId();
-        state = XAuthState.expired(e.message);
-      } else {
-        state = XAuthState.error(e.message);
+        return;
       }
-    } catch (_) {
-      state = const XAuthState.error('Unable to verify X session.');
     }
+
+    // No credentials available
+    state = const XAuthState.unauthenticated();
   }
 
   /// Handles session invalidation reported during media operations or verification.
-  /// Safely purges local secure storage and transitions to unauthenticated or expired state.
+  /// Safely purges local session identifier while keeping credentials for potential re-auth.
   Future<void> handleSessionInvalidated({
     bool isExpired = false,
     String? reason,
@@ -170,9 +178,7 @@ class XAuthController extends Notifier<XAuthState> {
     state = XAuthState.authenticated(session);
   }
 
-  /// Ephemerally bridges extracted WebView credentials to the backend.
-  ///
-  /// Credentials exist in memory strictly during this call and are never stored.
+  /// Bridges extracted or imported credentials to the backend and securely persists them.
   Future<void> authenticateWithCookies({
     required String authToken,
     required String ct0,
@@ -184,6 +190,10 @@ class XAuthController extends Notifier<XAuthState> {
         authToken: authToken,
         ct0: ct0,
       );
+      await ref.read(xAuthStorageProvider).saveCredentials(
+            authToken: authToken,
+            ct0: ct0,
+          );
       await attachSession(session);
     } on ApiException catch (e) {
       state = XAuthState.error(e.message);
@@ -195,7 +205,7 @@ class XAuthController extends Notifier<XAuthState> {
   }
 
   /// Revokes the active session on the backend, purges local secure storage,
-  /// and cleans native WebView cookies for X/Twitter domains.
+  /// clears persisted credentials, and cleans native WebView cookies for X/Twitter domains.
   Future<void> logout() async {
     final currentSession = state.session;
     final storage = ref.read(xAuthStorageProvider);
@@ -213,6 +223,7 @@ class XAuthController extends Notifier<XAuthState> {
     }
 
     await storage.clearSessionId();
+    await storage.clearCredentials();
 
     try {
       await cookieManager.clearXCookies();

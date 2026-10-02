@@ -11,6 +11,8 @@ import 'x_auth_storage_test.dart';
 class FakeXAuthService implements XAuthService {
   final Map<String, XAuthSession> _sessions = {};
   final Set<String> _deletedSessions = {};
+  int createSessionCallCount = 0;
+  bool failCreateSession = false;
 
   void addSession(XAuthSession session) {
     _sessions[session.sessionId] = session;
@@ -19,6 +21,10 @@ class FakeXAuthService implements XAuthService {
   @override
   Future<XAuthSession> createSession(
       {required String authToken, required String ct0}) async {
+    createSessionCallCount++;
+    if (failCreateSession) {
+      throw const ApiException('Failed to create session on upstream');
+    }
     final session = XAuthSession(
       sessionId: 'created_session_123',
       source: 'user_session',
@@ -83,7 +89,8 @@ void main() {
       expect(container.read(activeXSessionIdProvider), isNull);
     });
 
-    test('restoreSession with no stored ID stays unauthenticated', () async {
+    test('restoreSession with no stored ID and no credentials stays unauthenticated',
+        () async {
       final controller = container.read(xAuthProvider.notifier);
       await controller.restoreSession();
 
@@ -91,9 +98,10 @@ void main() {
       expect(state.status, XAuthStatusType.unauthenticated);
       expect(state.isAuthenticated, isFalse);
       expect(container.read(activeXSessionIdProvider), isNull);
+      expect(fakeAuthService.createSessionCallCount, 0);
     });
 
-    test('restoreSession with active stored ID transitions to authenticated',
+    test('Scenario A: Existing session valid -> keeps authenticated without using credentials',
         () async {
       const activeSession = XAuthSession(
         sessionId: 'active_token_123',
@@ -102,6 +110,10 @@ void main() {
       );
       fakeAuthService.addSession(activeSession);
       await authStorage.saveSessionId('active_token_123');
+      await authStorage.saveCredentials(
+        authToken: 'persisted_auth_token',
+        ct0: 'persisted_ct0',
+      );
 
       final controller = container.read(xAuthProvider.notifier);
       await controller.restoreSession();
@@ -111,10 +123,11 @@ void main() {
       expect(state.isAuthenticated, isTrue);
       expect(state.session?.sessionId, 'active_token_123');
       expect(container.read(activeXSessionIdProvider), 'active_token_123');
+      // Verify credentials were not needed or called because session was active
+      expect(fakeAuthService.createSessionCallCount, 0);
     });
 
-    test(
-        'restoreSession with expired session clears storage and transitions to expired',
+    test('Scenario B: Session expired + credentials available -> auto-restores fresh session',
         () async {
       final expiredSession = XAuthSession(
         sessionId: 'expired_token_123',
@@ -124,29 +137,143 @@ void main() {
       );
       fakeAuthService.addSession(expiredSession);
       await authStorage.saveSessionId('expired_token_123');
+      await authStorage.saveCredentials(
+        authToken: 'persisted_auth_token',
+        ct0: 'persisted_ct0',
+      );
 
       final controller = container.read(xAuthProvider.notifier);
       await controller.restoreSession();
 
       final state = container.read(xAuthProvider);
-      expect(state.status, XAuthStatusType.expired);
-      expect(state.isExpired, isTrue);
-      expect(await authStorage.readSessionId(), isNull);
-      expect(container.read(activeXSessionIdProvider), isNull);
+      expect(state.status, XAuthStatusType.authenticated);
+      expect(state.isAuthenticated, isTrue);
+      expect(state.session?.sessionId, 'created_session_123');
+      expect(await authStorage.readSessionId(), 'created_session_123');
+      expect(container.read(activeXSessionIdProvider), 'created_session_123');
+      expect(fakeAuthService.createSessionCallCount, 1);
     });
 
-    test(
-        'restoreSession with unknown/404 ID clears storage and reverts to unauthenticated',
+    test('Scenario C: Backend restart (404 Not Found) + credentials available -> auto-restores',
         () async {
-      await authStorage.saveSessionId('unknown_id_404');
+      // Session ID exists in mobile storage, but backend restarted and returns 404
+      await authStorage.saveSessionId('orphaned_session_404');
+      await authStorage.saveCredentials(
+        authToken: 'persisted_auth_token',
+        ct0: 'persisted_ct0',
+      );
+
+      final controller = container.read(xAuthProvider.notifier);
+      await controller.restoreSession();
+
+      final state = container.read(xAuthProvider);
+      expect(state.status, XAuthStatusType.authenticated);
+      expect(state.isAuthenticated, isTrue);
+      expect(state.session?.sessionId, 'created_session_123');
+      expect(await authStorage.readSessionId(), 'created_session_123');
+      expect(container.read(activeXSessionIdProvider), 'created_session_123');
+      expect(fakeAuthService.createSessionCallCount, 1);
+    });
+
+    test('Scenario D: Session expired + credentials NOT available -> unauthenticated without calling register',
+        () async {
+      final expiredSession = XAuthSession(
+        sessionId: 'expired_token_no_creds',
+        status: 'available',
+        authenticated: true,
+        expiresAt: DateTime.now().toUtc().subtract(const Duration(minutes: 5)),
+      );
+      fakeAuthService.addSession(expiredSession);
+      await authStorage.saveSessionId('expired_token_no_creds');
+      // No credentials saved in storage
 
       final controller = container.read(xAuthProvider.notifier);
       await controller.restoreSession();
 
       final state = container.read(xAuthProvider);
       expect(state.status, XAuthStatusType.unauthenticated);
+      expect(state.isAuthenticated, isFalse);
       expect(await authStorage.readSessionId(), isNull);
       expect(container.read(activeXSessionIdProvider), isNull);
+      expect(fakeAuthService.createSessionCallCount, 0);
+    });
+
+    test('Scenario E: Re-registration fails -> unauthenticated, credentials kept, stale ID cleared',
+        () async {
+      await authStorage.saveSessionId('stale_session_id');
+      await authStorage.saveCredentials(
+        authToken: 'valid_auth_token',
+        ct0: 'valid_ct0',
+      );
+      fakeAuthService.failCreateSession = true;
+
+      final controller = container.read(xAuthProvider.notifier);
+      await controller.restoreSession();
+
+      final state = container.read(xAuthProvider);
+      expect(state.status, XAuthStatusType.unauthenticated);
+      expect(state.isAuthenticated, isFalse);
+      // Stale session ID must be cleared
+      expect(await authStorage.readSessionId(), isNull);
+      expect(container.read(activeXSessionIdProvider), isNull);
+      // Credentials must remain intact for future retries
+      final storedCreds = await authStorage.readCredentials();
+      expect(storedCreds, isNotNull);
+      expect(storedCreds?.authToken, 'valid_auth_token');
+      expect(storedCreds?.ct0, 'valid_ct0');
+    });
+
+    test('Scenario F: Logout deletes backend session, clears session ID, and clears credentials',
+        () async {
+      const session = XAuthSession(
+        sessionId: 'session_to_logout',
+        status: 'available',
+        authenticated: true,
+      );
+      fakeAuthService.addSession(session);
+      await authStorage.saveSessionId('session_to_logout');
+      await authStorage.saveCredentials(
+        authToken: 'auth_to_clear',
+        ct0: 'ct0_to_clear',
+      );
+
+      final controller = container.read(xAuthProvider.notifier);
+      await controller.attachSession(session);
+      expect(container.read(xAuthProvider).isAuthenticated, isTrue);
+
+      await controller.logout();
+
+      final state = container.read(xAuthProvider);
+      expect(state.status, XAuthStatusType.unauthenticated);
+      expect(state.isAuthenticated, isFalse);
+      // Backend session removed
+      expect(fakeAuthService._deletedSessions, contains('session_to_logout'));
+      // Storage session ID cleared
+      expect(await authStorage.readSessionId(), isNull);
+      // Storage credentials cleared
+      expect(await authStorage.readCredentials(), isNull);
+      expect(container.read(activeXSessionIdProvider), isNull);
+    });
+
+    test('Scenario G: Security - tokens never leaked in toString or error messages',
+        () async {
+      final controller = container.read(xAuthProvider.notifier);
+
+      await controller.authenticateWithCookies(
+        authToken: 'SECRET_AUTH_TOKEN_VALUE',
+        ct0: 'SECRET_CT0_VALUE',
+      );
+
+      final state = container.read(xAuthProvider);
+      expect(state.isAuthenticated, isTrue);
+
+      final stateStr = state.toString();
+      expect(stateStr, isNot(contains('SECRET_AUTH_TOKEN_VALUE')));
+      expect(stateStr, isNot(contains('SECRET_CT0_VALUE')));
+
+      final creds = await authStorage.readCredentials();
+      expect(creds.toString(), isNot(contains('SECRET_AUTH_TOKEN_VALUE')));
+      expect(creds.toString(), isNot(contains('SECRET_CT0_VALUE')));
     });
 
     test('attachSession saves token and transitions to authenticated',
@@ -167,48 +294,24 @@ void main() {
       expect(container.read(activeXSessionIdProvider), 'newly_logged_in_id');
     });
 
-    test(
-        'logout deletes session from backend, clears storage, and unauthenticates',
-        () async {
-      const session = XAuthSession(
-        sessionId: 'session_to_logout',
-        status: 'available',
-        authenticated: true,
-      );
-      fakeAuthService.addSession(session);
-      await authStorage.saveSessionId('session_to_logout');
-
-      final controller = container.read(xAuthProvider.notifier);
-      await controller.attachSession(session);
-      expect(container.read(xAuthProvider).isAuthenticated, isTrue);
-
-      await controller.logout();
-
-      final state = container.read(xAuthProvider);
-      expect(state.status, XAuthStatusType.unauthenticated);
-      expect(await authStorage.readSessionId(), isNull);
-      expect(container.read(activeXSessionIdProvider), isNull);
-    });
-
-    test(
-        'authenticateWithCookies creates session and attaches to state without leaking credentials',
+    test('authenticateWithCookies saves credentials and attaches session',
         () async {
       final controller = container.read(xAuthProvider.notifier);
 
       await controller.authenticateWithCookies(
-        authToken: 'TEST_AUTH_TOKEN',
-        ct0: 'TEST_CT0',
+        authToken: 'AUTH_TEST_COOKIE',
+        ct0: 'CT0_TEST_COOKIE',
       );
 
       final state = container.read(xAuthProvider);
       expect(state.isAuthenticated, isTrue);
       expect(state.session?.sessionId, 'created_session_123');
       expect(await authStorage.readSessionId(), 'created_session_123');
-      expect(container.read(activeXSessionIdProvider), 'created_session_123');
 
-      // Verify raw credentials never exist in state or storage
-      expect(state.toString(), isNot(contains('TEST_AUTH_TOKEN')));
-      expect(state.toString(), isNot(contains('TEST_CT0')));
+      final savedCreds = await authStorage.readCredentials();
+      expect(savedCreds, isNotNull);
+      expect(savedCreds?.authToken, 'AUTH_TEST_COOKIE');
+      expect(savedCreds?.ct0, 'CT0_TEST_COOKIE');
     });
 
     test('authenticateWithCookies handles service failure gracefully',

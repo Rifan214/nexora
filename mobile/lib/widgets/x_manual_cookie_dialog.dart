@@ -5,12 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/network/api_exception.dart';
 import '../core/theme/app_tokens.dart';
 import '../providers/x_auth_provider.dart';
+import '../services/cookie_file_picker_service.dart';
+import '../utils/x_cookie_parser.dart';
 
-/// Dialog allowing power users to securely import an existing X session
-/// by entering `auth_token` and `ct0` session cookies directly.
+/// Dialog allowing users to securely import an existing X session
+/// via file import (cookies.txt / JSON), raw cookie text, or direct manual tokens.
 ///
-/// Ensures credentials are kept strictly in-memory during transfer, never
-/// persisted, never displayed after creation, and never leaked in logs or errors.
+/// Ensures raw cookie files/text are processed locally on mobile via [XCookieParser],
+/// never stored to disk, never sent to the backend, and never leaked in logs or error UI.
 class XManualCookieDialog extends ConsumerStatefulWidget {
   const XManualCookieDialog({super.key});
 
@@ -45,36 +47,62 @@ class XManualCookieDialog extends ConsumerStatefulWidget {
     return 'Unable to connect this X session. Please verify the imported cookies and try again.';
   }
 
+  /// Maps parser errors into safe, user-friendly messages without leaking tokens.
+  static String mapParserError(String? rawMessage) {
+    if (rawMessage == null || rawMessage.trim().isEmpty) {
+      return 'Could not recognize valid X cookies in the provided input.';
+    }
+    final msg = rawMessage.toLowerCase();
+    if (msg.contains('missing') && msg.contains('auth_token')) {
+      return 'auth_token cookie was not found in the imported cookie data.';
+    }
+    if (msg.contains('missing') && msg.contains('ct0')) {
+      return 'ct0 (CSRF token) cookie was not found in the imported cookie data.';
+    }
+    if (msg.contains('empty')) {
+      return 'Imported cookie data contains empty credential values.';
+    }
+    if (msg.contains('length') || msg.contains('exceeds')) {
+      return 'Imported cookie value exceeds maximum allowed length.';
+    }
+    if (msg.contains('json')) {
+      return 'Invalid JSON cookie export format.';
+    }
+    return 'Could not recognize valid X cookies in the provided input.';
+  }
+
   @override
   ConsumerState<XManualCookieDialog> createState() =>
       _XManualCookieDialogState();
 }
 
 class _XManualCookieDialogState extends ConsumerState<XManualCookieDialog> {
+  final _cookieTextController = TextEditingController();
   final _authTokenController = TextEditingController();
   final _ct0Controller = TextEditingController();
 
   bool _obscureAuthToken = true;
   bool _obscureCt0 = true;
   bool _isSubmitting = false;
+  bool _isFileImporting = false;
   String? _errorMessage;
 
   @override
   void dispose() {
+    _cookieTextController.dispose();
     _authTokenController.dispose();
     _ct0Controller.dispose();
     super.dispose();
   }
 
-  Future<void> _pasteInto(TextEditingController controller) async {
+  Future<void> _pasteInto(TextEditingController controller, {bool truncate = true}) async {
     if (_isSubmitting) return;
     try {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
       final text = data?.text?.trim();
       if (text != null && text.isNotEmpty) {
-        // Enforce maximum length consistent with backend validation
-        final truncated = text.length > 512 ? text.substring(0, 512) : text;
-        controller.text = truncated;
+        final processed = (truncate && text.length > 512) ? text.substring(0, 512) : text;
+        controller.text = processed;
         if (mounted) {
           setState(() {
             _errorMessage = null;
@@ -86,15 +114,117 @@ class _XManualCookieDialogState extends ConsumerState<XManualCookieDialog> {
     }
   }
 
+  Future<void> _handleFileImport() async {
+    if (_isSubmitting) return;
+
+    setState(() {
+      _isSubmitting = true;
+      _isFileImporting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final filePicker = ref.read(cookieFilePickerProvider);
+      final content = await filePicker.pickAndReadCookieFile();
+      if (content == null) {
+        if (mounted) {
+          setState(() {
+            _isSubmitting = false;
+            _isFileImporting = false;
+          });
+        }
+        return;
+      }
+      if (content.trim().isEmpty) {
+        if (mounted) {
+          setState(() {
+            _isSubmitting = false;
+            _isFileImporting = false;
+            _errorMessage = 'Selected file is empty or could not be read.';
+          });
+        }
+        return;
+      }
+
+      final parsed = XCookieParser.parse(content);
+
+      await ref.read(xAuthProvider.notifier).authenticateWithCookies(
+            authToken: parsed.authToken,
+            ct0: parsed.ct0,
+          );
+
+      _cookieTextController.clear();
+      _authTokenController.clear();
+      _ct0Controller.clear();
+
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } on FormatException catch (e) {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+          _isFileImporting = false;
+          _errorMessage = XManualCookieDialog.mapParserError(e.message);
+        });
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+          _isFileImporting = false;
+          _errorMessage = XManualCookieDialog.mapError(e.message);
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+          _isFileImporting = false;
+          _errorMessage = 'Could not read or process the selected file.';
+        });
+      }
+    }
+  }
+
   Future<void> _handleConnect() async {
     if (_isSubmitting) return;
 
+    final rawCookieText = _cookieTextController.text.trim();
     final rawAuthToken = _authTokenController.text.trim();
     final rawCt0 = _ct0Controller.text.trim();
 
-    if (rawAuthToken.isEmpty || rawCt0.isEmpty) {
+    String authToken;
+    String ct0;
+
+    if (rawCookieText.isNotEmpty) {
+      try {
+        final parsed = XCookieParser.parse(rawCookieText);
+        authToken = parsed.authToken;
+        ct0 = parsed.ct0;
+      } on FormatException catch (e) {
+        setState(() {
+          _errorMessage = XManualCookieDialog.mapParserError(e.message);
+        });
+        return;
+      } catch (_) {
+        setState(() {
+          _errorMessage = 'Could not parse cookie text. Please verify the format.';
+        });
+        return;
+      }
+    } else if (rawAuthToken.isNotEmpty || rawCt0.isNotEmpty) {
+      if (rawAuthToken.isEmpty || rawCt0.isEmpty) {
+        setState(() {
+          _errorMessage = 'Please enter both X session cookies.';
+        });
+        return;
+      }
+      authToken = rawAuthToken;
+      ct0 = rawCt0;
+    } else {
       setState(() {
-        _errorMessage = 'Please enter both X session cookies.';
+        _errorMessage = 'Please import a cookies.txt file, paste cookie text, or enter both tokens.';
       });
       return;
     }
@@ -106,11 +236,12 @@ class _XManualCookieDialogState extends ConsumerState<XManualCookieDialog> {
 
     try {
       await ref.read(xAuthProvider.notifier).authenticateWithCookies(
-            authToken: rawAuthToken,
-            ct0: rawCt0,
+            authToken: authToken,
+            ct0: ct0,
           );
 
-      // Credential references are released as early as practical and are not persisted
+      // Credential references are released immediately and inputs cleared
+      _cookieTextController.clear();
       _authTokenController.clear();
       _ct0Controller.clear();
 
@@ -137,6 +268,7 @@ class _XManualCookieDialogState extends ConsumerState<XManualCookieDialog> {
 
   void _handleCancel() {
     if (_isSubmitting) return;
+    _cookieTextController.clear();
     _authTokenController.clear();
     _ct0Controller.clear();
     Navigator.of(context).pop(false);
@@ -194,7 +326,7 @@ class _XManualCookieDialogState extends ConsumerState<XManualCookieDialog> {
                     ),
                   ),
                   Text(
-                    'Paste active cookies from browser',
+                    'Choose file, paste cookies, or enter tokens',
                     style: textTheme.bodySmall?.copyWith(
                       color: colorScheme.onSurfaceVariant,
                     ),
@@ -212,7 +344,7 @@ class _XManualCookieDialogState extends ConsumerState<XManualCookieDialog> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'Obtain auth_token and ct0 from your personal browser (Developer Tools > Application > Cookies > x.com). Nexora never asks for your password.',
+                  'Import cookies.txt from your browser extension or enter session tokens. Nexora parses cookies locally and never asks for your password.',
                   style: textTheme.bodySmall?.copyWith(
                     color: colorScheme.onSurfaceVariant,
                   ),
@@ -254,6 +386,68 @@ class _XManualCookieDialogState extends ConsumerState<XManualCookieDialog> {
                   ),
                   const SizedBox(height: AppSpacing.md),
                 ],
+
+                // Action: Import cookies.txt file
+                OutlinedButton.icon(
+                  key: const Key('import_cookie_file_button'),
+                  onPressed: _isSubmitting ? null : _handleFileImport,
+                  icon: _isFileImporting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.file_upload_outlined, size: 20),
+                  label: Text(_isFileImporting ? 'Importing file...' : 'Import cookies.txt'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                    shape: const RoundedRectangleBorder(borderRadius: AppRadii.input),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+
+                // Action: Paste cookie text multiline field
+                TextFormField(
+                  key: const Key('paste_cookie_text_field'),
+                  controller: _cookieTextController,
+                  enabled: !_isSubmitting,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    labelText: 'Paste Cookie Text (Optional)',
+                    hintText: 'Paste Netscape cookies.txt, JSON, or header...',
+                    border: const OutlineInputBorder(
+                      borderRadius: AppRadii.input,
+                    ),
+                    suffixIcon: IconButton(
+                      key: const Key('paste_cookie_text_button'),
+                      icon: const Icon(Icons.paste_rounded, size: 20),
+                      tooltip: 'Paste from clipboard',
+                      onPressed: _isSubmitting
+                          ? null
+                          : () => _pasteInto(_cookieTextController, truncate: false),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+
+                // Divider: OR ENTER TOKENS MANUALLY
+                Row(
+                  children: [
+                    const Expanded(child: Divider()),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                      child: Text(
+                        'OR ENTER TOKENS MANUALLY',
+                        style: textTheme.labelSmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const Expanded(child: Divider()),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.md),
 
                 // auth_token field
                 TextFormField(
