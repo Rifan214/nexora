@@ -478,7 +478,6 @@ class MediaService:
         temp_dir: Path | None = None
         try:
             self._process_manager.raise_if_cancelled(job_id)
-            job_manager.update_progress(job_id, 0)
             initial_platform = detect_platform_from_url(url)
             if initial_platform not in _SUPPORTED_MEDIA_PLATFORMS:
                 error_message = "This media platform is not supported."
@@ -806,18 +805,22 @@ class MediaService:
         download_info: dict[str, Any] | None,
         detected_platform: str,
     ) -> dict[str, Any]:
+        self._process_manager.raise_if_cancelled(job_id)
         if download_info is None:
             return youtube_dl.extract_info(url, download=True)
 
         resolved_download_info = download_info
         if detected_platform in _PLATFORMS_REQUIRING_TRANSPORT_REFRESH:
+            self._process_manager.raise_if_cancelled(job_id)
             resolved_download_info, legacy_download_info = self._refresh_download_transport_info(
                 youtube_dl,
                 url=url,
                 snapshot=download_info,
             )
+            self._process_manager.raise_if_cancelled(job_id)
             if detected_platform == "hanime":
                 self._prepare_hanime_manifests(resolved_download_info, job_id=job_id)
+                self._process_manager.raise_if_cancelled(job_id)
             settings = self._settings
             logger.info(
                 "Diagnostics checkpoint reached enabled=%s",
@@ -834,6 +837,7 @@ class MediaService:
         # cached. Runtime fields can hold expired transport URLs, so never pass
         # them into a later process_ie_result call for any platform.
         resolved_download_info = self._sanitize_processed_download_fields(resolved_download_info)
+        self._process_manager.raise_if_cancelled(job_id)
         return youtube_dl.process_ie_result(resolved_download_info, download=True)
 
     def _get_or_extract_supported_info(
@@ -1529,9 +1533,11 @@ class MediaService:
 
     def _prepare_hanime_manifests(self, info: dict[str, Any], *, job_id: UUID) -> None:
         """Fetch Hanime M3U8 playlists in Python to bypass OS-level DNS sinkholes on external FFmpeg."""
+        self._process_manager.raise_if_cancelled(job_id)
         formats = info.get("formats") or []
         temp_dir = get_temp_storage_dir()
         for idx, fmt in enumerate(formats):
+            self._process_manager.raise_if_cancelled(job_id)
             if not isinstance(fmt, dict):
                 continue
             stream_url = str(fmt.get("url") or "")

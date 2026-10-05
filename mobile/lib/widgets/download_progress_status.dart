@@ -17,9 +17,13 @@ String friendlyDownloadStatus({
   }
 
   if (normalizedStatus == 'processing') {
-    return backendProgress >= 100
-        ? 'Processing media...'
-        : 'Downloading media...';
+    if (backendProgress >= 100) {
+      return 'Processing media...';
+    }
+    if (backendProgress <= 0) {
+      return 'Preparing download...';
+    }
+    return 'Downloading media...';
   }
 
   if (normalizedStatus == 'queued') {

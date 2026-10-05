@@ -6,8 +6,10 @@ import time
 from datetime import timedelta
 
 import pytest
+import yt_dlp.downloader.external as external_downloader_module
 import yt_dlp.postprocessor.ffmpeg as ffmpeg_module
 from fastapi.testclient import TestClient
+from yt_dlp.utils import DownloadCancelled
 
 from app.api.dependencies import get_cleanup_service
 from app.main import create_app
@@ -296,3 +298,247 @@ def test_cancellation_closes_yt_dlp_during_background_probe(
     assert cancelled_job is not None
     assert cancelled_job.status is JobStatus.cancelled
     assert not process_manager.has_active_job(job.job_id)
+
+
+def test_cancellation_terminates_tracked_external_downloader_process() -> None:
+    process_manager = DownloadProcessManager(termination_timeout_seconds=1)
+    job = JobManager().create_job(
+        media_url="https://hanime.tv/videos/hentai/test-cancel",
+        platform="hanime",
+    )
+    process_manager.register_job(job.job_id)
+
+    try:
+        with process_manager.worker_context(job.job_id):
+            with external_downloader_module.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+            ) as process:
+                assert process_manager.has_active_process(job.job_id)
+                assert process_manager.request_cancellation(job.job_id)
+                assert process.wait(timeout=2) is not None
+
+        assert not process_manager.has_active_process(job.job_id)
+    finally:
+        process_manager.finish_job(job.job_id)
+
+    assert not process_manager.has_active_job(job.job_id)
+
+
+def test_cancellation_race_on_process_spawn() -> None:
+    process_manager = DownloadProcessManager(termination_timeout_seconds=1)
+    job = JobManager().create_job(
+        media_url="https://hanime.tv/videos/hentai/race-cancel",
+        platform="hanime",
+    )
+    process_manager.register_job(job.job_id)
+    # Pre-request cancellation before process spawns
+    assert process_manager.request_cancellation(job.job_id)
+
+    try:
+        with process_manager.worker_context(job.job_id):
+            # When process is spawned, attach_subprocess should immediately terminate it
+            with external_downloader_module.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+            ) as process:
+                assert process.wait(timeout=2) is not None
+    finally:
+        process_manager.finish_job(job.job_id)
+
+
+def test_cancellation_checkpoint_before_transport_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    process_manager = DownloadProcessManager()
+    service = MediaService(process_manager=process_manager)
+    job_manager = get_job_manager()
+    job = job_manager.create_job(
+        media_url="https://hanime.tv/videos/hentai/test-checkpoint-1",
+        platform="hanime",
+        format_id="1080p",
+        output_type="video",
+    )
+    process_manager.register_job(job.job_id)
+
+    refresh_called = False
+
+    def fake_refresh(*args, **kwargs):
+        nonlocal refresh_called
+        refresh_called = True
+        return {}, {}
+
+    monkeypatch.setattr(service, "_refresh_download_transport_info", fake_refresh)
+
+    # Pre-request cancellation
+    process_manager.request_cancellation(job.job_id)
+
+    with pytest.raises(DownloadCancelled):
+        service._process_download_with_youtube_dl(
+            None,  # youtube_dl
+            job_id=job.job_id,
+            url=job.media_url,
+            output_type="video",
+            format_selector="1080p",
+            download_info={"title": "Test", "formats": []},
+            detected_platform="hanime",
+        )
+
+    assert not refresh_called
+
+
+def test_cancellation_checkpoint_after_transport_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    process_manager = DownloadProcessManager()
+    service = MediaService(process_manager=process_manager)
+    job_manager = get_job_manager()
+    job = job_manager.create_job(
+        media_url="https://hanime.tv/videos/hentai/test-checkpoint-2",
+        platform="hanime",
+        format_id="1080p",
+        output_type="video",
+    )
+    process_manager.register_job(job.job_id)
+
+    def fake_refresh(*args, **kwargs):
+        # User requests cancellation during transport refresh
+        process_manager.request_cancellation(job.job_id)
+        return {"formats": []}, {}
+
+    prepare_called = False
+
+    def fake_prepare(*args, **kwargs):
+        nonlocal prepare_called
+        prepare_called = True
+
+    monkeypatch.setattr(service, "_refresh_download_transport_info", fake_refresh)
+    monkeypatch.setattr(service, "_prepare_hanime_manifests", fake_prepare)
+
+    with pytest.raises(DownloadCancelled):
+        service._process_download_with_youtube_dl(
+            None,
+            job_id=job.job_id,
+            url=job.media_url,
+            output_type="video",
+            format_selector="1080p",
+            download_info={"title": "Test", "formats": []},
+            detected_platform="hanime",
+        )
+
+    assert not prepare_called
+
+
+def test_cancellation_checkpoint_after_hanime_manifest_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
+    process_manager = DownloadProcessManager()
+    service = MediaService(process_manager=process_manager)
+    job_manager = get_job_manager()
+    job = job_manager.create_job(
+        media_url="https://hanime.tv/videos/hentai/test-checkpoint-3",
+        platform="hanime",
+        format_id="1080p",
+        output_type="video",
+    )
+    process_manager.register_job(job.job_id)
+
+    def fake_refresh(*args, **kwargs):
+        return {"formats": []}, {}
+
+    def fake_prepare(*args, **kwargs):
+        # User requests cancellation during manifest preparation
+        process_manager.request_cancellation(job.job_id)
+
+    process_ie_called = False
+
+    class DummyYTDL:
+        def process_ie_result(self, *args, **kwargs):
+            nonlocal process_ie_called
+            process_ie_called = True
+            return {}
+
+    monkeypatch.setattr(service, "_refresh_download_transport_info", fake_refresh)
+    monkeypatch.setattr(service, "_prepare_hanime_manifests", fake_prepare)
+
+    with pytest.raises(DownloadCancelled):
+        service._process_download_with_youtube_dl(
+            DummyYTDL(),
+            job_id=job.job_id,
+            url=job.media_url,
+            output_type="video",
+            format_selector="1080p",
+            download_info={"title": "Test", "formats": []},
+            detected_platform="hanime",
+        )
+
+    assert not process_ie_called
+
+
+def test_normal_download_releases_process_reference() -> None:
+    process_manager = DownloadProcessManager()
+    job = JobManager().create_job(
+        media_url="https://hanime.tv/videos/hentai/test-normal-exit",
+        platform="hanime",
+    )
+    process_manager.register_job(job.job_id)
+
+    try:
+        with process_manager.worker_context(job.job_id):
+            with external_downloader_module.Popen(
+                [sys.executable, "-c", "import sys; sys.exit(0)"],
+            ) as process:
+                assert process_manager.has_active_process(job.job_id)
+                process.wait(timeout=2)
+
+        # After exiting context manager, active process must be released
+        assert not process_manager.has_active_process(job.job_id)
+    finally:
+        process_manager.finish_job(job.job_id)
+
+
+def test_concurrent_downloads_cancellation_isolation() -> None:
+    process_manager = DownloadProcessManager(termination_timeout_seconds=1)
+    jm = JobManager()
+    job_a = jm.create_job(media_url="https://hanime.tv/videos/hentai/job-a", platform="hanime")
+    job_b = jm.create_job(media_url="https://hanime.tv/videos/hentai/job-b", platform="hanime")
+
+    process_manager.register_job(job_a.job_id)
+    process_manager.register_job(job_b.job_id)
+
+    a_proc_started = threading.Event()
+    b_proc_started = threading.Event()
+    b_proc_completed = threading.Event()
+
+    def worker_a():
+        with process_manager.worker_context(job_a.job_id):
+            with external_downloader_module.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+            ) as proc:
+                a_proc_started.set()
+                proc.wait()
+
+    def worker_b():
+        with process_manager.worker_context(job_b.job_id):
+            with external_downloader_module.Popen(
+                [sys.executable, "-c", "import time; time.sleep(0.5)"],
+            ) as proc:
+                b_proc_started.set()
+                proc.wait()
+                b_proc_completed.set()
+
+    thread_a = threading.Thread(target=worker_a)
+    thread_b = threading.Thread(target=worker_b)
+
+    try:
+        thread_a.start()
+        thread_b.start()
+
+        assert a_proc_started.wait(timeout=3)
+        assert b_proc_started.wait(timeout=3)
+
+        # Cancel only job_a
+        assert process_manager.request_cancellation(job_a.job_id)
+        thread_a.join(timeout=3)
+        assert not thread_a.is_alive()
+
+        # Job B should complete normally, unaffected
+        thread_b.join(timeout=3)
+        assert not thread_b.is_alive()
+        assert b_proc_completed.is_set()
+        assert not process_manager.is_cancellation_requested(job_b.job_id)
+    finally:
+        process_manager.finish_job(job_a.job_id)
+        process_manager.finish_job(job_b.job_id)

@@ -110,7 +110,7 @@ def test_background_download_completes_for_youtube_videos_and_shorts(
         assert completed_job.title == "A title that must not become a filename"
         assert downloaded_file.read_bytes() == b"downloaded-media"
         assert not list(downloaded_file.parent.glob("*A title that must not become a filename*"))
-        assert progress_updates == [0, 25, 99]
+        assert progress_updates == [25, 99]
 
         download_options = FakeYoutubeDL.instances[1].options
         assert download_options["format"] == format_id
@@ -461,3 +461,96 @@ def test_youtube_background_download_with_snapshot_refreshes_transport_without_p
     finally:
         downloaded_file.unlink(missing_ok=True)
 
+
+def test_background_worker_preserves_pending_status_until_download_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_statuses_during_execution: list[JobStatus] = []
+
+    class _StatusTrackingYoutubeDL:
+        def __init__(self, options: dict) -> None:
+            self.options = options
+
+        def __enter__(self) -> "_StatusTrackingYoutubeDL":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def extract_info(self, _: str, *, download: bool) -> dict:
+            current_job = get_job_manager().get_job(test_job_id)
+            if current_job:
+                job_statuses_during_execution.append(current_job.status)
+
+            if download:
+                progress_hook = self.options["progress_hooks"][0]
+                # First progress hook invocation with downloading status
+                progress_hook({"status": "downloading", "downloaded_bytes": 10, "total_bytes": 100})
+                post_hook_job = get_job_manager().get_job(test_job_id)
+                if post_hook_job:
+                    job_statuses_during_execution.append(post_hook_job.status)
+
+                progress_hook({"status": "finished"})
+
+                output_path = Path(self.options["outtmpl"].replace("%(ext)s", "mp4"))
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(b"yt-video")
+
+            return {"title": "Test Status Video", "extractor_key": "Youtube"}
+
+    monkeypatch.setattr(media_service_module, "YoutubeDL", _StatusTrackingYoutubeDL)
+
+    service = MediaService()
+    url = "https://www.youtube.com/watch?v=status-test"
+    job = get_job_manager().create_job(
+        media_url=url,
+        platform="youtube",
+        format_id="18",
+        output_type="video",
+    )
+    test_job_id = job.job_id
+    downloaded_file = get_temp_storage_dir() / f"{job.job_id}.mp4"
+
+    try:
+        service._download_job_background(job.job_id, url, "18", "video")
+
+        completed_job = get_job_manager().get_job(job.job_id)
+        assert completed_job is not None
+        assert completed_job.status is JobStatus.completed
+
+        # Verification: during extraction and preparation, status remained pending.
+        # After the downloading progress hook was invoked, status transitioned to processing.
+        assert job_statuses_during_execution == [
+            JobStatus.pending,
+            JobStatus.pending,
+            JobStatus.processing,
+        ]
+    finally:
+        downloaded_file.unlink(missing_ok=True)
+
+
+def test_cancellation_while_pending_in_background_worker() -> None:
+    service = MediaService()
+    process_manager = get_download_process_manager()
+    job_manager = get_job_manager()
+
+    url = "https://www.youtube.com/watch?v=cancel-test"
+    job = job_manager.create_job(
+        media_url=url,
+        platform="youtube",
+        format_id="18",
+        output_type="video",
+    )
+
+    # Request cancellation while job is pending
+    process_manager.request_cancellation(job.job_id)
+    job_manager.mark_cancelling(job.job_id)
+    cancelling_job = job_manager.get_job(job.job_id)
+    assert cancelling_job is not None
+    assert cancelling_job.status is JobStatus.cancelling
+
+    # Calling worker on a cancelled pending job should cleanly abort without error
+    service._download_job_background(job.job_id, url, "18", "video")
+    final_job = job_manager.get_job(job.job_id)
+    assert final_job is not None
+    assert final_job.status is JobStatus.cancelled

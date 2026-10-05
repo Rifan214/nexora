@@ -1118,6 +1118,7 @@ class _DownloadProgressStatus extends StatelessWidget {
       backendProgress: clampedProgress,
       isSavingToDevice: false,
     );
+    final hasKnownProgress = clampedProgress > 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1130,18 +1131,21 @@ class _DownloadProgressStatus extends StatelessWidget {
                 style: textTheme.bodyMedium,
               ),
             ),
-            Text(
-              '$clampedProgress%',
-              style: textTheme.titleMedium?.copyWith(
-                color: Theme.of(context).colorScheme.primary,
+            if (hasKnownProgress)
+              Text(
+                '$clampedProgress%',
+                style: textTheme.titleMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.primary,
+                ),
               ),
-            ),
           ],
         ),
         const SizedBox(height: AppSpacing.sm),
         ClipRRect(
           borderRadius: AppRadii.pill,
-          child: LinearProgressIndicator(value: clampedProgress / 100),
+          child: LinearProgressIndicator(
+            value: hasKnownProgress ? clampedProgress / 100 : null,
+          ),
         ),
       ],
     );

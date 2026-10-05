@@ -515,13 +515,12 @@ class _DownloadDetails extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final isWaiting = section == _DownloadSectionType.waiting;
     final isDownloading = section == _DownloadSectionType.downloading;
     final isSavingToDevice = download.isSavingToDevice;
     final progress = _clampProgress(
       isSavingToDevice ? download.fileDownloadProgress : download.progress,
     );
-    final hasKnownProgress = !isSavingToDevice || progress > 0;
+    final hasKnownProgress = progress > 0;
     final status = _statusLabel();
     final failureMessage = _failureMessage();
 
@@ -546,19 +545,22 @@ class _DownloadDetails extends StatelessWidget {
         const SizedBox(height: AppSpacing.lg),
         Row(
           children: [
-            _DownloadStatusBadge(
-              status: status,
-              section: section,
-              isSavingToDevice: isSavingToDevice,
+            Flexible(
+              child: _DownloadStatusBadge(
+                status: status,
+                section: section,
+                isSavingToDevice: isSavingToDevice,
+              ),
             ),
-            const Spacer(),
-            if (isDownloading && hasKnownProgress)
+            if (isDownloading && hasKnownProgress) ...[
+              const Spacer(),
               Text(
                 '$progress%',
                 style: textTheme.titleMedium?.copyWith(
                   color: colorScheme.primary,
                 ),
               ),
+            ],
           ],
         ),
         if (isDownloading) ...[
@@ -693,11 +695,15 @@ class _DownloadStatusBadge extends StatelessWidget {
             size: AppSpacing.md,
           ),
           const SizedBox(width: AppSpacing.xxs),
-          Text(
-            status,
-            style: textTheme.labelMedium?.copyWith(
-              color: foregroundColor,
-              fontWeight: FontWeight.w600,
+          Flexible(
+            child: Text(
+              status,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.labelMedium?.copyWith(
+                color: foregroundColor,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],

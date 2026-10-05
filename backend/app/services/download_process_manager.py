@@ -9,13 +9,15 @@ from threading import Event, RLock, Thread, current_thread, local
 from typing import Any, Iterator
 from uuid import UUID
 
+import yt_dlp.downloader.external as external_downloader_module
 import yt_dlp.postprocessor.ffmpeg as ffmpeg_module
+import yt_dlp.utils as yt_dlp_utils
 from yt_dlp.utils import DownloadCancelled
 
 logger = logging.getLogger(__name__)
 
 _ffmpeg_context = local()
-_original_ffmpeg_popen = ffmpeg_module.Popen
+_original_ffmpeg_popen = yt_dlp_utils.Popen
 
 
 @dataclass
@@ -92,17 +94,24 @@ class DownloadProcessManager:
             return active_download is not None and active_download.cancel_event.is_set()
 
     def attach_subprocess(self, job_id: UUID, process: subprocess.Popen) -> None:
+        should_terminate = False
         with self._lock:
             active_download = self._active_downloads.get(job_id)
             if active_download is None:
-                return
+                should_terminate = True
+            else:
+                active_download.process = process
+                should_terminate = active_download.cancel_event.is_set()
 
-            active_download.process = process
-            cancellation_requested = active_download.cancel_event.is_set()
-
-        logger.info("FFmpeg process registered job_id=%s process_id=%s", job_id, process.pid)
-        if cancellation_requested:
+        if should_terminate:
+            logger.info(
+                "FFmpeg process terminating immediately on attach job_id=%s process_id=%s",
+                job_id,
+                process.pid,
+            )
             self._terminate_process(job_id, process)
+        else:
+            logger.info("FFmpeg process registered job_id=%s process_id=%s", job_id, process.pid)
 
     def attach_downloader(self, job_id: UUID, downloader: Any) -> None:
         with self._lock:
@@ -224,9 +233,10 @@ class _TrackedFFmpegPopen(_original_ffmpeg_popen):
             manager.detach_subprocess(job_id, self)
 
 
-# yt-dlp keeps this class in its FFmpeg module. Replacing only that reference
-# preserves the download engine while making its child process cancellable.
+# yt-dlp keeps this class in its FFmpeg module and external downloader module.
+# Replacing both references preserves the download engine while making child processes cancellable.
 ffmpeg_module.Popen = _TrackedFFmpegPopen
+external_downloader_module.Popen = _TrackedFFmpegPopen
 
 
 @lru_cache
