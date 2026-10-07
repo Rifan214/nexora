@@ -12,6 +12,7 @@ import '../models/tracked_download.dart';
 import 'download_preferences_page.dart';
 import '../providers/active_downloads_provider.dart';
 import '../providers/media_provider.dart';
+import '../providers/share_receiver_provider.dart';
 import '../providers/x_auth_provider.dart';
 import '../widgets/download_progress_status.dart';
 import '../widgets/batch_import_sheet.dart';
@@ -46,6 +47,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     Future.microtask(() {
       if (mounted) {
         ref.read(xAuthProvider.notifier).restoreSession();
+        final initialShareEvent = ref.read(shareReceiverProvider);
+        if (initialShareEvent != null) {
+          _handleSharedMediaIntent(initialShareEvent);
+        }
       }
     });
   }
@@ -61,6 +66,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     ref.listen<List<TrackedDownload>>(activeDownloadsProvider, (_, next) {
       _scheduleCompletionNotifications(next);
+    });
+
+    ref.listen<SharedMediaIntentEvent?>(shareReceiverProvider, (_, next) {
+      if (next == null) return;
+      _handleSharedMediaIntent(next);
     });
 
     final mediaState = ref.watch(mediaProvider);
@@ -317,6 +327,53 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
 
     return state.downloadLoading;
+  }
+
+  void _handleSharedMediaIntent(SharedMediaIntentEvent event) {
+    ref.read(shareReceiverProvider.notifier).consumeEvent();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      if (event is SharedInvalidTextEvent) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('No valid media URL found in shared content'),
+            ),
+          );
+        return;
+      }
+
+      if (event is SharedValidUrlEvent) {
+        final sharedUrl = event.url;
+        final currentMediaState = ref.read(mediaProvider);
+
+        if (_selectedDestinationIndex != NexoraNavigationBar.downloadIndex) {
+          setState(() {
+            _selectedDestinationIndex = NexoraNavigationBar.downloadIndex;
+          });
+        }
+
+        final isAlreadyLoaded = currentMediaState is MediaSuccess &&
+            (currentMediaState.metadata.webpageUrl.trim() == sharedUrl ||
+                _urlController.text.trim() == sharedUrl);
+
+        if (_urlController.text != sharedUrl) {
+          _urlController.value = TextEditingValue(
+            text: sharedUrl,
+            selection: TextSelection.collapsed(offset: sharedUrl.length),
+          );
+        }
+
+        if (!isAlreadyLoaded) {
+          _getMetadata(true);
+        }
+      }
+    });
   }
 }
 
