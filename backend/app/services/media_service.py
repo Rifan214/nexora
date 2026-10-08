@@ -29,6 +29,7 @@ from app.services.download_process_manager import (
     DownloadProcessManager,
     get_download_process_manager,
 )
+from app.services.download_progress_tracker import DownloadProgressTracker
 from app.services.download_metadata_diagnostics import build_download_metadata_diagnostic_report
 from app.services.job_manager import JobManager, build_job_download_url, get_job_manager
 from app.services.media_snapshot_cache import MediaSnapshotCache
@@ -1618,7 +1619,14 @@ class MediaService:
         logger.info("Download cancelled job_id=%s", job_id)
         return True
 
-    def _build_progress_hook(self, job_id, job_manager, resume_state_manager: ResumeStateManager):
+    def _build_progress_hook(
+        self,
+        job_id,
+        job_manager,
+        resume_state_manager: ResumeStateManager,
+        format_selector: str = "",
+    ):
+        tracker = DownloadProgressTracker(format_selector=format_selector)
         last_progress = {"value": -1}
         last_resume_progress: dict[str, tuple[int, int | None] | None] = {"value": None}
 
@@ -1628,6 +1636,14 @@ class MediaService:
             if status != "downloading":
                 if status == "finished":
                     logger.info("Download file transfer finished job_id=%s", job_id)
+                    overall_progress = tracker.update_from_payload(payload)
+                    if overall_progress != last_progress["value"]:
+                        last_progress["value"] = overall_progress
+                        try:
+                            job_manager.update_progress(job_id, overall_progress)
+                            logger.info("Download progress job_id=%s progress=%s", job_id, overall_progress)
+                        except Exception:
+                            return
                 return
 
             total = payload.get("total_bytes") or payload.get("total_bytes_estimate")
@@ -1645,16 +1661,14 @@ class MediaService:
                     )
                 except (OSError, ValueError):
                     logger.warning("Resume progress update failed job_id=%s", job_id)
-            if total:
-                progress = int(min(99, max(0, (downloaded / total) * 100)))
-            else:
-                progress = min(99, self._parse_percent(payload.get("_percent_str", "0")))
 
-            if progress != last_progress["value"]:
-                last_progress["value"] = progress
+            overall_progress = tracker.update_from_payload(payload)
+
+            if overall_progress != last_progress["value"]:
+                last_progress["value"] = overall_progress
                 try:
-                    job_manager.update_progress(job_id, progress)
-                    logger.info("Download progress job_id=%s progress=%s", job_id, progress)
+                    job_manager.update_progress(job_id, overall_progress)
+                    logger.info("Download progress job_id=%s progress=%s", job_id, overall_progress)
                 except Exception:
                     return
 
@@ -1692,7 +1706,14 @@ class MediaService:
             "format": format_selector,
             "outtmpl": output_template,
             "paths": {"home": str(temp_dir)},
-            "progress_hooks": [self._build_progress_hook(job_id, job_manager, resume_state_manager)],
+            "progress_hooks": [
+                self._build_progress_hook(
+                    job_id,
+                    job_manager,
+                    resume_state_manager,
+                    format_selector=format_selector,
+                )
+            ],
             "postprocessor_hooks": [self._build_postprocessor_hook(job_id)],
             "remote_components": list(_YTDLP_REMOTE_COMPONENTS),
         }

@@ -709,3 +709,189 @@ def test_non_youtube_download_options_preserve_headers(monkeypatch: pytest.Monke
         assert download_opts["http_headers"]["Authorization"] == "Bearer x-token"
     finally:
         (get_temp_storage_dir() / f"{job.job_id}.mp4").unlink(missing_ok=True)
+
+
+def test_download_progress_preserves_multiformat_stream_updates_without_stuck_99(monkeypatch: pytest.MonkeyPatch) -> None:
+    class MultiFormatFakeYoutubeDL(FakeYoutubeDL):
+        def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+            if not download:
+                return super().extract_info(url, download=False)
+
+            progress_hook = self.options["progress_hooks"][0]
+            # Format 1 (video): downloads to 100% (progress hook yields 99)
+            progress_hook({"status": "downloading", "downloaded_bytes": 100, "total_bytes": 100})
+            progress_hook({"status": "finished"})
+
+            # Format 2 (audio): starts downloading at 65%, then 80%, then 99%
+            progress_hook({"status": "downloading", "downloaded_bytes": 65, "total_bytes": 100})
+            progress_hook({"status": "downloading", "downloaded_bytes": 80, "total_bytes": 100})
+            progress_hook({"status": "downloading", "downloaded_bytes": 100, "total_bytes": 100})
+            progress_hook({"status": "finished"})
+
+            output_path = Path(self.options["outtmpl"].replace("%(ext)s", "mp4"))
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"downloaded-media")
+            return {"title": "Multiformat YouTube Video"}
+
+    MultiFormatFakeYoutubeDL.instances = []
+    MultiFormatFakeYoutubeDL.download_error = None
+    monkeypatch.setattr(media_service_module, "YoutubeDL", MultiFormatFakeYoutubeDL)
+
+    service = MediaService()
+    job = get_job_manager().create_job(
+        media_url="https://www.youtube.com/watch?v=multiformat-test",
+        platform="youtube",
+        format_id="312+234",
+        output_type="video",
+    )
+    progress_updates: list[int] = []
+    job_manager = get_job_manager()
+    update_progress = job_manager.update_progress
+
+    def record_progress(*args: object, **kwargs: object):
+        updated_job = update_progress(*args, **kwargs)
+        progress_updates.append(updated_job.progress)
+        return updated_job
+
+    monkeypatch.setattr(job_manager, "update_progress", record_progress)
+
+    downloaded_file = get_temp_storage_dir() / f"{job.job_id}.mp4"
+    try:
+        service._download_job_background(job.job_id, job.media_url, job.format_id, job.output_type)
+        completed_job = get_job_manager().get_job(job.job_id)
+        assert completed_job is not None
+        assert completed_job.status is JobStatus.completed
+        assert completed_job.progress == 100
+
+        # Video completed at 85% partition
+        # Audio 65% maps to 94%
+        # Audio 80% maps to 96%
+        # Audio 100% maps to 99%
+        # Progress is strictly non-decreasing and does not freeze at 99 during audio
+        assert progress_updates == [85, 94, 96, 99]
+    finally:
+        downloaded_file.unlink(missing_ok=True)
+
+
+def test_download_progress_multiformat_full_sequence_never_stuck_at_99(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FullSequenceFakeYoutubeDL(FakeYoutubeDL):
+        def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+            if not download:
+                return super().extract_info(url, download=False)
+
+            progress_hook = self.options["progress_hooks"][0]
+            # Video: 0 -> 50 -> 99 -> finished
+            progress_hook({"status": "downloading", "filename": "v.mp4", "downloaded_bytes": 0, "total_bytes": 100})
+            progress_hook({"status": "downloading", "filename": "v.mp4", "downloaded_bytes": 50, "total_bytes": 100})
+            progress_hook({"status": "downloading", "filename": "v.mp4", "downloaded_bytes": 99, "total_bytes": 100})
+            progress_hook({"status": "finished", "filename": "v.mp4"})
+
+            # Audio: 0 -> 6 -> 20 -> 50 -> 100 -> finished
+            progress_hook({"status": "downloading", "filename": "a.m4a", "downloaded_bytes": 0, "total_bytes": 100})
+            progress_hook({"status": "downloading", "filename": "a.m4a", "downloaded_bytes": 6, "total_bytes": 100})
+            progress_hook({"status": "downloading", "filename": "a.m4a", "downloaded_bytes": 20, "total_bytes": 100})
+            progress_hook({"status": "downloading", "filename": "a.m4a", "downloaded_bytes": 50, "total_bytes": 100})
+            progress_hook({"status": "downloading", "filename": "a.m4a", "downloaded_bytes": 100, "total_bytes": 100})
+            progress_hook({"status": "finished", "filename": "a.m4a"})
+
+            output_path = Path(self.options["outtmpl"].replace("%(ext)s", "mp4"))
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"downloaded-media")
+            return {"title": "Full Sequence Video"}
+
+    FullSequenceFakeYoutubeDL.instances = []
+    FullSequenceFakeYoutubeDL.download_error = None
+    monkeypatch.setattr(media_service_module, "YoutubeDL", FullSequenceFakeYoutubeDL)
+
+    service = MediaService()
+    job = get_job_manager().create_job(
+        media_url="https://www.youtube.com/watch?v=full-sequence-test",
+        platform="youtube",
+        format_id="312+234",
+        output_type="video",
+    )
+    progress_updates: list[int] = []
+    job_manager = get_job_manager()
+    update_progress = job_manager.update_progress
+
+    def record_progress(*args: object, **kwargs: object):
+        updated_job = update_progress(*args, **kwargs)
+        progress_updates.append(updated_job.progress)
+        return updated_job
+
+    monkeypatch.setattr(job_manager, "update_progress", record_progress)
+
+    downloaded_file = get_temp_storage_dir() / f"{job.job_id}.mp4"
+    try:
+        service._download_job_background(job.job_id, job.media_url, job.format_id, job.output_type)
+        completed_job = get_job_manager().get_job(job.job_id)
+        assert completed_job is not None
+        assert completed_job.status is JobStatus.completed
+        assert completed_job.progress == 100
+
+        # Public progress progression:
+        # Video: 0 -> 42 -> 84 -> 85
+        # Audio: (starts at 85) -> 87 -> 92 -> 99
+        # Completed: 100
+        assert progress_updates == [0, 42, 84, 85, 87, 92, 99]
+        for i in range(len(progress_updates) - 1):
+            assert progress_updates[i] <= progress_updates[i + 1]
+    finally:
+        downloaded_file.unlink(missing_ok=True)
+
+
+def test_download_progress_hls_estimate_fluctuations_remain_monotonic(monkeypatch: pytest.MonkeyPatch) -> None:
+    class HlsJitterFakeYoutubeDL(FakeYoutubeDL):
+        def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+            if not download:
+                return super().extract_info(url, download=False)
+
+            progress_hook = self.options["progress_hooks"][0]
+            # 40% of estimated size
+            progress_hook({"status": "downloading", "downloaded_bytes": 40, "total_bytes_estimate": 100})
+            # Drop to 37% due to VBR estimate jump
+            progress_hook({"status": "downloading", "downloaded_bytes": 37, "total_bytes_estimate": 100})
+            # Advance to 41%
+            progress_hook({"status": "downloading", "downloaded_bytes": 41, "total_bytes_estimate": 100})
+            progress_hook({"status": "finished"})
+
+            output_path = Path(self.options["outtmpl"].replace("%(ext)s", "mp4"))
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"downloaded-media")
+            return {"title": "HLS Video"}
+
+    HlsJitterFakeYoutubeDL.instances = []
+    HlsJitterFakeYoutubeDL.download_error = None
+    monkeypatch.setattr(media_service_module, "YoutubeDL", HlsJitterFakeYoutubeDL)
+
+    service = MediaService()
+    job = get_job_manager().create_job(
+        media_url="https://www.youtube.com/watch?v=hls-jitter-test",
+        platform="youtube",
+        format_id="best",
+        output_type="video",
+    )
+    progress_updates: list[int] = []
+    job_manager = get_job_manager()
+    update_progress = job_manager.update_progress
+
+    def record_progress(*args: object, **kwargs: object):
+        updated_job = update_progress(*args, **kwargs)
+        progress_updates.append(updated_job.progress)
+        return updated_job
+
+    monkeypatch.setattr(job_manager, "update_progress", record_progress)
+
+    downloaded_file = get_temp_storage_dir() / f"{job.job_id}.mp4"
+    try:
+        service._download_job_background(job.job_id, job.media_url, job.format_id, job.output_type)
+        completed_job = get_job_manager().get_job(job.job_id)
+        assert completed_job is not None
+        assert completed_job.status is JobStatus.completed
+        assert completed_job.progress == 100
+
+        # Progress only emits changes: 40 -> 41 -> 99 (finished) -> 100 (completed)
+        # 37 is clamped and never drops backwards
+        assert progress_updates == [40, 41, 99]
+    finally:
+        downloaded_file.unlink(missing_ok=True)

@@ -64,6 +64,84 @@ def test_websocket_receives_progress_and_completion_updates() -> None:
             assert completed_message["error"] is None
 
 
+def test_websocket_broadcasts_aggregated_multiformat_progress_without_stuck_99() -> None:
+    manager = JobManager()
+    websocket_manager = WebSocketManager()
+    manager.add_update_listener(websocket_manager.broadcast_job_update)
+    job = manager.create_job(media_url="https://www.youtube.com/watch?v=actual-progress", platform="youtube")
+    app = _create_test_app(manager=manager, websocket_manager=websocket_manager)
+
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/ws/jobs/{job.job_id}") as websocket:
+            init_message = websocket.receive_json()
+            assert init_message["status"] == JobStatus.pending.value
+            assert init_message["progress"] == 0
+
+            # Format 1 (video) progresses smoothly up to its allocated partition (85)
+            manager.update_progress(job.job_id, 42)
+            msg_42 = websocket.receive_json()
+            assert msg_42["status"] == JobStatus.processing.value
+            assert msg_42["progress"] == 42
+
+            manager.update_progress(job.job_id, 85)
+            msg_85 = websocket.receive_json()
+            assert msg_85["status"] == JobStatus.processing.value
+            assert msg_85["progress"] == 85
+
+            # Format 2 (audio) downloads: progress advances forward from 85, never stuck at 99
+            manager.update_progress(job.job_id, 87)
+            msg_87 = websocket.receive_json()
+            assert msg_87["status"] == JobStatus.processing.value
+            assert msg_87["progress"] == 87
+
+            manager.update_progress(job.job_id, 92)
+            msg_92 = websocket.receive_json()
+            assert msg_92["status"] == JobStatus.processing.value
+            assert msg_92["progress"] == 92
+
+            manager.update_progress(job.job_id, 99)
+            msg_99 = websocket.receive_json()
+            assert msg_99["status"] == JobStatus.processing.value
+            assert msg_99["progress"] == 99
+
+            # Job completion reaches 100
+            manager.mark_completed(job.job_id)
+            msg_completed = websocket.receive_json()
+            assert msg_completed["status"] == JobStatus.completed.value
+            assert msg_completed["progress"] == 100
+            assert msg_completed["download_url"] == f"/files/{job.job_id}"
+
+
+def test_websocket_progress_monotonic_with_hls_estimate_fluctuations() -> None:
+    """Test that HLS VBR fluctuations (40 -> 37 -> 41) never decrease WebSocket progress."""
+    manager = JobManager()
+    websocket_manager = WebSocketManager()
+    manager.add_update_listener(websocket_manager.broadcast_job_update)
+    job = manager.create_job(media_url="https://www.youtube.com/watch?v=hls-jitter", platform="youtube")
+    app = _create_test_app(manager=manager, websocket_manager=websocket_manager)
+
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/ws/jobs/{job.job_id}") as websocket:
+            init_message = websocket.receive_json()
+            assert init_message["progress"] == 0
+
+            # First update: 40%
+            manager.update_progress(job.job_id, 40)
+            msg_40 = websocket.receive_json()
+            assert msg_40["progress"] == 40
+
+            # Raw update drops to 37 due to HLS total_bytes_estimate increase
+            manager.update_progress(job.job_id, 37)
+            msg_clamped = websocket.receive_json()
+            # WebSocket progress MUST NOT decrease: remains at 40
+            assert msg_clamped["progress"] == 40
+
+            # Next fragment reaches 41%
+            manager.update_progress(job.job_id, 41)
+            msg_41 = websocket.receive_json()
+            assert msg_41["progress"] == 41
+
+
 def test_websocket_receives_queued_update() -> None:
     manager = JobManager()
     websocket_manager = WebSocketManager()
