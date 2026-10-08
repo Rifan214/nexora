@@ -77,6 +77,7 @@ _AUDIO_MP3_POSTPROCESSOR = {
     "preferredcodec": "mp3",
     "preferredquality": "0",
 }
+_YTDLP_REMOTE_COMPONENTS = ["ejs:github"]
 _SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter", "instagram", "facebook", "reddit", "hanime"})
 _PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter", "instagram", "facebook", "reddit", "hanime"})
 _X_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
@@ -554,9 +555,12 @@ class MediaService:
                     extractor=str(extracted_info.get("extractor_key") or detected_platform),
                 )
 
-            http_headers = extracted_info.get("http_headers")
-            if not http_headers and extracted_info.get("formats"):
-                http_headers = extracted_info["formats"][0].get("http_headers")
+            if detected_platform == "youtube":
+                http_headers = None
+            else:
+                http_headers = extracted_info.get("http_headers")
+                if not http_headers and extracted_info.get("formats"):
+                    http_headers = extracted_info["formats"][0].get("http_headers")
 
             ydl_options = self._build_download_options(
                 job_id=job_id,
@@ -1690,6 +1694,7 @@ class MediaService:
             "paths": {"home": str(temp_dir)},
             "progress_hooks": [self._build_progress_hook(job_id, job_manager, resume_state_manager)],
             "postprocessor_hooks": [self._build_postprocessor_hook(job_id)],
+            "remote_components": list(_YTDLP_REMOTE_COMPONENTS),
         }
         if enable_file_urls:
             options["enable_file_urls"] = True
@@ -1839,6 +1844,7 @@ class MediaService:
             "noplaylist": True,
             "skip_download": True,
             "cachedir": False,
+            "remote_components": list(_YTDLP_REMOTE_COMPONENTS),
         }
         if cookie_file is not None:
             ydl_options["cookiefile"] = str(cookie_file)
@@ -1953,6 +1959,7 @@ class MediaService:
             "skip_download": True,
             "extract_flat": True,
             "cachedir": False,
+            "remote_components": list(_YTDLP_REMOTE_COMPONENTS),
         }
         with YoutubeDL(ydl_options) as youtube_dl:
             extracted_info = youtube_dl.extract_info(url, download=False)

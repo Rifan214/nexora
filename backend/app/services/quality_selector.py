@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import re
 from typing import Any, Iterable
+import urllib.parse
 
 from app.models.media import AvailableQuality
 
@@ -146,6 +148,7 @@ class QualitySelector:
                 height=height,
                 video_candidates=by_height[height],
                 best_audio=best_audio,
+                audio_candidates=audio_candidates,
                 platform=platform,
             )
             if selection is not None:
@@ -199,6 +202,7 @@ class QualitySelector:
         height: int,
         video_candidates: list[dict[str, Any]],
         best_audio: dict[str, Any] | None,
+        audio_candidates: list[dict[str, Any]] | None = None,
         platform: str | None = None,
     ) -> QualitySelection | None:
         progressive = [item for item in video_candidates if self._is_progressive(item, platform=platform)]
@@ -209,15 +213,21 @@ class QualitySelector:
         # For YouTube 360p, progressive format 18 is hard-blocked with HTTP 403
         # on unauthenticated requests. When a valid adaptive video + audio pair
         # is available, prefer the adaptive pair over progressive format 18.
-        if platform == "youtube" and height == 360 and adaptive_video and best_audio is not None:
+        if platform == "youtube" and height == 360 and adaptive_video:
             selected_video = max(adaptive_video, key=self._video_score)
-            selection = self._build_selection(height, selected_video, best_audio)
-            logger.debug(
-                "Quality resolution selected height=%s reason=youtube_adaptive_360p_preferred selector=%s",
-                height,
-                selection.selector,
+            selected_audio = (
+                self._select_best_audio(audio_candidates, video=selected_video, platform=platform)
+                if audio_candidates
+                else best_audio
             )
-            return selection
+            if selected_audio is not None:
+                selection = self._build_selection(height, selected_video, selected_audio)
+                logger.debug(
+                    "Quality resolution selected height=%s reason=youtube_adaptive_360p_preferred selector=%s",
+                    height,
+                    selection.selector,
+                )
+                return selection
 
         # A progressive H.264/AAC MP4 is deliberately preferred over an AV1/VP9
         # adaptive stream at the same height. It is substantially more compatible
@@ -233,15 +243,21 @@ class QualitySelector:
             )
             return selection
 
-        if adaptive_video and best_audio is not None:
+        if adaptive_video:
             selected_video = max(adaptive_video, key=self._video_score)
-            selection = self._build_selection(height, selected_video, best_audio)
-            logger.debug(
-                "Quality resolution selected height=%s reason=adaptive_video_with_best_audio selector=%s",
-                height,
-                selection.selector,
+            selected_audio = (
+                self._select_best_audio(audio_candidates, video=selected_video, platform=platform)
+                if audio_candidates
+                else best_audio
             )
-            return selection
+            if selected_audio is not None:
+                selection = self._build_selection(height, selected_video, selected_audio)
+                logger.debug(
+                    "Quality resolution selected height=%s reason=adaptive_video_with_best_audio selector=%s",
+                    height,
+                    selection.selector,
+                )
+                return selection
 
         if progressive:
             selection = self._build_selection(height, max(progressive, key=self._video_score))
@@ -288,12 +304,13 @@ class QualitySelector:
         cls,
         formats: Iterable[dict[str, Any]],
         *,
+        video: dict[str, Any] | None = None,
         platform: str | None = None,
     ) -> dict[str, Any] | None:
         audio_only = [item for item in formats if cls._is_audio_only(item, platform=platform)]
         if not audio_only:
             return None
-        return max(audio_only, key=cls._audio_score)
+        return max(audio_only, key=lambda item: cls._audio_score(item, video=video, platform=platform))
 
     @classmethod
     def _is_usable(cls, format_item: dict[str, Any]) -> bool:
@@ -527,15 +544,88 @@ class QualitySelector:
         return (1 if protocol in {"http", "https"} else 0, cls._video_score(format_item))
 
     @classmethod
-    def _audio_score(cls, format_item: dict[str, Any]) -> tuple[float, float, int, str]:
-        # yt-dlp's bestaudio behavior is quality-first. Approximate that with the
-        # reported audio bitrate, then sample rate and size when available.
+    def _audio_score(
+        cls,
+        format_item: dict[str, Any],
+        *,
+        video: dict[str, Any] | None = None,
+        platform: str | None = None,
+    ) -> tuple[int, float, float, int, str]:
+        # yt-dlp's bestaudio behavior is quality-first. Approximate that with
+        # protocol affinity to the selected video, reported/effective audio
+        # bitrate, sample rate, and size when available.
+        protocol_affinity = cls._protocol_affinity(format_item, video)
         return (
-            cls._number_or_zero(format_item.get("abr") or format_item.get("tbr")),
+            protocol_affinity,
+            cls._effective_audio_bitrate(format_item),
             cls._number_or_zero(format_item.get("asr")),
             cls._filesize_or_zero(format_item),
             cls._format_id(format_item),
         )
+
+    @staticmethod
+    def _is_hls(format_item: dict[str, Any] | None) -> bool:
+        if not isinstance(format_item, dict):
+            return False
+        protocol = str(format_item.get("protocol") or "").casefold()
+        return protocol.startswith("m3u8")
+
+    @classmethod
+    def _protocol_affinity(
+        cls,
+        audio_item: dict[str, Any],
+        video_item: dict[str, Any] | None,
+    ) -> int:
+        if video_item is None:
+            return 0
+        video_hls = cls._is_hls(video_item)
+        audio_hls = cls._is_hls(audio_item)
+        if video_hls:
+            return 1 if audio_hls else 0
+        return 1 if not audio_hls else 0
+
+    @classmethod
+    def _effective_audio_bitrate(cls, format_item: dict[str, Any]) -> float:
+        """Resolve reported or estimated audio bitrate in kbps."""
+        bitrate = cls._number_or_zero(format_item.get("abr") or format_item.get("tbr"))
+        if bitrate > 0:
+            return bitrate
+
+        # For HLS audio streams lacking explicit abr/tbr, attempt to calculate
+        # from segment metadata in the stream URL (e.g., sgoap/clen=...;dur=...).
+        url = str(format_item.get("url") or "")
+        if "clen" in url and "dur" in url:
+            unquoted = urllib.parse.unquote(url)
+            m_clen = re.search(r"clen[=/](\d+)", unquoted)
+            m_dur = re.search(r"dur[=/]([\d.]+)", unquoted)
+            if m_clen and m_dur:
+                try:
+                    clen = float(m_clen.group(1))
+                    dur = float(m_dur.group(1))
+                    if dur > 0:
+                        return (clen * 8.0) / (dur * 1000.0)
+                except (ValueError, ZeroDivisionError):
+                    pass
+
+        # Check format_note or quality tiers for HLS audio
+        note = str(format_item.get("format_note") or "").casefold()
+        if "high" in note:
+            return 128.0
+        if "med" in note:
+            return 96.0
+        if "low" in note:
+            return 48.0
+
+        # Source preference / preference hints
+        source_pref = cls._number_or_zero(format_item.get("source_preference"))
+        if source_pref > 0:
+            return 128.0
+
+        # General HLS audio default when bitrate is unpopulated
+        if cls._is_hls(format_item):
+            return 96.0
+
+        return 0.0
 
     @staticmethod
     def _video_codec_priority(value: Any) -> int:
@@ -585,7 +675,16 @@ class QualitySelector:
 
     @classmethod
     def _filesize(cls, format_item: dict[str, Any]) -> int | None:
-        return cls._int_or_none(format_item.get("filesize") or format_item.get("filesize_approx"))
+        size = cls._int_or_none(format_item.get("filesize") or format_item.get("filesize_approx"))
+        if size is not None:
+            return size
+        url = str(format_item.get("url") or "")
+        if "clen" in url:
+            unquoted = urllib.parse.unquote(url)
+            m_clen = re.search(r"clen[=/](\d+)", unquoted)
+            if m_clen:
+                return cls._int_or_none(m_clen.group(1))
+        return None
 
     @classmethod
     def _filesize_or_zero(cls, format_item: dict[str, Any]) -> int:

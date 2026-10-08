@@ -554,3 +554,158 @@ def test_cancellation_while_pending_in_background_worker() -> None:
     final_job = job_manager.get_job(job.job_id)
     assert final_job is not None
     assert final_job.status is JobStatus.cancelled
+
+
+def test_ytdlp_options_include_ejs_remote_components(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_options: list[dict] = []
+
+    class _CaptureOptionsYoutubeDL:
+        def __init__(self, options: dict) -> None:
+            captured_options.append(options)
+
+        def __enter__(self) -> "_CaptureOptionsYoutubeDL":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def extract_info(self, url: str, *, download: bool = False) -> dict:
+            if "playlist" in url:
+                return {
+                    "title": "Playlist Title",
+                    "_type": "playlist",
+                    "entries": [{"title": "Entry 1", "url": "https://www.youtube.com/watch?v=entry1"}],
+                }
+            return {
+                "title": "Test Title",
+                "extractor": "youtube",
+                "extractor_key": "Youtube",
+                "formats": [{"format_id": "18", "height": 360, "vcodec": "avc1", "acodec": "mp4a", "ext": "mp4"}],
+            }
+
+    monkeypatch.setattr(media_service_module, "YoutubeDL", _CaptureOptionsYoutubeDL)
+    service = MediaService()
+
+    # 1. Verify metadata extraction options
+    service.get_metadata("https://www.youtube.com/watch?v=remote-comp-test")
+    assert any(opts.get("remote_components") == ["ejs:github"] for opts in captured_options)
+
+    # 2. Verify download options
+    download_opts = service._build_download_options(
+        job_id=None,
+        format_selector="18",
+        output_type="video",
+        output_template="test.%(ext)s",
+        temp_dir=Path("."),
+        job_manager=None,
+        resume_state_manager=None,
+        continue_download=False,
+    )
+    assert download_opts.get("remote_components") == ["ejs:github"]
+
+    # 3. Verify flat playlist options
+    service._extract_playlist_info("https://www.youtube.com/playlist?list=test")
+    assert any(opts.get("remote_components") == ["ejs:github"] and opts.get("extract_flat") is True for opts in captured_options)
+
+
+def test_youtube_download_options_omit_polluted_format_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_options: list[dict] = []
+
+    class _CaptureOptionsYoutubeDL(FakeYoutubeDL):
+        def __init__(self, options: dict) -> None:
+            captured_options.append(options)
+            super().__init__(options)
+
+    monkeypatch.setattr(media_service_module, "YoutubeDL", _CaptureOptionsYoutubeDL)
+    service = MediaService()
+    job = get_job_manager().create_job(
+        media_url="https://www.youtube.com/watch?v=header-pollution-test",
+        platform="youtube",
+        format_id="312+140",
+        output_type="video",
+    )
+
+    dummy_info = {
+        "title": "Header Pollution Test Video",
+        "extractor": "youtube",
+        "extractor_key": "Youtube",
+        "formats": [
+            {
+                "format_id": "sb3",
+                "http_headers": {
+                    "User-Agent": "Mozilla/5.0 Chrome/151.0 Storyboard",
+                    "Accept": "image/webp,*/*",
+                },
+            },
+            {
+                "format_id": "312",
+                "http_headers": {
+                    "User-Agent": "VisionOS Native User Agent",
+                },
+            },
+        ],
+    }
+
+    try:
+        service._download_job_background(
+            job.job_id,
+            "https://www.youtube.com/watch?v=header-pollution-test",
+            "312+140",
+            "video",
+            download_info=dummy_info,
+        )
+        assert len(captured_options) >= 1
+        download_opts = captured_options[0]
+        # Must NOT inject sb3 storyboard headers into YouTube YoutubeDL options
+        assert "http_headers" not in download_opts
+    finally:
+        (get_temp_storage_dir() / f"{job.job_id}.mp4").unlink(missing_ok=True)
+
+
+def test_non_youtube_download_options_preserve_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_options: list[dict] = []
+
+    class _CaptureOptionsYoutubeDL(FakeYoutubeDL):
+        def __init__(self, options: dict) -> None:
+            captured_options.append(options)
+            super().__init__(options)
+
+    monkeypatch.setattr(media_service_module, "YoutubeDL", _CaptureOptionsYoutubeDL)
+    service = MediaService()
+    job = get_job_manager().create_job(
+        media_url="https://x.com/test/status/123",
+        platform="twitter",
+        format_id="best",
+        output_type="video",
+    )
+
+    dummy_x_info = {
+        "title": "X Test Video",
+        "extractor": "twitter",
+        "extractor_key": "Twitter",
+        "http_headers": {
+            "Authorization": "Bearer x-token",
+            "User-Agent": "X-Client",
+        },
+        "formats": [
+            {
+                "format_id": "best",
+                "http_headers": {"Authorization": "Bearer x-token"},
+            }
+        ],
+    }
+
+    try:
+        service._download_job_background(
+            job.job_id,
+            "https://x.com/test/status/123",
+            "best",
+            "video",
+            download_info=dummy_x_info,
+        )
+        assert len(captured_options) >= 1
+        download_opts = captured_options[0]
+        assert "http_headers" in download_opts
+        assert download_opts["http_headers"]["Authorization"] == "Bearer x-token"
+    finally:
+        (get_temp_storage_dir() / f"{job.job_id}.mp4").unlink(missing_ok=True)

@@ -634,3 +634,260 @@ def test_quality_selector_youtube_avoids_blocked_progressive_18() -> None:
     assert generic_selection is not None
     assert generic_selection.selector == "18"
 
+
+def test_hls_video_prefers_hls_audio_over_dash_audio() -> None:
+    """A: HLS video + HLS audio -> HLS audio is preferred even if DASH audio reports higher bitrate."""
+    selector = QualitySelector()
+    selection = selector.select_for_height(
+        [
+            {
+                "format_id": "312",
+                "height": 1080,
+                "ext": "mp4",
+                "vcodec": "avc1.64002A",
+                "acodec": "none",
+                "protocol": "m3u8_native",
+                "tbr": 6200,
+            },
+            {
+                "format_id": "234",
+                "ext": "mp4",
+                "vcodec": "none",
+                "video_ext": "none",
+                "audio_ext": "mp4",
+                "acodec": None,
+                "protocol": "m3u8_native",
+                "abr": 128,
+            },
+            {
+                "format_id": "251",
+                "ext": "webm",
+                "vcodec": "none",
+                "acodec": "opus",
+                "protocol": "https",
+                "abr": 160,
+            },
+        ],
+        1080,
+    )
+    assert selection is not None
+    assert selection.video_format_id == "312"
+    assert selection.audio_format_id == "234"
+    assert selection.selector == "312+234"
+
+
+def test_hls_audio_with_missing_bitrate_does_not_rank_as_zero() -> None:
+    """B: HLS video + HLS audio with missing abr/tbr -> missing bitrate does not make HLS audio rank as zero."""
+    selector = QualitySelector()
+    selection = selector.select_for_height(
+        [
+            {
+                "format_id": "312",
+                "height": 1080,
+                "ext": "mp4",
+                "vcodec": "avc1.64002A",
+                "acodec": "none",
+                "protocol": "m3u8_native",
+                "tbr": 6200,
+            },
+            {
+                "format_id": "hls-audio-unspecified",
+                "ext": "mp4",
+                "vcodec": "none",
+                "video_ext": "none",
+                "audio_ext": "mp4",
+                "acodec": None,
+                "protocol": "m3u8_native",
+                "abr": None,
+                "tbr": None,
+                "format_note": "Default, high",
+            },
+            {
+                "format_id": "hls-audio-low",
+                "ext": "mp4",
+                "vcodec": "none",
+                "video_ext": "none",
+                "audio_ext": "mp4",
+                "acodec": None,
+                "protocol": "m3u8_native",
+                "abr": None,
+                "tbr": None,
+                "format_note": "Default, low",
+            },
+        ],
+        1080,
+    )
+    assert selection is not None
+    assert selection.audio_format_id == "hls-audio-unspecified"
+    assert selection.selector == "312+hls-audio-unspecified"
+
+
+def test_hls_video_falls_back_to_dash_audio_when_no_hls_audio_exists() -> None:
+    """C: HLS video + DASH audio only -> DASH audio remains usable as fallback if no HLS audio exists."""
+    selector = QualitySelector()
+    selection = selector.select_for_height(
+        [
+            {
+                "format_id": "312",
+                "height": 1080,
+                "ext": "mp4",
+                "vcodec": "avc1.64002A",
+                "acodec": "none",
+                "protocol": "m3u8_native",
+                "tbr": 6200,
+            },
+            {
+                "format_id": "140",
+                "ext": "m4a",
+                "vcodec": "none",
+                "acodec": "mp4a.40.2",
+                "protocol": "https",
+                "abr": 128,
+            },
+            {
+                "format_id": "251",
+                "ext": "webm",
+                "vcodec": "none",
+                "acodec": "opus",
+                "protocol": "https",
+                "abr": 160,
+            },
+        ],
+        1080,
+    )
+    assert selection is not None
+    assert selection.video_format_id == "312"
+    assert selection.audio_format_id == "251"
+    assert selection.selector == "312+251"
+
+
+def test_non_hls_video_pairs_with_dash_audio_preserving_existing_behavior() -> None:
+    """D: Non-HLS video + normal DASH audio -> existing behavior remains unchanged."""
+    selector = QualitySelector()
+    selection = selector.select_for_height(
+        [
+            {
+                "format_id": "299",
+                "height": 1080,
+                "ext": "mp4",
+                "vcodec": "avc1.64002A",
+                "acodec": "none",
+                "protocol": "https",
+                "tbr": 5200,
+            },
+            {
+                "format_id": "234",
+                "ext": "mp4",
+                "vcodec": "none",
+                "video_ext": "none",
+                "audio_ext": "mp4",
+                "acodec": None,
+                "protocol": "m3u8_native",
+                "abr": 128,
+            },
+            {
+                "format_id": "140",
+                "ext": "m4a",
+                "vcodec": "none",
+                "acodec": "mp4a.40.2",
+                "protocol": "https",
+                "abr": 128,
+            },
+            {
+                "format_id": "251",
+                "ext": "webm",
+                "vcodec": "none",
+                "acodec": "opus",
+                "protocol": "https",
+                "abr": 160,
+            },
+        ],
+        1080,
+    )
+    assert selection is not None
+    assert selection.video_format_id == "299"
+    assert selection.audio_format_id == "251"
+    assert selection.selector == "299+251"
+
+
+def test_youtube_1080p_selects_hls_pair_312_plus_234_over_140() -> None:
+    """E: Known YouTube case: 312 + 234 is selected instead of 312 + 140."""
+    selector = QualitySelector()
+    formats = [
+        {
+            "format_id": "312",
+            "height": 1080,
+            "ext": "mp4",
+            "vcodec": "avc1.64002A",
+            "acodec": "none",
+            "protocol": "m3u8_native",
+            "tbr": 6266.8,
+            "fps": 60,
+        },
+        {
+            "format_id": "299",
+            "height": 1080,
+            "ext": "mp4",
+            "vcodec": "avc1.64002A",
+            "acodec": "none",
+            "protocol": "https",
+            "tbr": 5262.7,
+            "fps": 60,
+        },
+        {
+            "format_id": "233",
+            "ext": "mp4",
+            "vcodec": "none",
+            "video_ext": "none",
+            "audio_ext": "mp4",
+            "acodec": None,
+            "protocol": "m3u8_native",
+            "format_note": "Default, low",
+            "abr": None,
+            "tbr": None,
+            "url": "https://manifest.googlevideo.com/.../sgoap/clen%3D1288760%3Bdur%3D211.208%3B...",
+        },
+        {
+            "format_id": "234",
+            "ext": "mp4",
+            "vcodec": "none",
+            "video_ext": "none",
+            "audio_ext": "mp4",
+            "acodec": None,
+            "protocol": "m3u8_native",
+            "format_note": "Default, high",
+            "abr": None,
+            "tbr": None,
+            "url": "https://manifest.googlevideo.com/.../sgoap/clen%3D3417528%3Bdur%3D211.115%3B...",
+        },
+        {
+            "format_id": "140",
+            "ext": "m4a",
+            "vcodec": "none",
+            "acodec": "mp4a.40.2",
+            "protocol": "https",
+            "abr": 129.5,
+            "tbr": 129.5,
+            "asr": 44100,
+            "filesize": 3417528,
+        },
+        {
+            "format_id": "251",
+            "ext": "webm",
+            "vcodec": "none",
+            "acodec": "opus",
+            "protocol": "https",
+            "abr": 121.6,
+            "tbr": 121.6,
+            "asr": 48000,
+            "filesize": 3209128,
+        },
+    ]
+
+    selection = selector.select_for_height(formats, 1080, platform="youtube")
+    assert selection is not None
+    assert selection.video_format_id == "312"
+    assert selection.audio_format_id == "234"
+    assert selection.selector == "312+234"
+    assert selection.audio_format_id != "140"
+
