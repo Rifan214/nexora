@@ -113,7 +113,7 @@ def detect_platform_from_url(url: str) -> str:
 
     if hostname in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}:
         return "youtube"
-    if hostname.endswith("tiktok.com"):
+    if hostname == "tiktok.com" or hostname.endswith(".tiktok.com"):
         return "tiktok"
     if hostname in _X_HOSTNAMES:
         return "twitter"

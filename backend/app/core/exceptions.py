@@ -27,7 +27,18 @@ def _error_response(*, message: str, code: str, details: str, status_code: int) 
     return JSONResponse(status_code=status_code, content=payload.model_dump(exclude_none=True))
 
 
-_SENSITIVE_LOC_PARTS = {"auth_token", "ct0", "password", "secret", "cookie", "cookies", "token", "credentials"}
+_SENSITIVE_LOC_PARTS = {
+    "auth_token",
+    "ct0",
+    "sessionid",
+    "sid_tt",
+    "password",
+    "secret",
+    "cookie",
+    "cookies",
+    "token",
+    "credentials",
+}
 
 
 def _sanitize_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:

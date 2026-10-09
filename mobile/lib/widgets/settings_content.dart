@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/theme/app_tokens.dart';
 import 'nexora_brand.dart';
 import 'server_configuration_card.dart';
+import 'tiktok_auth_card.dart';
 import 'x_auth_card.dart';
 
 class SettingsContent extends StatelessWidget {
@@ -45,6 +46,8 @@ class SettingsContent extends StatelessWidget {
               const ServerConfigurationCard(),
               const SizedBox(height: AppSpacing.md),
               const XAuthCard(),
+              const SizedBox(height: AppSpacing.md),
+              const TikTokAuthCard(),
               const SizedBox(height: AppSpacing.md),
               const _SettingsInformationCard(
                 icon: Icons.speed_rounded,

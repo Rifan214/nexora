@@ -60,6 +60,24 @@ def test_x_auth_cookie_file_is_read_from_environment(monkeypatch: pytest.MonkeyP
     assert get_settings().x_auth_cookie_file == "C:/run/secrets/x.cookies.txt"
 
 
+def test_tiktok_auth_cookie_file_is_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NEXORA_TIKTOK_AUTH_COOKIE_FILE", raising=False)
+
+    assert get_settings().tiktok_auth_cookie_file == ""
+
+
+def test_tiktok_auth_cookie_file_accepts_an_empty_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXORA_TIKTOK_AUTH_COOKIE_FILE", "")
+
+    assert get_settings().tiktok_auth_cookie_file == ""
+
+
+def test_tiktok_auth_cookie_file_is_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXORA_TIKTOK_AUTH_COOKIE_FILE", "C:/run/secrets/tiktok.cookies.txt")
+
+    assert get_settings().tiktok_auth_cookie_file == "C:/run/secrets/tiktok.cookies.txt"
+
+
 def test_instagram_auth_cookie_file_is_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NEXORA_INSTAGRAM_AUTH_COOKIE_FILE", raising=False)
 

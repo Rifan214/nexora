@@ -16,6 +16,7 @@ import '../repositories/media_repository.dart';
 import 'active_downloads_provider.dart';
 import 'download_preferences_provider.dart';
 import 'history_provider.dart';
+import 'tiktok_auth_provider.dart';
 import 'x_auth_provider.dart';
 
 final mediaProvider = NotifierProvider<MediaController, MediaState>(
@@ -78,9 +79,15 @@ class MediaController extends Notifier<MediaState> {
       if (_buildAuthHeadersForUrl(trimmedUrl) != null &&
           _isSessionInvalidationMessage(error.message)) {
         final isExpired = error.message.toLowerCase().contains('expired');
-        await ref
-            .read(xAuthProvider.notifier)
-            .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
+        if (_isXUrl(trimmedUrl)) {
+          await ref
+              .read(xAuthProvider.notifier)
+              .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
+        } else if (_isTikTokUrl(trimmedUrl)) {
+          await ref
+              .read(tikTokAuthProvider.notifier)
+              .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
+        }
       }
       state = MediaState.error(error.message);
     } catch (_) {
@@ -280,9 +287,15 @@ class MediaController extends Notifier<MediaState> {
       if (_buildAuthHeadersForUrl(current.metadata.webpageUrl) != null &&
           _isSessionInvalidationMessage(error.message)) {
         final isExpired = error.message.toLowerCase().contains('expired');
-        await ref
-            .read(xAuthProvider.notifier)
-            .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
+        if (_isXUrl(current.metadata.webpageUrl)) {
+          await ref
+              .read(xAuthProvider.notifier)
+              .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
+        } else if (_isTikTokUrl(current.metadata.webpageUrl)) {
+          await ref
+              .read(tikTokAuthProvider.notifier)
+              .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
+        }
       }
       final latest = _successState;
       if (latest == null) {
@@ -657,9 +670,6 @@ class MediaController extends Notifier<MediaState> {
         normalizedStatus == 'cancelled';
   }
 
-  bool _isCompletedStatus(String? status) {
-    return status?.toLowerCase() == 'completed';
-  }
 
   bool _isConnectionLostStatus(String? status) {
     return status?.toLowerCase() == 'connection_lost';
@@ -688,6 +698,11 @@ class MediaController extends Notifier<MediaState> {
       if (xSessionId != null && xSessionId.isNotEmpty) {
         return {'X-Session-ID': xSessionId};
       }
+    } else if (_isTikTokUrl(url)) {
+      final tikTokSessionId = ref.read(activeTikTokSessionIdProvider);
+      if (tikTokSessionId != null && tikTokSessionId.isNotEmpty) {
+        return {'TikTok-Session-ID': tikTokSessionId};
+      }
     }
     return null;
   }
@@ -701,11 +716,19 @@ class MediaController extends Notifier<MediaState> {
         host.endsWith('.twitter.com');
   }
 
+  static bool _isTikTokUrl(String url) {
+    final uri = Uri.tryParse(url.trim());
+    final host = uri?.host.toLowerCase() ?? '';
+    return host == 'tiktok.com' ||
+        host.endsWith('.tiktok.com');
+  }
+
   static bool _isSessionInvalidationMessage(String message) {
     final msg = message.toLowerCase();
     return msg.contains('session not found') ||
         msg.contains('session has expired') ||
         msg.contains('session is invalid') ||
-        msg.contains('x authentication session');
+        msg.contains('x authentication session') ||
+        msg.contains('tiktok authentication session');
   }
 }

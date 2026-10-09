@@ -13,6 +13,7 @@ import 'download_preferences_page.dart';
 import '../providers/active_downloads_provider.dart';
 import '../providers/media_provider.dart';
 import '../providers/share_receiver_provider.dart';
+import '../providers/tiktok_auth_provider.dart';
 import '../providers/x_auth_provider.dart';
 import '../widgets/download_progress_status.dart';
 import '../widgets/batch_import_sheet.dart';
@@ -47,6 +48,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     Future.microtask(() {
       if (mounted) {
         ref.read(xAuthProvider.notifier).restoreSession();
+        ref.read(tikTokAuthProvider.notifier).restoreSession();
         final initialShareEvent = ref.read(shareReceiverProvider);
         if (initialShareEvent != null) {
           _handleSharedMediaIntent(initialShareEvent);

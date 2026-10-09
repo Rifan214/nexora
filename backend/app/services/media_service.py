@@ -37,7 +37,9 @@ from app.services.queue_manager import QueueManager, get_queue_manager
 from app.services.resume_state_manager import ResumeStateManager, get_resume_state_manager
 from app.services.quality_selector import QualitySelector
 from app.models.resume_state import ResumeState
+from app.models.tiktok_auth import TikTokAuthSource
 from app.models.x_auth import XAuthSource
+from app.services.tiktok_auth_manager import TikTokAuthManager
 from app.services.x_auth_manager import XAuthManager
 from app.platforms.hanime import (
     HanimeExtractionError,
@@ -91,6 +93,13 @@ _X_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
 _X_MEDIA_NOT_AVAILABLE_MESSAGE = (
     "Unable to access downloadable media from this X post. "
     "The post may be restricted, require login, or temporarily unavailable."
+)
+_TIKTOK_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
+    {
+        "TIKTOK_LOGIN_REQUIRED",
+        "TIKTOK_EXTRACTION_UNAVAILABLE",
+        "VIDEO_PRIVATE",
+    }
 )
 _INSTAGRAM_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
     {
@@ -227,7 +236,9 @@ _AUTHENTICATED_SNAPSHOT_SENSITIVE_KEYS = frozenset(
         "sb",
         "session_tracker",
         "sessionid",
+        "sessionid_ss",
         "set-cookie",
+        "sid_tt",
         "token_v2",
         "wd",
         "x-csrf-token",
@@ -258,12 +269,16 @@ class MediaService:
         sleep: Callable[[float], None] | None = None,
         retry_jitter: Callable[[float, float], float] | None = None,
         x_auth_manager: XAuthManager | None = None,
+        tiktok_auth_manager: TikTokAuthManager | None = None,
         hanime_extractor: HanimeExtractor | None = None,
         hanime_signature_provider: HanimeSignatureProvider | None = None,
     ) -> None:
         self._settings = get_settings()
         self._x_auth_manager = x_auth_manager or XAuthManager(
             service_account_cookie_file=lambda: self._settings.x_auth_cookie_file
+        )
+        self._tiktok_auth_manager = tiktok_auth_manager or TikTokAuthManager(
+            service_account_cookie_file=lambda: self._settings.tiktok_auth_cookie_file
         )
         self._hanime_signature_provider = hanime_signature_provider or get_hanime_signature_provider()
         self._hanime_extractor = hanime_extractor
@@ -281,6 +296,10 @@ class MediaService:
     @property
     def x_auth_manager(self) -> XAuthManager:
         return self._x_auth_manager
+
+    @property
+    def tiktok_auth_manager(self) -> TikTokAuthManager:
+        return self._tiktok_auth_manager
 
     def get_metadata(
         self,
@@ -531,6 +550,12 @@ class MediaService:
                     session_id=auth_session_id,
                 )
                 session_lease_acquired = True
+            elif auth_cookie_file is not None and initial_platform == "tiktok":
+                self._tiktok_auth_manager.acquire_session_lease(
+                    source=auth_source,
+                    session_id=auth_session_id,
+                )
+                session_lease_acquired = True
             if download_info is not None:
                 extracted_info = download_info
             else:
@@ -695,10 +720,16 @@ class MediaService:
                 except OSError:
                     pass
             if session_lease_acquired:
-                self._x_auth_manager.release_session_lease(
-                    source=auth_source,
-                    session_id=auth_session_id,
-                )
+                if initial_platform == "twitter":
+                    self._x_auth_manager.release_session_lease(
+                        source=auth_source,
+                        session_id=auth_session_id,
+                    )
+                elif initial_platform == "tiktok":
+                    self._tiktok_auth_manager.release_session_lease(
+                        source=auth_source,
+                        session_id=auth_session_id,
+                    )
             self._process_manager.finish_job(job_id)
 
     def _mark_download_failed(
@@ -712,7 +743,7 @@ class MediaService:
         try:
             job_manager.mark_failed(job_id, error_message=error_message)
             marked_failed = True
-        except ValueError:
+        except (ValueError, KeyError):
             if self._finalize_cancelled_if_requested(job_id, job_manager=job_manager):
                 return
             raise
@@ -925,6 +956,17 @@ class MediaService:
                 elif self._auth_cookie_file(platform) is None:
                     self._snapshot_cache.delete(normalized_url)
                     return None
+            elif platform == "tiktok":
+                if snapshot.auth_source == "user_session":
+                    if not self._tiktok_auth_manager.is_authenticated_available(
+                        source=TikTokAuthSource.USER_SESSION,
+                        session_id=snapshot.session_id,
+                    ):
+                        self._snapshot_cache.delete(normalized_url, session_id=snapshot.session_id)
+                        return None
+                elif self._auth_cookie_file(platform) is None:
+                    self._snapshot_cache.delete(normalized_url)
+                    return None
             elif self._auth_cookie_file(platform) is None:
                 self._snapshot_cache.delete(normalized_url)
                 return None
@@ -956,11 +998,19 @@ class MediaService:
             snapshot_session_id = None
         except APIError as guest_error:
             if auth_source == "user_session" and auth_session_id:
-                authenticated_result = self._try_authenticated_x_extraction(
-                    normalized_url,
-                    guest_error=guest_error,
-                    source=auth_source,
-                    session_id=auth_session_id,
+                authenticated_result = (
+                    self._try_authenticated_x_extraction(
+                        normalized_url,
+                        guest_error=guest_error,
+                        source=auth_source,
+                        session_id=auth_session_id,
+                    )
+                    or self._try_authenticated_tiktok_extraction(
+                        normalized_url,
+                        guest_error=guest_error,
+                        source=auth_source,
+                        session_id=auth_session_id,
+                    )
                 )
                 if authenticated_result is None:
                     raise
@@ -972,6 +1022,10 @@ class MediaService:
             else:
                 authenticated_result = (
                     self._try_authenticated_x_extraction(
+                        normalized_url,
+                        guest_error=guest_error,
+                    )
+                    or self._try_authenticated_tiktok_extraction(
                         normalized_url,
                         guest_error=guest_error,
                     )
@@ -1284,6 +1338,66 @@ class MediaService:
     ) -> Path:
         return self._x_auth_manager.require_authenticated_cookie_file(source=source, session_id=session_id)
 
+    def _try_authenticated_tiktok_extraction(
+        self,
+        normalized_url: str,
+        *,
+        guest_error: APIError,
+        source: TikTokAuthSource | str | None = None,
+        session_id: str | None = None,
+    ) -> tuple[dict[str, Any], str] | None:
+        if (
+            detect_platform_from_url(normalized_url) != "tiktok"
+            or guest_error.code not in _TIKTOK_AUTHENTICATED_RETRY_ERROR_CODES
+        ):
+            return None
+
+        provider = self._tiktok_auth_manager.get_authenticated_provider(source=source, session_id=session_id)
+        if provider is None:
+            return None
+
+        cookie_file = self._tiktok_auth_manager.acquire_session_lease(source=source, session_id=session_id)
+        if cookie_file is None:
+            return None
+
+        logger.info(
+            "TikTok authenticated fallback enabled=true attempted=true source=%s",
+            provider.source.value,
+        )
+        try:
+            info = self._extract_info_or_raise_api_error(
+                normalized_url,
+                cookie_file=cookie_file,
+            )
+            info = self._sanitize_authenticated_snapshot_info(info)
+            platform = self._detect_platform(info)
+            self._ensure_supported_media_platform(platform)
+            self._ensure_platform_media_is_downloadable(info, platform)
+        except APIError:
+            logger.warning(
+                "TikTok authenticated fallback enabled=true attempted=true succeeded=false"
+            )
+            return None
+        finally:
+            self._tiktok_auth_manager.release_session_lease(source=source, session_id=session_id)
+
+        logger.info("TikTok authenticated fallback enabled=true attempted=true succeeded=true")
+        return info, platform
+
+    def _tiktok_auth_cookie_file(
+        self,
+        source: TikTokAuthSource | str | None = None,
+        session_id: str | None = None,
+    ) -> Path | None:
+        return self._tiktok_auth_manager.get_cookie_file(source=source, session_id=session_id)
+
+    def _require_tiktok_auth_cookie_file(
+        self,
+        source: TikTokAuthSource | str | None = None,
+        session_id: str | None = None,
+    ) -> Path:
+        return self._tiktok_auth_manager.require_authenticated_cookie_file(source=source, session_id=session_id)
+
     def _try_authenticated_instagram_extraction(
         self,
         normalized_url: str,
@@ -1486,11 +1600,13 @@ class MediaService:
         self,
         platform: str,
         *,
-        source: XAuthSource | str | None = None,
+        source: XAuthSource | TikTokAuthSource | str | None = None,
         session_id: str | None = None,
     ) -> Path | None:
         if platform == "twitter":
             return self._x_auth_cookie_file(source=source, session_id=session_id)
+        if platform == "tiktok":
+            return self._tiktok_auth_cookie_file(source=source, session_id=session_id)
         if platform == "instagram":
             return self._instagram_auth_cookie_file()
         if platform == "facebook":
@@ -1503,11 +1619,13 @@ class MediaService:
         self,
         platform: str,
         *,
-        source: XAuthSource | str | None = None,
+        source: XAuthSource | TikTokAuthSource | str | None = None,
         session_id: str | None = None,
     ) -> Path:
         if platform == "twitter":
             return self._require_x_auth_cookie_file(source=source, session_id=session_id)
+        if platform == "tiktok":
+            return self._require_tiktok_auth_cookie_file(source=source, session_id=session_id)
         if platform == "instagram":
             return self._require_instagram_auth_cookie_file()
         if platform == "facebook":

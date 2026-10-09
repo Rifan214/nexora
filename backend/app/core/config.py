@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     instagram_auth_cookie_file: str = Field(default="", alias="NEXORA_INSTAGRAM_AUTH_COOKIE_FILE")
     facebook_auth_cookie_file: str = Field(default="", alias="NEXORA_FACEBOOK_AUTH_COOKIE_FILE")
     reddit_auth_cookie_file: str = Field(default="", alias="NEXORA_REDDIT_AUTH_COOKIE_FILE")
+    tiktok_auth_cookie_file: str = Field(default="", alias="NEXORA_TIKTOK_AUTH_COOKIE_FILE")
     hanime_signature_provider_enabled: bool = Field(
         default=True,
         alias="NEXORA_HANIME_SIGNATURE_PROVIDER_ENABLED",
