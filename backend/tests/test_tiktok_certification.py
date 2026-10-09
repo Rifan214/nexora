@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from yt_dlp.utils import DownloadError
 
 import app.services.media_service as media_service_module
+from app.api.routes.media import get_media_service
 from app.core.exceptions import APIError
+from app.main import create_app
 from app.models.job import JobStatus
 from app.models.requests import MediaDownloadRequest, MediaInfoRequest
 from app.services.download_process_manager import DownloadProcessManager
@@ -269,6 +272,101 @@ def test_tiktok_rehydration_failures_return_a_friendly_platform_error(
 
     assert error.value.code == "TIKTOK_EXTRACTION_UNAVAILABLE"
     assert error.value.message == "TikTok video temporarily unavailable"
+
+
+@pytest.mark.parametrize(
+    "error_message",
+    [
+        "This post may not be comfortable for some audiences. Log in for access.",
+        "Use --cookies-from-browser or --cookies for the authentication of the web client",
+        "TikTok is requiring login for access to this content",
+        "Log in for access",
+        "account authentication is required",
+    ],
+)
+def test_tiktok_login_required_errors_return_standardized_403_and_do_not_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    error_message: str,
+) -> None:
+    service = MediaService(sleep=lambda _: pytest.fail("unexpected retry sleep called"))
+    attempts = 0
+
+    def raise_auth_error(_: str) -> dict:
+        nonlocal attempts
+        attempts += 1
+        raise DownloadError(error_message)
+
+    monkeypatch.setattr(service, "_extract_info", raise_auth_error)
+
+    with pytest.raises(APIError) as error:
+        service.get_metadata(_tiktok_url("login-required"))
+
+    assert error.value.status_code == 403
+    assert error.value.code == "TIKTOK_LOGIN_REQUIRED"
+    assert error.value.message == "TikTok login required"
+    assert error.value.details == "This TikTok video requires login to view and cannot be accessed."
+    assert "yt-dlp" not in error.value.details.lower()
+    assert "cookie" not in error.value.details.lower()
+    assert attempts == 1
+
+
+def test_tiktok_login_required_chained_exception_is_recognized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = MediaService(sleep=lambda _: pytest.fail("unexpected retry sleep called"))
+    attempts = 0
+
+    def raise_chained_auth_error(_: str) -> dict:
+        nonlocal attempts
+        attempts += 1
+        cause = Exception("This post may not be comfortable for some audiences. Log in for access.")
+        err = DownloadError("Generic extraction failure")
+        err.__cause__ = cause
+        raise err
+
+    monkeypatch.setattr(service, "_extract_info", raise_chained_auth_error)
+
+    with pytest.raises(APIError) as error:
+        service.get_metadata(_tiktok_url("chained-auth"))
+
+    assert error.value.status_code == 403
+    assert error.value.code == "TIKTOK_LOGIN_REQUIRED"
+    assert attempts == 1
+
+
+def test_tiktok_login_required_endpoint_response_returns_403_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = MediaService(sleep=lambda _: pytest.fail("unexpected retry sleep called"))
+
+    def raise_auth_error(_: str) -> dict:
+        raise DownloadError(
+            "This post may not be comfortable for some audiences. Log in for access. "
+            "Use --cookies-from-browser or --cookies for the authentication of the web client"
+        )
+
+    monkeypatch.setattr(service, "_extract_info", raise_auth_error)
+    app = create_app()
+    app.dependency_overrides[get_media_service] = lambda: service
+
+    try:
+        response = TestClient(app).post(
+            "/media/info",
+            json={"url": _tiktok_url("login-required")},
+        )
+
+        assert response.status_code == 403
+        body = response.json()
+        assert body["success"] is False
+        assert body["message"] == "TikTok login required"
+        assert body["error"]["code"] == "TIKTOK_LOGIN_REQUIRED"
+        assert body["error"]["details"] == (
+            "This TikTok video requires login to view and cannot be accessed."
+        )
+        assert "yt-dlp" not in body["error"]["details"].lower()
+        assert "cookie" not in body["error"]["details"].lower()
+    finally:
+        app.dependency_overrides.clear()
 
 
 def _tiktok_url(identifier: str) -> str:

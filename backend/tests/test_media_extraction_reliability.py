@@ -452,7 +452,9 @@ def test_tiktok_transient_retry_is_bounded_and_failed_result_is_not_cached(
     ("message", "expected_code"),
     [
         ("Private video", "VIDEO_PRIVATE"),
-        ("TikTok login required. Sign in to continue", "VIDEO_PRIVATE"),
+        ("TikTok login required. Sign in to continue", "TIKTOK_LOGIN_REQUIRED"),
+        ("This post may not be comfortable for some audiences. Log in for access", "TIKTOK_LOGIN_REQUIRED"),
+        ("Use --cookies-from-browser or --cookies for the authentication", "TIKTOK_LOGIN_REQUIRED"),
         ("This video has been removed", "VIDEO_UNAVAILABLE"),
         ("Video unavailable", "VIDEO_UNAVAILABLE"),
     ],

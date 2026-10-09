@@ -135,6 +135,28 @@ _YOUTUBE_MIX_UNAVAILABLE_MESSAGE = (
 )
 _TIKTOK_RETRY_DELAYS_SECONDS = (0.25, 0.5, 1.0)
 _TIKTOK_MAX_EXTRACTION_ATTEMPTS = len(_TIKTOK_RETRY_DELAYS_SECONDS) + 1
+_TIKTOK_LOGIN_REQUIRED_MESSAGE = (
+    "This TikTok video requires login to view and cannot be accessed."
+)
+_TIKTOK_AUTH_REQUIRED_MARKERS = (
+    "log in for access",
+    "login for access",
+    "requiring login",
+    "login required",
+    "log into an account",
+    "log in to view",
+    "login to view",
+    "log in to access",
+    "login to access",
+    "sign in",
+    "comfortable for some audiences",
+    "use --cookies",
+    "--cookies-from-browser",
+    "pass cookies",
+    "cookies for the authentication",
+    "only available for registered users",
+    "account authentication is required",
+)
 _TIKTOK_TRANSIENT_EXTRACTION_MARKERS = (
     "unable to extract universal data for rehydration",
     "unexpected response from webpage request",
@@ -145,14 +167,12 @@ _TIKTOK_TRANSIENT_EXTRACTION_MARKERS = (
 )
 _TIKTOK_PERMANENT_EXTRACTION_MARKERS = (
     "private",
-    "login required",
-    "requiring login",
-    "sign in",
     "removed",
     "not available",
     "not found",
     "permission to view",
     "ip address is blocked",
+    *_TIKTOK_AUTH_REQUIRED_MARKERS,
 )
 _DOWNLOAD_TRANSPORT_FIELDS = frozenset(
     {
@@ -2384,6 +2404,14 @@ class MediaService:
                 status_code=422,
             )
 
+        if is_tiktok and MediaService._is_tiktok_auth_required_error(exc):
+            return APIError(
+                code="TIKTOK_LOGIN_REQUIRED",
+                message="TikTok login required",
+                details=_TIKTOK_LOGIN_REQUIRED_MESSAGE,
+                status_code=403,
+            )
+
         if is_tiktok and MediaService._is_transient_tiktok_extraction_error(exc):
             return APIError(
                 code="TIKTOK_EXTRACTION_UNAVAILABLE",
@@ -2490,7 +2518,23 @@ class MediaService:
         )
 
     @staticmethod
+    def _is_tiktok_auth_required_error(exc: Exception) -> bool:
+        messages: list[str] = []
+        current: BaseException | None = exc
+        seen: set[int] = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            messages.append(str(current).casefold())
+            current = current.__cause__ or current.__context__
+
+        combined = " ".join(messages)
+        return any(marker in combined for marker in _TIKTOK_AUTH_REQUIRED_MARKERS)
+
+    @staticmethod
     def _is_transient_tiktok_extraction_error(exc: Exception) -> bool:
+        if MediaService._is_tiktok_auth_required_error(exc):
+            return False
+
         messages: list[str] = []
         current: BaseException | None = exc
         seen: set[int] = set()
