@@ -12,6 +12,7 @@ import '../models/tracked_download.dart';
 import 'download_preferences_page.dart';
 import '../providers/active_downloads_provider.dart';
 import '../providers/media_provider.dart';
+import '../providers/instagram_auth_provider.dart';
 import '../providers/share_receiver_provider.dart';
 import '../providers/tiktok_auth_provider.dart';
 import '../providers/x_auth_provider.dart';
@@ -49,6 +50,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       if (mounted) {
         ref.read(xAuthProvider.notifier).restoreSession();
         ref.read(tikTokAuthProvider.notifier).restoreSession();
+        ref.read(instagramAuthProvider.notifier).restoreSession();
         final initialShareEvent = ref.read(shareReceiverProvider);
         if (initialShareEvent != null) {
           _handleSharedMediaIntent(initialShareEvent);

@@ -7,6 +7,7 @@ from app.api.routes.media import router as media_router
 from app.api.routes.websockets import router as websockets_router
 from app.api.routes.x_auth import router as x_auth_router
 from app.api.routes.tiktok_auth import router as tiktok_auth_router
+from app.api.routes.instagram_auth import router as instagram_auth_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
@@ -16,3 +17,4 @@ api_router.include_router(files_router)
 api_router.include_router(websockets_router)
 api_router.include_router(x_auth_router)
 api_router.include_router(tiktok_auth_router)
+api_router.include_router(instagram_auth_router)

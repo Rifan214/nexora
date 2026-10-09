@@ -37,8 +37,10 @@ from app.services.queue_manager import QueueManager, get_queue_manager
 from app.services.resume_state_manager import ResumeStateManager, get_resume_state_manager
 from app.services.quality_selector import QualitySelector
 from app.models.resume_state import ResumeState
+from app.models.instagram_auth import InstagramAuthSource
 from app.models.tiktok_auth import TikTokAuthSource
 from app.models.x_auth import XAuthSource
+from app.services.instagram_auth_manager import InstagramAuthManager
 from app.services.tiktok_auth_manager import TikTokAuthManager
 from app.services.x_auth_manager import XAuthManager
 from app.platforms.hanime import (
@@ -270,6 +272,7 @@ class MediaService:
         retry_jitter: Callable[[float, float], float] | None = None,
         x_auth_manager: XAuthManager | None = None,
         tiktok_auth_manager: TikTokAuthManager | None = None,
+        instagram_auth_manager: InstagramAuthManager | None = None,
         hanime_extractor: HanimeExtractor | None = None,
         hanime_signature_provider: HanimeSignatureProvider | None = None,
     ) -> None:
@@ -279,6 +282,9 @@ class MediaService:
         )
         self._tiktok_auth_manager = tiktok_auth_manager or TikTokAuthManager(
             service_account_cookie_file=lambda: self._settings.tiktok_auth_cookie_file
+        )
+        self._instagram_auth_manager = instagram_auth_manager or InstagramAuthManager(
+            service_account_cookie_file=lambda: self._settings.instagram_auth_cookie_file
         )
         self._hanime_signature_provider = hanime_signature_provider or get_hanime_signature_provider()
         self._hanime_extractor = hanime_extractor
@@ -300,6 +306,10 @@ class MediaService:
     @property
     def tiktok_auth_manager(self) -> TikTokAuthManager:
         return self._tiktok_auth_manager
+
+    @property
+    def instagram_auth_manager(self) -> InstagramAuthManager:
+        return self._instagram_auth_manager
 
     def get_metadata(
         self,
@@ -556,6 +566,12 @@ class MediaService:
                     session_id=auth_session_id,
                 )
                 session_lease_acquired = True
+            elif auth_cookie_file is not None and initial_platform == "instagram":
+                self._instagram_auth_manager.acquire_session_lease(
+                    source=auth_source,
+                    session_id=auth_session_id,
+                )
+                session_lease_acquired = True
             if download_info is not None:
                 extracted_info = download_info
             else:
@@ -727,6 +743,11 @@ class MediaService:
                     )
                 elif initial_platform == "tiktok":
                     self._tiktok_auth_manager.release_session_lease(
+                        source=auth_source,
+                        session_id=auth_session_id,
+                    )
+                elif initial_platform == "instagram":
+                    self._instagram_auth_manager.release_session_lease(
                         source=auth_source,
                         session_id=auth_session_id,
                     )
@@ -967,6 +988,17 @@ class MediaService:
                 elif self._auth_cookie_file(platform) is None:
                     self._snapshot_cache.delete(normalized_url)
                     return None
+            elif platform == "instagram":
+                if snapshot.auth_source == "user_session":
+                    if not self._instagram_auth_manager.is_authenticated_available(
+                        source=InstagramAuthSource.USER_SESSION,
+                        session_id=snapshot.session_id,
+                    ):
+                        self._snapshot_cache.delete(normalized_url, session_id=snapshot.session_id)
+                        return None
+                elif self._auth_cookie_file(platform) is None:
+                    self._snapshot_cache.delete(normalized_url)
+                    return None
             elif self._auth_cookie_file(platform) is None:
                 self._snapshot_cache.delete(normalized_url)
                 return None
@@ -1006,6 +1038,12 @@ class MediaService:
                         session_id=auth_session_id,
                     )
                     or self._try_authenticated_tiktok_extraction(
+                        normalized_url,
+                        guest_error=guest_error,
+                        source=auth_source,
+                        session_id=auth_session_id,
+                    )
+                    or self._try_authenticated_instagram_extraction(
                         normalized_url,
                         guest_error=guest_error,
                         source=auth_source,
@@ -1403,6 +1441,8 @@ class MediaService:
         normalized_url: str,
         *,
         guest_error: APIError,
+        source: InstagramAuthSource | str | None = None,
+        session_id: str | None = None,
     ) -> tuple[dict[str, Any], str] | None:
         if (
             detect_platform_from_url(normalized_url) != "instagram"
@@ -1410,11 +1450,18 @@ class MediaService:
         ):
             return None
 
-        cookie_file = self._instagram_auth_cookie_file()
+        provider = self._instagram_auth_manager.get_authenticated_provider(source=source, session_id=session_id)
+        if provider is None:
+            return None
+
+        cookie_file = self._instagram_auth_manager.acquire_session_lease(source=source, session_id=session_id)
         if cookie_file is None:
             return None
 
-        logger.info("Instagram authenticated fallback enabled=true attempted=true")
+        logger.info(
+            "Instagram authenticated fallback enabled=true attempted=true source=%s",
+            provider.source.value,
+        )
         try:
             info = self._extract_info_or_raise_api_error(
                 normalized_url,
@@ -1429,40 +1476,25 @@ class MediaService:
                 "Instagram authenticated fallback enabled=true attempted=true succeeded=false"
             )
             return None
+        finally:
+            self._instagram_auth_manager.release_session_lease(source=source, session_id=session_id)
 
         logger.info("Instagram authenticated fallback enabled=true attempted=true succeeded=true")
         return info, platform
 
-    def _instagram_auth_cookie_file(self) -> Path | None:
-        configured_path = self._settings.instagram_auth_cookie_file.strip()
-        if not configured_path:
-            return None
+    def _instagram_auth_cookie_file(
+        self,
+        source: InstagramAuthSource | str | None = None,
+        session_id: str | None = None,
+    ) -> Path | None:
+        return self._instagram_auth_manager.get_cookie_file(source=source, session_id=session_id)
 
-        cookie_file = Path(configured_path).expanduser()
-        try:
-            if not cookie_file.is_file():
-                raise FileNotFoundError
-            cookie_jar = MozillaCookieJar(str(cookie_file))
-            cookie_jar.load(ignore_discard=True, ignore_expires=True)
-            cookie_names = {cookie.name for cookie in cookie_jar}
-            if "sessionid" in cookie_names or "csrftoken" in cookie_names or "ds_user_id" in cookie_names:
-                return cookie_file
-        except (LoadError, OSError):
-            logger.warning(
-                "Instagram authenticated fallback enabled=true attempted=false reason=cookie_file_unavailable"
-            )
-            return None
-
-        logger.warning(
-            "Instagram authenticated fallback enabled=true attempted=false reason=cookie_file_invalid"
-        )
-        return None
-
-    def _require_instagram_auth_cookie_file(self) -> Path:
-        cookie_file = self._instagram_auth_cookie_file()
-        if cookie_file is None:
-            raise DownloadError("Authenticated Instagram session unavailable")
-        return cookie_file
+    def _require_instagram_auth_cookie_file(
+        self,
+        source: InstagramAuthSource | str | None = None,
+        session_id: str | None = None,
+    ) -> Path:
+        return self._instagram_auth_manager.require_authenticated_cookie_file(source=source, session_id=session_id)
 
     def _try_authenticated_facebook_extraction(
         self,
@@ -1600,7 +1632,7 @@ class MediaService:
         self,
         platform: str,
         *,
-        source: XAuthSource | TikTokAuthSource | str | None = None,
+        source: XAuthSource | TikTokAuthSource | InstagramAuthSource | str | None = None,
         session_id: str | None = None,
     ) -> Path | None:
         if platform == "twitter":
@@ -1608,7 +1640,7 @@ class MediaService:
         if platform == "tiktok":
             return self._tiktok_auth_cookie_file(source=source, session_id=session_id)
         if platform == "instagram":
-            return self._instagram_auth_cookie_file()
+            return self._instagram_auth_cookie_file(source=source, session_id=session_id)
         if platform == "facebook":
             return self._facebook_auth_cookie_file()
         if platform == "reddit":
@@ -1619,7 +1651,7 @@ class MediaService:
         self,
         platform: str,
         *,
-        source: XAuthSource | TikTokAuthSource | str | None = None,
+        source: XAuthSource | TikTokAuthSource | InstagramAuthSource | str | None = None,
         session_id: str | None = None,
     ) -> Path:
         if platform == "twitter":
@@ -1627,7 +1659,7 @@ class MediaService:
         if platform == "tiktok":
             return self._require_tiktok_auth_cookie_file(source=source, session_id=session_id)
         if platform == "instagram":
-            return self._require_instagram_auth_cookie_file()
+            return self._require_instagram_auth_cookie_file(source=source, session_id=session_id)
         if platform == "facebook":
             return self._require_facebook_auth_cookie_file()
         if platform == "reddit":

@@ -16,6 +16,12 @@ abstract final class ApiPaths {
     return '/auth/tiktok/session/${Uri.encodeComponent(sessionId)}';
   }
 
+  static const instagramAuthSession = '/auth/instagram/session';
+
+  static String instagramAuthSessionDetail(String sessionId) {
+    return '/auth/instagram/session/${Uri.encodeComponent(sessionId)}';
+  }
+
   static String cancelJob(String jobId) {
     return '/jobs/${Uri.encodeComponent(jobId)}/cancel';
   }

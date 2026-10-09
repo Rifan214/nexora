@@ -32,6 +32,8 @@ _SENSITIVE_LOC_PARTS = {
     "ct0",
     "sessionid",
     "sid_tt",
+    "ds_user_id",
+    "csrftoken",
     "password",
     "secret",
     "cookie",

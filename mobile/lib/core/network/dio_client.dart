@@ -55,6 +55,7 @@ class SanitizedLogInterceptor extends Interceptor {
   static const _sensitiveHeaderKeys = {
     'x-session-id',
     'tiktok-session-id',
+    'instagram-session-id',
     'authorization',
     'cookie',
     'set-cookie',
@@ -63,6 +64,7 @@ class SanitizedLogInterceptor extends Interceptor {
   static const _sensitivePaths = {
     '/auth/x/session',
     '/auth/tiktok/session',
+    '/auth/instagram/session',
   };
 
   static bool isSensitivePath(String path) {

@@ -16,6 +16,7 @@ import '../repositories/media_repository.dart';
 import 'active_downloads_provider.dart';
 import 'download_preferences_provider.dart';
 import 'history_provider.dart';
+import 'instagram_auth_provider.dart';
 import 'tiktok_auth_provider.dart';
 import 'x_auth_provider.dart';
 
@@ -86,6 +87,10 @@ class MediaController extends Notifier<MediaState> {
         } else if (_isTikTokUrl(trimmedUrl)) {
           await ref
               .read(tikTokAuthProvider.notifier)
+              .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
+        } else if (_isInstagramUrl(trimmedUrl)) {
+          await ref
+              .read(instagramAuthProvider.notifier)
               .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
         }
       }
@@ -294,6 +299,10 @@ class MediaController extends Notifier<MediaState> {
         } else if (_isTikTokUrl(current.metadata.webpageUrl)) {
           await ref
               .read(tikTokAuthProvider.notifier)
+              .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
+        } else if (_isInstagramUrl(current.metadata.webpageUrl)) {
+          await ref
+              .read(instagramAuthProvider.notifier)
               .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
         }
       }
@@ -703,6 +712,11 @@ class MediaController extends Notifier<MediaState> {
       if (tikTokSessionId != null && tikTokSessionId.isNotEmpty) {
         return {'TikTok-Session-ID': tikTokSessionId};
       }
+    } else if (_isInstagramUrl(url)) {
+      final instagramSessionId = ref.read(activeInstagramSessionIdProvider);
+      if (instagramSessionId != null && instagramSessionId.isNotEmpty) {
+        return {'Instagram-Session-ID': instagramSessionId};
+      }
     }
     return null;
   }
@@ -723,12 +737,20 @@ class MediaController extends Notifier<MediaState> {
         host.endsWith('.tiktok.com');
   }
 
+  static bool _isInstagramUrl(String url) {
+    final uri = Uri.tryParse(url.trim());
+    final host = uri?.host.toLowerCase() ?? '';
+    return host == 'instagram.com' ||
+        host.endsWith('.instagram.com');
+  }
+
   static bool _isSessionInvalidationMessage(String message) {
     final msg = message.toLowerCase();
     return msg.contains('session not found') ||
         msg.contains('session has expired') ||
         msg.contains('session is invalid') ||
         msg.contains('x authentication session') ||
-        msg.contains('tiktok authentication session');
+        msg.contains('tiktok authentication session') ||
+        msg.contains('instagram authentication session');
   }
 }
