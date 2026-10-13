@@ -14,6 +14,7 @@ class TrackedDownload {
     this.fileDownloadLoading = false,
     this.fileDownloadProgress = 0,
     this.fileDownloadError,
+    this.temporaryFilePath,
     this.downloadedFilename,
     this.savedFilePath,
     this.savedDirectory,
@@ -34,6 +35,7 @@ class TrackedDownload {
   final bool fileDownloadLoading;
   final int fileDownloadProgress;
   final String? fileDownloadError;
+  final String? temporaryFilePath;
   final String? downloadedFilename;
   final String? savedFilePath;
   final String? savedDirectory;
@@ -70,6 +72,7 @@ class TrackedDownload {
     bool? fileDownloadLoading,
     int? fileDownloadProgress,
     Object? fileDownloadError = _unset,
+    Object? temporaryFilePath = _unset,
     Object? downloadedFilename = _unset,
     Object? savedFilePath = _unset,
     Object? savedDirectory = _unset,
@@ -92,6 +95,9 @@ class TrackedDownload {
       fileDownloadError: identical(fileDownloadError, _unset)
           ? this.fileDownloadError
           : fileDownloadError as String?,
+      temporaryFilePath: identical(temporaryFilePath, _unset)
+          ? this.temporaryFilePath
+          : temporaryFilePath as String?,
       downloadedFilename: identical(downloadedFilename, _unset)
           ? this.downloadedFilename
           : downloadedFilename as String?,

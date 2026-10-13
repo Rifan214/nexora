@@ -189,10 +189,9 @@ class MediaRepository {
     return _listenToJob(trimmedJobId);
   }
 
-  Future<CompletedFileDownload> downloadCompletedFile({
+  Future<String> downloadArtifactToTemporaryFile({
     required String downloadUrl,
     required String suggestedFilename,
-    required MediaDownloadType mediaType,
     ProgressCallback? onReceiveProgress,
     CancelToken? cancelToken,
   }) async {
@@ -202,20 +201,12 @@ class MediaRepository {
     }
 
     final temporaryDirectory = await _prepareTemporaryDownloadDirectory();
-    final fallbackFilename = _deviceFileService.sanitizeFilename(
-      suggestedFilename,
-    );
     String? temporaryPath;
-    String? resolvedFilename;
 
     try {
       await _apiService.downloadFile(
         trimmedDownloadUrl,
         savePath: (Headers headers) {
-          resolvedFilename = _deviceFileService.filenameFromContentDisposition(
-                headers.value('content-disposition'),
-              ) ??
-              fallbackFilename;
           temporaryPath = _deviceFileService.uniqueFilePath(
             directory: temporaryDirectory,
             filename: 'nexora-${DateTime.now().microsecondsSinceEpoch}.part',
@@ -226,30 +217,88 @@ class MediaRepository {
         cancelToken: cancelToken,
       );
       final completedTemporaryPath = temporaryPath;
-      if (completedTemporaryPath == null || completedTemporaryPath.isEmpty) {
+      if (completedTemporaryPath == null ||
+          completedTemporaryPath.isEmpty ||
+          !await _deviceFileService.fileExists(completedTemporaryPath)) {
         throw const ApiException('Unable to save the downloaded file.');
       }
-      return _deviceFileService.publishDownloadedFile(
-        temporaryFilePath: completedTemporaryPath,
-        filename: resolvedFilename ?? fallbackFilename,
-        mediaType: mediaType,
-      );
+      return completedTemporaryPath;
     } on ApiException {
       rethrow;
     } on FileSystemException {
       throw const ApiException('Unable to write the downloaded file.');
     } catch (_) {
-      throw const ApiException('Unable to save the downloaded file.');
-    } finally {
-      final path = temporaryPath;
-      if (path != null && path.isNotEmpty) {
-        await _deviceFileService.deleteFileIfPresent(path);
-      }
+      throw const ApiException('Unable to download the file.');
     }
+  }
+
+  Future<CompletedFileDownload> saveDownloadedFileToDevice({
+    required String temporaryFilePath,
+    required String filename,
+    required MediaDownloadType mediaType,
+  }) async {
+    final trimmedTempPath = temporaryFilePath.trim();
+    if (trimmedTempPath.isEmpty ||
+        !await _deviceFileService.fileExists(trimmedTempPath)) {
+      throw const ApiException('Temporary download file is missing.');
+    }
+
+    final sanitizedFilename = _deviceFileService.sanitizeFilename(filename);
+    try {
+      final savedFile = await _deviceFileService.publishDownloadedFile(
+        temporaryFilePath: trimmedTempPath,
+        filename: sanitizedFilename,
+        mediaType: mediaType,
+      );
+      // Clean up temporary file ONLY after successful save to device storage.
+      await _deviceFileService.deleteFileIfPresent(trimmedTempPath);
+      return savedFile;
+    } on ApiException {
+      rethrow;
+    } on FileSystemException {
+      throw const ApiException('Unable to save the downloaded file to device storage.');
+    } catch (_) {
+      throw const ApiException('Unable to save the downloaded file to device storage.');
+    }
+  }
+
+  Future<CompletedFileDownload> downloadCompletedFile({
+    required String downloadUrl,
+    required String suggestedFilename,
+    required MediaDownloadType mediaType,
+    String? existingTemporaryPath,
+    ProgressCallback? onReceiveProgress,
+    CancelToken? cancelToken,
+  }) async {
+    final trimmedExisting = existingTemporaryPath?.trim();
+    String targetTempPath;
+
+    if (trimmedExisting != null &&
+        trimmedExisting.isNotEmpty &&
+        await downloadedFileExists(trimmedExisting)) {
+      targetTempPath = trimmedExisting;
+    } else {
+      targetTempPath = await downloadArtifactToTemporaryFile(
+        downloadUrl: downloadUrl,
+        suggestedFilename: suggestedFilename,
+        onReceiveProgress: onReceiveProgress,
+        cancelToken: cancelToken,
+      );
+    }
+
+    return saveDownloadedFileToDevice(
+      temporaryFilePath: targetTempPath,
+      filename: suggestedFilename,
+      mediaType: mediaType,
+    );
   }
 
   Future<bool> downloadedFileExists(String fileReference) {
     return _deviceFileService.fileExists(fileReference);
+  }
+
+  Future<void> deleteDownloadedFileIfPresent(String fileReference) {
+    return _deviceFileService.deleteFileIfPresent(fileReference);
   }
 
   Future<void> openDownloadedFile(String filePath) {

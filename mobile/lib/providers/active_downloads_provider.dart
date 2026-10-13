@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_exception.dart';
+import '../core/network/platform_auth_headers.dart';
 import '../models/completed_file_download.dart';
 import '../models/download_history_item.dart';
 import '../models/job_update.dart';
@@ -26,6 +27,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
 
   @override
   List<TrackedDownload> build() {
+    final mediaRepository = ref.read(mediaRepositoryProvider);
     ref.onDispose(() {
       for (final subscription in _jobSubscriptions.values) {
         unawaited(subscription.cancel());
@@ -36,6 +38,15 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
         cancelToken.cancel('File download cancelled.');
       }
       _fileDownloadCancelTokens.clear();
+
+      for (final download in state) {
+        final tempPath = download.temporaryFilePath;
+        if (tempPath != null && tempPath.isNotEmpty) {
+          unawaited(
+            mediaRepository.deleteDownloadedFileIfPresent(tempPath),
+          );
+        }
+      }
     });
 
     return const <TrackedDownload>[];
@@ -69,10 +80,33 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
   Future<void> cancelDownload(String jobId) async {
     final download = _find(jobId);
     if (download == null ||
-        download.fileDownloadLoading ||
         download.fileOpenLoading ||
-        download.status == 'cancelling' ||
-        !_isCancellable(download.status)) {
+        download.status == 'cancelling') {
+      return;
+    }
+
+    if (download.fileDownloadLoading ||
+        download.fileDownloadError?.trim().isNotEmpty == true) {
+      final cancelToken = _fileDownloadCancelTokens[jobId];
+      cancelToken?.cancel('File download cancelled.');
+      final tempPath = download.temporaryFilePath;
+      if (tempPath != null && tempPath.isNotEmpty) {
+        await ref
+            .read(mediaRepositoryProvider)
+            .deleteDownloadedFileIfPresent(tempPath);
+      }
+      _replace(
+        download.copyWith(
+          fileDownloadLoading: false,
+          temporaryFilePath: null,
+          fileDownloadError: 'Download cancelled.',
+          isRetrying: false,
+        ),
+      );
+      return;
+    }
+
+    if (!_isCancellable(download.status)) {
       return;
     }
 
@@ -129,6 +163,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
     final failedDownload = _find(jobId);
     if (failedDownload == null ||
         failedDownload.isRetrying ||
+        failedDownload.fileDownloadLoading ||
         !_isRetryable(failedDownload)) {
       return 'This download can no longer be retried.';
     }
@@ -140,13 +175,77 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
       return 'This download can no longer be retried.';
     }
 
+    // 1. Check if this is a failure specifically in the local Saving to Device stage:
+    final isSavingStageFailure = failedDownload.status == 'completed' &&
+        failedDownload.fileDownloadError?.trim().isNotEmpty == true;
+
+    if (isSavingStageFailure) {
+      _replace(failedDownload.copyWith(isRetrying: true, fileDownloadError: null));
+
+      final existingTemp = failedDownload.temporaryFilePath;
+      final localArtifactExists = existingTemp != null &&
+          existingTemp.isNotEmpty &&
+          await ref.read(mediaRepositoryProvider).downloadedFileExists(existingTemp);
+
+      if (localArtifactExists) {
+        // Retry local save directly without requesting or downloading from backend again!
+        try {
+          await _downloadCompletedFile(failedDownload.jobId);
+          final updated = _find(failedDownload.jobId);
+          if (updated != null && updated.fileDownloadError?.trim().isNotEmpty == true) {
+            return updated.fileDownloadError;
+          }
+          return null;
+        } on ApiException catch (error) {
+          _restoreFailedDownload(failedDownload.jobId);
+          return error.message;
+        } catch (_) {
+          _restoreFailedDownload(failedDownload.jobId);
+          return 'Unable to save the downloaded file.';
+        }
+      }
+
+      // Local temporary artifact does not exist on disk.
+      // Attempt to re-fetch from downloadUrl (backend copy).
+      try {
+        await _downloadCompletedFile(failedDownload.jobId);
+        final updated = _find(failedDownload.jobId);
+        if (updated != null && updated.fileDownloadError?.trim().isNotEmpty == true) {
+          final err = updated.fileDownloadError!;
+          if (_isBackendMissingError(err)) {
+            return _executeControlledRedownloadRecovery(
+              failedDownload,
+              reason: 'The temporary download file was missing and had to be re-downloaded.',
+            );
+          }
+          return err;
+        }
+        return null;
+      } on ApiException catch (error) {
+        if (_isBackendMissingError(error.message)) {
+          return _executeControlledRedownloadRecovery(
+            failedDownload,
+            reason: 'The temporary download file was missing and had to be re-downloaded.',
+          );
+        }
+        _restoreFailedDownload(failedDownload.jobId);
+        return error.message;
+      } catch (_) {
+        _restoreFailedDownload(failedDownload.jobId);
+        return 'Unable to save the downloaded file.';
+      }
+    }
+
+    // 2. Normal backend download failure retry (status is failed or connection_lost):
     _replace(failedDownload.copyWith(isRetrying: true));
 
     try {
+      final authHeaders = buildAuthHeadersForUrl(ref, mediaUrl);
       final job = await ref.read(mediaRepositoryProvider).createDownloadJob(
             mediaUrl: mediaUrl,
             mediaType: failedDownload.mediaType,
             videoQuality: failedDownload.selectedVideoQuality,
+            headers: authHeaders,
           );
 
       state = [
@@ -165,6 +264,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
       _listenToJob(job.jobId);
       return null;
     } on ApiException catch (error) {
+      await handleSessionInvalidationForUrl(ref, mediaUrl, message: error.message);
       _restoreFailedDownload(failedDownload.jobId);
       final message = error.message.trim();
       return message.isEmpty ? 'Unable to retry the download.' : message;
@@ -172,6 +272,54 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
       _restoreFailedDownload(failedDownload.jobId);
       return 'Unable to retry the download.';
     }
+  }
+
+  Future<String?> _executeControlledRedownloadRecovery(
+    TrackedDownload failedDownload, {
+    required String reason,
+  }) async {
+    final mediaUrl = failedDownload.metadata.webpageUrl.trim();
+    try {
+      final authHeaders = buildAuthHeadersForUrl(ref, mediaUrl);
+      final job = await ref.read(mediaRepositoryProvider).createDownloadJob(
+            mediaUrl: mediaUrl,
+            mediaType: failedDownload.mediaType,
+            videoQuality: failedDownload.selectedVideoQuality,
+            headers: authHeaders,
+          );
+
+      state = [
+        for (final download in state)
+          if (download.jobId.toLowerCase() != failedDownload.jobId.toLowerCase())
+            download,
+        TrackedDownload(
+          jobId: job.jobId,
+          metadata: failedDownload.metadata,
+          mediaType: failedDownload.mediaType,
+          selectedVideoQuality: failedDownload.selectedVideoQuality,
+          status: 'pending',
+          progress: 0,
+          error: reason,
+        ),
+      ];
+      _listenToJob(job.jobId);
+      return null;
+    } on ApiException catch (error) {
+      await handleSessionInvalidationForUrl(ref, mediaUrl, message: error.message);
+      _restoreFailedDownload(failedDownload.jobId);
+      return error.message;
+    } catch (_) {
+      _restoreFailedDownload(failedDownload.jobId);
+      return 'Unable to restart download.';
+    }
+  }
+
+  static bool _isBackendMissingError(String message) {
+    final msg = message.toLowerCase();
+    return msg.contains('not found') ||
+        msg.contains('expired') ||
+        msg.contains('no longer available') ||
+        msg.contains('missing');
   }
 
   void clearCompletedDownloads() {
@@ -183,6 +331,20 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
   }
 
   void clearFailedDownloads() {
+    for (final download in state) {
+      if (download.status == 'failed' ||
+          download.status == 'connection_lost' ||
+          download.fileDownloadError?.trim().isNotEmpty == true) {
+        final tempPath = download.temporaryFilePath;
+        if (tempPath != null && tempPath.isNotEmpty) {
+          unawaited(
+            ref
+                .read(mediaRepositoryProvider)
+                .deleteDownloadedFileIfPresent(tempPath),
+          );
+        }
+      }
+    }
     state = state.where((download) {
       return !(download.status == 'failed' ||
           download.status == 'connection_lost' ||
@@ -259,7 +421,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
     _replace(
       download.copyWith(
         fileDownloadLoading: true,
-        fileDownloadProgress: 0,
+        fileDownloadProgress: download.temporaryFilePath != null ? 100 : 0,
         fileDownloadError: null,
         downloadedFilename: null,
         savedFilePath: null,
@@ -268,16 +430,36 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
       ),
     );
 
+    String? tempArtifactPath = download.temporaryFilePath;
     try {
-      final savedFile = await ref.read(mediaRepositoryProvider).downloadCompletedFile(
-            downloadUrl: downloadUrl,
-            suggestedFilename: _suggestedFilename(download),
+      // 1. If we don't already have an intact local temporary file, download it:
+      if (tempArtifactPath == null ||
+          !await ref.read(mediaRepositoryProvider).downloadedFileExists(tempArtifactPath)) {
+        tempArtifactPath = await ref.read(mediaRepositoryProvider).downloadArtifactToTemporaryFile(
+              downloadUrl: downloadUrl,
+              suggestedFilename: _suggestedFilename(download),
+              cancelToken: cancelToken,
+              onReceiveProgress: (received, total) {
+                _handleFileDownloadProgress(jobId, cancelToken, received, total);
+              },
+            );
+        final current = _find(jobId);
+        if (current != null) {
+          _replace(current.copyWith(temporaryFilePath: tempArtifactPath));
+        }
+      }
+
+      if (!identical(_fileDownloadCancelTokens[jobId], cancelToken)) {
+        return;
+      }
+
+      // 2. Publish/save to device storage:
+      final savedFile = await ref.read(mediaRepositoryProvider).saveDownloadedFileToDevice(
+            temporaryFilePath: tempArtifactPath,
+            filename: _suggestedFilename(download),
             mediaType: download.mediaType,
-            cancelToken: cancelToken,
-            onReceiveProgress: (received, total) {
-              _handleFileDownloadProgress(jobId, cancelToken, received, total);
-            },
           );
+
       if (!identical(_fileDownloadCancelTokens[jobId], cancelToken)) {
         return;
       }
@@ -292,25 +474,34 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
           fileDownloadLoading: false,
           fileDownloadProgress: 100,
           fileDownloadError: null,
+          temporaryFilePath: null,
           downloadedFilename: savedFile.filename,
           savedFilePath: savedFile.savedPath,
           savedDirectory: savedFile.savedDirectory,
           fileOpenLoading: false,
+          isRetrying: false,
         ),
       );
       await _recordCompletedDownload(download, savedFile);
     } on ApiException catch (error) {
-      _markFileDownloadFailed(jobId, cancelToken, error.message);
+      _markFileDownloadFailed(
+        jobId,
+        cancelToken,
+        error.message,
+        temporaryFilePath: tempArtifactPath,
+      );
     } catch (_) {
       _markFileDownloadFailed(
         jobId,
         cancelToken,
         'Unable to save the downloaded file.',
+        temporaryFilePath: tempArtifactPath,
       );
     } finally {
       if (identical(_fileDownloadCancelTokens[jobId], cancelToken)) {
         _fileDownloadCancelTokens.remove(jobId);
       }
+      _startedFileDownloads.remove(jobId);
     }
   }
 
@@ -341,8 +532,9 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
   void _markFileDownloadFailed(
     String jobId,
     CancelToken cancelToken,
-    String message,
-  ) {
+    String message, {
+    String? temporaryFilePath,
+  }) {
     if (!identical(_fileDownloadCancelTokens[jobId], cancelToken)) {
       return;
     }
@@ -353,7 +545,9 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
         download.copyWith(
           fileDownloadLoading: false,
           fileDownloadError: message,
+          temporaryFilePath: temporaryFilePath ?? download.temporaryFilePath,
           fileOpenLoading: false,
+          isRetrying: false,
         ),
       );
     }

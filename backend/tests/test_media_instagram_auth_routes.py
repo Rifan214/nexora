@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,7 +13,9 @@ from app.core.config import get_settings
 from app.main import create_app
 from app.models.instagram_auth import InstagramAuthStatus
 from app.models.media import AvailableQuality, MediaMetadata
+from app.models.requests import MediaDownloadRequest
 from app.services.instagram_user_session_store import EphemeralInstagramUserSessionStore
+from app.services.media_service import MediaService
 from app.services.tiktok_user_session_store import EphemeralTikTokUserSessionStore
 from app.services.x_user_session_store import EphemeralXUserSessionStore
 
@@ -188,3 +191,84 @@ def test_media_info_revoked_session_returns_401(
     assert resp.status_code == 401
     body = resp.json()
     assert body["error"]["code"] == "SESSION_INVALID"
+
+
+# ==============================================================================
+# 4. Media Download Route with Instagram-Session-ID & Snapshot Isolation
+# ==============================================================================
+
+def test_media_download_with_valid_instagram_session(
+    client: TestClient,
+    ig_store: EphemeralInstagramUserSessionStore,
+) -> None:
+    session = ig_store.create_session(sessionid="test_sessionid_abc")
+
+    with patch("app.services.media_service.MediaService.create_download_job") as mock_create_job:
+        mock_job = MagicMock()
+        mock_job.job_id = uuid4()
+        mock_create_job.return_value = mock_job
+
+        resp = client.post(
+            "/media/download",
+            json={"url": _IG_URL, "media_type": "video", "quality_height": 1080},
+            headers={"Instagram-Session-ID": session.session_id},
+        )
+
+        assert resp.status_code == 200
+        mock_create_job.assert_called_once()
+        args, kwargs = mock_create_job.call_args
+        assert isinstance(args[0], MediaDownloadRequest)
+        assert args[0].url == _IG_URL
+        assert kwargs["auth_source"] == "user_session"
+        assert kwargs["auth_session_id"] == session.session_id
+
+
+def test_media_download_does_not_downgrade_when_guest_snapshot_exists(
+    ig_store: EphemeralInstagramUserSessionStore,
+) -> None:
+    session = ig_store.create_session(sessionid="test_sessionid_abc")
+    service = MediaService()
+
+    # Seed a guest snapshot in the cache for the same URL
+    service._snapshot_cache.put(
+        _IG_URL,
+        {"title": "Guest cached title", "extractor": "instagram", "id": "123"},
+        authenticated=False,
+        auth_source="guest",
+        session_id=None,
+    )
+
+    request = MediaDownloadRequest(url=_IG_URL, media_type="video", quality_height=1080)
+    with patch.object(service, "_start_download_worker") as mock_start_worker, \
+         patch.object(service, "_extract_and_cache_supported_info") as mock_extract:
+        mock_extract.return_value = (
+            {
+                "title": "Auth title",
+                "extractor": "instagram",
+                "id": "123",
+                "formats": [
+                    {
+                        "format_id": "1",
+                        "height": 1080,
+                        "vcodec": "h264",
+                        "acodec": "aac",
+                        "ext": "mp4",
+                    }
+                ],
+            },
+            "instagram",
+            True,
+            _IG_URL,
+        )
+
+        job = service.create_download_job(
+            request,
+            auth_source="user_session",
+            auth_session_id=session.session_id,
+        )
+
+        assert job is not None
+        mock_start_worker.assert_called_once()
+        call_kwargs = mock_start_worker.call_args.kwargs
+        assert call_kwargs["auth_source"] == "user_session"
+        assert call_kwargs["auth_session_id"] == session.session_id

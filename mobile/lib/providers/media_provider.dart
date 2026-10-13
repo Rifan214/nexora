@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_exception.dart';
+import '../core/network/platform_auth_headers.dart';
 import '../models/completed_file_download.dart';
 import '../models/download_preferences.dart';
 import '../models/download_history_item.dart';
@@ -16,9 +17,6 @@ import '../repositories/media_repository.dart';
 import 'active_downloads_provider.dart';
 import 'download_preferences_provider.dart';
 import 'history_provider.dart';
-import 'instagram_auth_provider.dart';
-import 'tiktok_auth_provider.dart';
-import 'x_auth_provider.dart';
 
 final mediaProvider = NotifierProvider<MediaController, MediaState>(
   MediaController.new,
@@ -58,7 +56,7 @@ class MediaController extends Notifier<MediaState> {
     state = const MediaState.loading();
 
     try {
-      final authHeaders = _buildAuthHeadersForUrl(trimmedUrl);
+      final authHeaders = buildAuthHeadersForUrl(ref, trimmedUrl);
       final metadata = await ref
           .read(mediaRepositoryProvider)
           .getMediaInfo(trimmedUrl, headers: authHeaders);
@@ -77,23 +75,11 @@ class MediaController extends Notifier<MediaState> {
         currentMediaType: preferredSelection?.mediaType,
       );
     } on ApiException catch (error) {
-      if (_buildAuthHeadersForUrl(trimmedUrl) != null &&
-          _isSessionInvalidationMessage(error.message)) {
-        final isExpired = error.message.toLowerCase().contains('expired');
-        if (_isXUrl(trimmedUrl)) {
-          await ref
-              .read(xAuthProvider.notifier)
-              .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
-        } else if (_isTikTokUrl(trimmedUrl)) {
-          await ref
-              .read(tikTokAuthProvider.notifier)
-              .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
-        } else if (_isInstagramUrl(trimmedUrl)) {
-          await ref
-              .read(instagramAuthProvider.notifier)
-              .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
-        }
-      }
+      await handleSessionInvalidationForUrl(
+        ref,
+        trimmedUrl,
+        message: error.message,
+      );
       state = MediaState.error(error.message);
     } catch (_) {
       state = const MediaState.error('Unable to retrieve media metadata.');
@@ -261,7 +247,7 @@ class MediaController extends Notifier<MediaState> {
     );
 
     try {
-      final authHeaders = _buildAuthHeadersForUrl(current.metadata.webpageUrl);
+      final authHeaders = buildAuthHeadersForUrl(ref, current.metadata.webpageUrl);
       final job = await ref.read(mediaRepositoryProvider).createDownloadJob(
             mediaUrl: current.metadata.webpageUrl,
             mediaType: mediaType,
@@ -289,23 +275,11 @@ class MediaController extends Notifier<MediaState> {
           );
       _listenToJob(job.jobId);
     } on ApiException catch (error) {
-      if (_buildAuthHeadersForUrl(current.metadata.webpageUrl) != null &&
-          _isSessionInvalidationMessage(error.message)) {
-        final isExpired = error.message.toLowerCase().contains('expired');
-        if (_isXUrl(current.metadata.webpageUrl)) {
-          await ref
-              .read(xAuthProvider.notifier)
-              .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
-        } else if (_isTikTokUrl(current.metadata.webpageUrl)) {
-          await ref
-              .read(tikTokAuthProvider.notifier)
-              .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
-        } else if (_isInstagramUrl(current.metadata.webpageUrl)) {
-          await ref
-              .read(instagramAuthProvider.notifier)
-              .handleSessionInvalidated(isExpired: isExpired, reason: error.message);
-        }
-      }
+      await handleSessionInvalidationForUrl(
+        ref,
+        current.metadata.webpageUrl,
+        message: error.message,
+      );
       final latest = _successState;
       if (latest == null) {
         return;
@@ -701,56 +675,5 @@ class MediaController extends Notifier<MediaState> {
     return null;
   }
 
-  Map<String, dynamic>? _buildAuthHeadersForUrl(String url) {
-    if (_isXUrl(url)) {
-      final xSessionId = ref.read(activeXSessionIdProvider);
-      if (xSessionId != null && xSessionId.isNotEmpty) {
-        return {'X-Session-ID': xSessionId};
-      }
-    } else if (_isTikTokUrl(url)) {
-      final tikTokSessionId = ref.read(activeTikTokSessionIdProvider);
-      if (tikTokSessionId != null && tikTokSessionId.isNotEmpty) {
-        return {'TikTok-Session-ID': tikTokSessionId};
-      }
-    } else if (_isInstagramUrl(url)) {
-      final instagramSessionId = ref.read(activeInstagramSessionIdProvider);
-      if (instagramSessionId != null && instagramSessionId.isNotEmpty) {
-        return {'Instagram-Session-ID': instagramSessionId};
-      }
-    }
-    return null;
-  }
 
-  static bool _isXUrl(String url) {
-    final uri = Uri.tryParse(url.trim());
-    final host = uri?.host.toLowerCase() ?? '';
-    return host == 'x.com' ||
-        host.endsWith('.x.com') ||
-        host == 'twitter.com' ||
-        host.endsWith('.twitter.com');
-  }
-
-  static bool _isTikTokUrl(String url) {
-    final uri = Uri.tryParse(url.trim());
-    final host = uri?.host.toLowerCase() ?? '';
-    return host == 'tiktok.com' ||
-        host.endsWith('.tiktok.com');
-  }
-
-  static bool _isInstagramUrl(String url) {
-    final uri = Uri.tryParse(url.trim());
-    final host = uri?.host.toLowerCase() ?? '';
-    return host == 'instagram.com' ||
-        host.endsWith('.instagram.com');
-  }
-
-  static bool _isSessionInvalidationMessage(String message) {
-    final msg = message.toLowerCase();
-    return msg.contains('session not found') ||
-        msg.contains('session has expired') ||
-        msg.contains('session is invalid') ||
-        msg.contains('x authentication session') ||
-        msg.contains('tiktok authentication session') ||
-        msg.contains('instagram authentication session');
-  }
 }

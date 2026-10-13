@@ -456,10 +456,14 @@ class MediaService:
             output_type=request.media_type,
         )
         snapshot = self._snapshot_cache.get(normalized_url, session_id=auth_session_id)
-        if snapshot is None:
+        if snapshot is None and auth_source == "guest":
             snapshot = self._snapshot_cache.get(normalized_url)
-        resolved_auth_source = snapshot.auth_source if snapshot else auth_source
-        resolved_auth_session_id = snapshot.session_id if snapshot else auth_session_id
+        if auth_source != "guest":
+            resolved_auth_source = auth_source
+            resolved_auth_session_id = auth_session_id
+        else:
+            resolved_auth_source = snapshot.auth_source if snapshot else "guest"
+            resolved_auth_session_id = snapshot.session_id if snapshot else None
 
         self._get_queue_manager().enqueue(
             job.job_id,
