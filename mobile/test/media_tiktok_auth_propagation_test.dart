@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nexora/core/network/api_exception.dart';
@@ -25,6 +26,7 @@ class CapturingApiService implements ApiService {
     String path, {
     Map<String, dynamic>? data,
     Map<String, dynamic>? headers,
+    CancelToken? cancelToken,
   }) async {
     lastPath = path;
     lastData = data;

@@ -24,6 +24,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
   final _fileDownloadCancelTokens = <String, CancelToken>{};
   final _startedFileDownloads = <String>{};
   final _recordedHistoryJobs = <String>{};
+  final _locallyCancelledJobs = <String>{};
 
   @override
   List<TrackedDownload> build() {
@@ -38,6 +39,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
         cancelToken.cancel('File download cancelled.');
       }
       _fileDownloadCancelTokens.clear();
+      _locallyCancelledJobs.clear();
 
       for (final download in state) {
         final tempPath = download.temporaryFilePath;
@@ -62,6 +64,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
     if (normalizedJobId.isEmpty || _find(normalizedJobId) != null) {
       return;
     }
+    _locallyCancelledJobs.remove(normalizedJobId.toLowerCase());
 
     state = [
       ...state,
@@ -78,62 +81,65 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
   }
 
   Future<void> cancelDownload(String jobId) async {
+    final normalizedJobId = jobId.trim().toLowerCase();
     final download = _find(jobId);
     if (download == null ||
-        download.fileOpenLoading ||
-        download.status == 'cancelling') {
+        download.status == 'cancelled' ||
+        _locallyCancelledJobs.contains(normalizedJobId)) {
       return;
     }
 
-    if (download.fileDownloadLoading ||
-        download.fileDownloadError?.trim().isNotEmpty == true) {
-      final cancelToken = _fileDownloadCancelTokens[jobId];
-      cancelToken?.cancel('File download cancelled.');
-      final tempPath = download.temporaryFilePath;
-      if (tempPath != null && tempPath.isNotEmpty) {
-        await ref
+    if (download.fileOpenLoading) {
+      return;
+    }
+
+    final isSavingStage = download.fileDownloadLoading ||
+        download.fileDownloadError?.trim().isNotEmpty == true;
+
+    if (!isSavingStage && !_isCancellable(download.status)) {
+      return;
+    }
+
+    // 1. Immediately register local cancellation to prevent any late updates or saves
+    _locallyCancelledJobs.add(normalizedJobId);
+
+    // 2. Abort any active local file transfer and WebSocket subscriptions
+    _fileDownloadCancelTokens.remove(jobId)?.cancel('File download cancelled.');
+    _startedFileDownloads.remove(jobId);
+    unawaited(_closeJobSubscription(jobId));
+
+    final tempPath = download.temporaryFilePath;
+    if (tempPath != null && tempPath.isNotEmpty) {
+      unawaited(
+        ref
             .read(mediaRepositoryProvider)
-            .deleteDownloadedFileIfPresent(tempPath);
-      }
-      _replace(
-        download.copyWith(
-          fileDownloadLoading: false,
-          temporaryFilePath: null,
-          fileDownloadError: 'Download cancelled.',
-          isRetrying: false,
-        ),
+            .deleteDownloadedFileIfPresent(tempPath),
       );
-      return;
     }
 
-    if (!_isCancellable(download.status)) {
-      return;
-    }
+    // 3. Immediately settle the UI state to 'cancelled' so it never stays stuck in 'Preparing'
+    _replace(
+      download.copyWith(
+        status: 'cancelled',
+        error: null,
+        progress: 0,
+        fileDownloadLoading: false,
+        fileDownloadProgress: 0,
+        fileDownloadError: null,
+        temporaryFilePath: null,
+        isRetrying: false,
+        fileOpenLoading: false,
+      ),
+    );
 
-    _replace(download.copyWith(status: 'cancelling', error: null));
-
+    // 4. Best-effort backend notification (non-blocking for UI, safe against offline/network errors)
     try {
-      final update = await ref
+      await ref
           .read(mediaRepositoryProvider)
           .cancelDownloadJob(download.jobId);
-      _handleJobUpdate(update);
-    } on ApiException catch (error) {
-      final latest = _find(download.jobId);
-      if (latest != null && !_isTerminal(latest.status)) {
-        _replace(
-          latest.copyWith(status: download.status, error: error.message),
-        );
-      }
     } catch (_) {
-      final latest = _find(download.jobId);
-      if (latest != null && !_isTerminal(latest.status)) {
-        _replace(
-          latest.copyWith(
-            status: download.status,
-            error: 'Unable to cancel the download.',
-          ),
-        );
-      }
+      // Offline, network unreachable, or job already terminal on server:
+      // Local state REMAINS cancelled and is never reverted!
     }
   }
 
@@ -334,6 +340,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
     for (final download in state) {
       if (download.status == 'failed' ||
           download.status == 'connection_lost' ||
+          download.status == 'cancelled' ||
           download.fileDownloadError?.trim().isNotEmpty == true) {
         final tempPath = download.temporaryFilePath;
         if (tempPath != null && tempPath.isNotEmpty) {
@@ -348,6 +355,7 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
     state = state.where((download) {
       return !(download.status == 'failed' ||
           download.status == 'connection_lost' ||
+          download.status == 'cancelled' ||
           download.fileDownloadError?.trim().isNotEmpty == true);
     }).toList();
   }
@@ -377,12 +385,19 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
   }
 
   void _handleJobUpdate(JobUpdate update) {
+    final normalizedJobId = update.jobId.trim().toLowerCase();
+    if (_locallyCancelledJobs.contains(normalizedJobId)) {
+      return;
+    }
+
     final download = _find(update.jobId);
     if (download == null) {
       return;
     }
 
-    if (download.isFinalized || _isTerminal(download.status)) {
+    if (download.isFinalized ||
+        download.status == 'cancelled' ||
+        _isTerminal(download.status)) {
       return;
     }
 
@@ -404,10 +419,16 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
   }
 
   Future<void> _downloadCompletedFile(String jobId) async {
+    final normalizedJobId = jobId.trim().toLowerCase();
+    if (_locallyCancelledJobs.contains(normalizedJobId)) {
+      return;
+    }
+
     final download = _find(jobId);
     final downloadUrl = download?.downloadUrl?.trim();
     if (download == null ||
         download.status != 'completed' ||
+        download.status == 'cancelled' ||
         download.fileDownloadLoading ||
         download.savedFilePath?.trim().isNotEmpty == true ||
         downloadUrl == null ||
@@ -449,7 +470,15 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
         }
       }
 
-      if (!identical(_fileDownloadCancelTokens[jobId], cancelToken)) {
+      if (_locallyCancelledJobs.contains(normalizedJobId) ||
+          !identical(_fileDownloadCancelTokens[jobId], cancelToken)) {
+        if (tempArtifactPath.isNotEmpty) {
+          unawaited(
+            ref
+                .read(mediaRepositoryProvider)
+                .deleteDownloadedFileIfPresent(tempArtifactPath),
+          );
+        }
         return;
       }
 
@@ -460,12 +489,15 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
             mediaType: download.mediaType,
           );
 
-      if (!identical(_fileDownloadCancelTokens[jobId], cancelToken)) {
+      if (_locallyCancelledJobs.contains(normalizedJobId) ||
+          !identical(_fileDownloadCancelTokens[jobId], cancelToken)) {
         return;
       }
 
       final latest = _find(jobId);
-      if (latest == null) {
+      if (latest == null ||
+          latest.status == 'cancelled' ||
+          _locallyCancelledJobs.contains(normalizedJobId)) {
         return;
       }
 
@@ -554,9 +586,15 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
   }
 
   void _markProgressConnectionLost(String jobId, Object error) {
+    final normalizedJobId = jobId.trim().toLowerCase();
+    if (_locallyCancelledJobs.contains(normalizedJobId)) {
+      return;
+    }
+
     final download = _find(jobId);
     if (download == null ||
         download.isFinalized ||
+        download.status == 'cancelled' ||
         _isTerminal(download.status)) {
       return;
     }
@@ -668,7 +706,12 @@ class ActiveDownloadsController extends Notifier<List<TrackedDownload>> {
   }
 
   bool _isCancellable(String status) {
-    return status == 'pending' || status == 'queued' || status == 'processing';
+    final s = status.toLowerCase();
+    return s == 'pending' ||
+        s == 'queued' ||
+        s == 'processing' ||
+        s == 'cancelling' ||
+        s == 'connection_lost';
   }
 
   bool _isTerminal(String status) {

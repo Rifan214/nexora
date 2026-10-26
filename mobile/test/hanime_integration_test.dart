@@ -107,18 +107,18 @@ void main() {
   });
 
   group('Hanime Quality Preference Resolution Tests', () {
-    final hanimeMetadata = MediaMetadata(
+    const hanimeMetadata = MediaMetadata(
       platform: 'hanime',
       title: 'Terra Story 1',
       webpageUrl: 'https://hanime.tv/videos/hentai/terra-story-1',
       extractor: 'hanime',
       extractorKey: 'Hanime',
-      videoQualities: const [
+      videoQualities: [
         VideoQuality(label: '720p', height: 720, extension: 'mp4'),
         VideoQuality(label: '480p', height: 480, extension: 'mp4'),
         VideoQuality(label: '360p', height: 360, extension: 'mp4'),
       ],
-      audioOptions: const [
+      audioOptions: [
         AudioOption(label: 'MP3', extension: 'mp3'),
       ],
     );

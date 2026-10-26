@@ -1,5 +1,3 @@
-import 'dart:collection';
-
 import 'media_download_type.dart';
 import 'media_metadata.dart';
 
@@ -189,7 +187,7 @@ BatchUrlValidationResult validateBatchUrlLines(Iterable<String> lines) {
 }
 
 List<String> normalizeBatchUrls(Iterable<String> lines) {
-  final urls = LinkedHashSet<String>();
+  final urls = <String>{};
   for (final line in lines) {
     final url = line.trim();
     if (url.isNotEmpty) {

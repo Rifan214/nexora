@@ -39,11 +39,13 @@ class MediaRepository {
   Future<MediaMetadata> getMediaInfo(
     String url, {
     Map<String, dynamic>? headers,
+    CancelToken? cancelToken,
   }) async {
     final response = await _apiService.postJson(
       ApiPaths.mediaInfo,
       data: {'url': url.trim()},
       headers: headers,
+      cancelToken: cancelToken,
     );
     final rawData = response['data'];
     final rawVideoQualities =
@@ -113,6 +115,7 @@ class MediaRepository {
     required MediaDownloadType mediaType,
     VideoQuality? videoQuality,
     Map<String, dynamic>? headers,
+    CancelToken? cancelToken,
   }) async {
     final qualityHeight = videoQuality?.height;
     if (mediaType == MediaDownloadType.video &&
@@ -130,6 +133,7 @@ class MediaRepository {
       ApiPaths.mediaDownload,
       data: request.toJson(),
       headers: headers,
+      cancelToken: cancelToken,
     );
     final downloadResponse = DownloadJobResponse.fromJson(response);
 
@@ -149,7 +153,10 @@ class MediaRepository {
     return job;
   }
 
-  Future<JobUpdate> cancelDownloadJob(String jobId) async {
+  Future<JobUpdate> cancelDownloadJob(
+    String jobId, {
+    CancelToken? cancelToken,
+  }) async {
     final trimmedJobId = jobId.trim();
     if (trimmedJobId.isEmpty) {
       throw const ApiException('Invalid job id.');
@@ -157,6 +164,7 @@ class MediaRepository {
 
     final response = await _apiService.postJson(
       ApiPaths.cancelJob(trimmedJobId),
+      cancelToken: cancelToken,
     );
     final success = response['success'] == true;
     if (!success) {

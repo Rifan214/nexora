@@ -151,13 +151,13 @@ void main() {
   });
 
   test('applies TikTok quality preferences with a best-quality fallback', () {
-    final metadata = MediaMetadata(
+    const metadata = MediaMetadata(
       platform: 'tiktok',
       title: 'TikTok video',
       webpageUrl: 'https://www.tiktok.com/@nexora/video/12345',
       extractor: 'TikTok',
       extractorKey: 'TikTok',
-      videoQualities: const [
+      videoQualities: [
         VideoQuality(label: '720p HD', height: 720, extension: 'mp4'),
       ],
     );

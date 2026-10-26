@@ -40,6 +40,7 @@ class MockMediaRepository implements MediaRepository {
     required MediaDownloadType mediaType,
     VideoQuality? videoQuality,
     Map<String, dynamic>? headers,
+    CancelToken? cancelToken,
   }) async {
     createDownloadJobCalls.add({
       'mediaUrl': mediaUrl,
@@ -115,7 +116,10 @@ class MockMediaRepository implements MediaRepository {
   }
 
   @override
-  Future<JobUpdate> cancelDownloadJob(String jobId) async {
+  Future<JobUpdate> cancelDownloadJob(
+    String jobId, {
+    CancelToken? cancelToken,
+  }) async {
     return JobUpdate(
       jobId: jobId,
       status: 'cancelled',

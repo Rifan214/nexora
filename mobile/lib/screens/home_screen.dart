@@ -763,6 +763,13 @@ class _MediaStatus extends ConsumerWidget {
           onAudioOptionSelected: mediaController.selectAudioOption,
           onVideoDownloadPressed: mediaController.createVideoDownloadJob,
           onAudioDownloadPressed: mediaController.createAudioDownloadJob,
+          onCancelPressed: () {
+            final jobId = activeDownload?.jobId ?? state.currentJobId;
+            if (jobId != null && jobId.isNotEmpty) {
+              unawaited(downloadController.cancelDownload(jobId));
+            }
+            unawaited(mediaController.cancelCurrentDownload());
+          },
           onOpenFilePressed: activeDownload == null
               ? () {}
               : () => unawaited(
@@ -839,6 +846,7 @@ class _MetadataSummary extends StatelessWidget {
     required this.onAudioOptionSelected,
     required this.onVideoDownloadPressed,
     required this.onAudioDownloadPressed,
+    this.onCancelPressed,
     required this.onOpenFilePressed,
   });
 
@@ -862,6 +870,7 @@ class _MetadataSummary extends StatelessWidget {
   final VoidCallback onAudioOptionSelected;
   final VoidCallback onVideoDownloadPressed;
   final VoidCallback onAudioDownloadPressed;
+  final VoidCallback? onCancelPressed;
   final VoidCallback onOpenFilePressed;
 
   @override
@@ -938,6 +947,7 @@ class _MetadataSummary extends StatelessWidget {
             savedDirectory: savedDirectory,
             fileOpenLoading: fileOpenLoading,
             onOpenFilePressed: onOpenFilePressed,
+            onCancelPressed: onCancelPressed,
           ),
         ] else if (downloadError != null && downloadError!.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.xl),
@@ -1117,6 +1127,7 @@ class _DownloadProgressStatus extends StatelessWidget {
     required this.savedDirectory,
     required this.fileOpenLoading,
     required this.onOpenFilePressed,
+    this.onCancelPressed,
   });
 
   final String? status;
@@ -1130,6 +1141,7 @@ class _DownloadProgressStatus extends StatelessWidget {
   final String? savedDirectory;
   final bool fileOpenLoading;
   final VoidCallback onOpenFilePressed;
+  final VoidCallback? onCancelPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1165,11 +1177,27 @@ class _DownloadProgressStatus extends StatelessWidget {
       );
     }
 
-    if (error != null && error!.isNotEmpty) {
-      return _StatusMessage(
-        title: 'Progress Error',
-        message: error!,
-        tone: NexoraStateTone.error,
+    if (error != null && error!.isNotEmpty && normalizedStatus != 'connection_lost') {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _StatusMessage(
+            title: 'Progress Error',
+            message: error!,
+            tone: NexoraStateTone.error,
+          ),
+          if (onCancelPressed != null) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: onCancelPressed,
+                icon: const Icon(Icons.cancel_outlined),
+                label: const Text('Cancel'),
+              ),
+            ),
+          ],
+        ],
       );
     }
 
@@ -1180,6 +1208,7 @@ class _DownloadProgressStatus extends StatelessWidget {
       isSavingToDevice: false,
     );
     final hasKnownProgress = clampedProgress > 0;
+    final isCancelling = normalizedStatus == 'cancelling';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1208,6 +1237,35 @@ class _DownloadProgressStatus extends StatelessWidget {
             value: hasKnownProgress ? clampedProgress / 100 : null,
           ),
         ),
+        if (onCancelPressed != null) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Semantics(
+              button: true,
+              enabled: !isCancelling,
+              label: isCancelling ? 'Cancelling download' : 'Cancel download',
+              child: TextButton.icon(
+                onPressed: isCancelling ? null : onCancelPressed,
+                icon: isCancelling
+                    ? const SizedBox(
+                        width: AppSpacing.md,
+                        height: AppSpacing.md,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.cancel_outlined),
+                label: Text(isCancelling ? 'Cancelling...' : 'Cancel'),
+                style: TextButton.styleFrom(
+                  disabledForegroundColor:
+                      Theme.of(context).colorScheme.error.withAlpha(144),
+                  minimumSize: const Size(0, AppSizes.touchTarget),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                ),
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }

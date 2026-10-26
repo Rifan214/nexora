@@ -115,6 +115,7 @@ class DownloadsContent extends StatelessWidget {
   bool _isFailed(TrackedDownload download) {
     return download.status == 'failed' ||
         download.status == 'connection_lost' ||
+        download.status == 'cancelled' ||
         download.fileDownloadError?.trim().isNotEmpty == true;
   }
 
@@ -598,6 +599,9 @@ class _DownloadDetails extends StatelessWidget {
       case _DownloadSectionType.completed:
         return 'Completed';
       case _DownloadSectionType.failed:
+        if (download.status == 'cancelled') {
+          return 'Cancelled';
+        }
         return 'Failed';
       case _DownloadSectionType.downloading:
         return friendlyDownloadStatus(
@@ -611,6 +615,10 @@ class _DownloadDetails extends StatelessWidget {
   String? _failureMessage() {
     if (section != _DownloadSectionType.failed) {
       return null;
+    }
+
+    if (download.status == 'cancelled') {
+      return 'The download was cancelled.';
     }
 
     final message = download.fileDownloadError ?? download.error;
@@ -657,8 +665,9 @@ class _DownloadStatusBadge extends StatelessWidget {
     final isWaiting = section == _DownloadSectionType.waiting;
     final isCompleted = section == _DownloadSectionType.completed;
     final isFailed = section == _DownloadSectionType.failed;
+    final isCancelled = isFailed && status == 'Cancelled';
     final foregroundColor = isFailed
-        ? colorScheme.error
+        ? (isCancelled ? colorScheme.onSurfaceVariant : colorScheme.error)
         : isCompleted
             ? colorScheme.tertiary
             : isWaiting
@@ -672,7 +681,9 @@ class _DownloadStatusBadge extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: isFailed
-            ? colorScheme.errorContainer
+            ? (isCancelled
+                ? colorScheme.surfaceContainerHigh
+                : colorScheme.errorContainer)
             : isCompleted
                 ? colorScheme.tertiaryContainer
                 : colorScheme.surfaceContainerLow,
@@ -688,9 +699,11 @@ class _DownloadStatusBadge extends StatelessWidget {
                     ? Icons.schedule_rounded
                     : isCompleted
                         ? Icons.check_circle_outline_rounded
-                        : isFailed
-                            ? Icons.error_outline_rounded
-                            : Icons.downloading_rounded,
+                        : isCancelled
+                            ? Icons.cancel_outlined
+                            : isFailed
+                                ? Icons.error_outline_rounded
+                                : Icons.downloading_rounded,
             color: foregroundColor,
             size: AppSpacing.md,
           ),
@@ -724,9 +737,12 @@ class _CancelDownloadAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isCancelling = status == 'cancelling';
-    final isCancellable =
-        status == 'pending' || status == 'queued' || status == 'processing';
+    final normalizedStatus = status.toLowerCase();
+    final isCancelling = normalizedStatus == 'cancelling';
+    final isCancellable = normalizedStatus == 'pending' ||
+        normalizedStatus == 'queued' ||
+        normalizedStatus == 'processing' ||
+        normalizedStatus == 'connection_lost';
 
     return Semantics(
       button: true,

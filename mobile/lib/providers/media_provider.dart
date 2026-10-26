@@ -25,6 +25,9 @@ final mediaProvider = NotifierProvider<MediaController, MediaState>(
 class MediaController extends Notifier<MediaState> {
   StreamSubscription<JobUpdate>? _jobSubscription;
   CancelToken? _fileDownloadCancelToken;
+  CancelToken? _metadataCancelToken;
+  CancelToken? _createJobCancelToken;
+  int _downloadGeneration = 0;
 
   @override
   MediaState build() {
@@ -33,6 +36,10 @@ class MediaController extends Notifier<MediaState> {
       _jobSubscription = null;
       _fileDownloadCancelToken?.cancel('File download cancelled.');
       _fileDownloadCancelToken = null;
+      _metadataCancelToken?.cancel('MediaController disposed.');
+      _metadataCancelToken = null;
+      _createJobCancelToken?.cancel('MediaController disposed.');
+      _createJobCancelToken = null;
     });
 
     return const MediaState.idle();
@@ -45,6 +52,9 @@ class MediaController extends Notifier<MediaState> {
 
     await _closeJobSubscription();
     _cancelFileDownload();
+    _metadataCancelToken?.cancel('Cancelled by new request.');
+    final metadataCancelToken = CancelToken();
+    _metadataCancelToken = metadataCancelToken;
 
     final trimmedUrl = url.trim();
     final validationMessage = _validateUrl(trimmedUrl);
@@ -59,7 +69,14 @@ class MediaController extends Notifier<MediaState> {
       final authHeaders = buildAuthHeadersForUrl(ref, trimmedUrl);
       final metadata = await ref
           .read(mediaRepositoryProvider)
-          .getMediaInfo(trimmedUrl, headers: authHeaders);
+          .getMediaInfo(
+            trimmedUrl,
+            headers: authHeaders,
+            cancelToken: metadataCancelToken,
+          );
+      if (!identical(_metadataCancelToken, metadataCancelToken)) {
+        return;
+      }
       if (kDebugMode) {
         debugPrint(
           'MediaProvider received video quality count=${metadata.videoQualities.length} '
@@ -74,7 +91,16 @@ class MediaController extends Notifier<MediaState> {
         selectedVideoQuality: preferredSelection?.videoQuality,
         currentMediaType: preferredSelection?.mediaType,
       );
+    } on DioException catch (error) {
+      if (CancelToken.isCancel(error) ||
+          !identical(_metadataCancelToken, metadataCancelToken)) {
+        return;
+      }
+      state = const MediaState.error('Unable to retrieve media metadata.');
     } on ApiException catch (error) {
+      if (!identical(_metadataCancelToken, metadataCancelToken)) {
+        return;
+      }
       await handleSessionInvalidationForUrl(
         ref,
         trimmedUrl,
@@ -82,7 +108,14 @@ class MediaController extends Notifier<MediaState> {
       );
       state = MediaState.error(error.message);
     } catch (_) {
+      if (!identical(_metadataCancelToken, metadataCancelToken)) {
+        return;
+      }
       state = const MediaState.error('Unable to retrieve media metadata.');
+    } finally {
+      if (identical(_metadataCancelToken, metadataCancelToken)) {
+        _metadataCancelToken = null;
+      }
     }
   }
 
@@ -141,56 +174,65 @@ class MediaController extends Notifier<MediaState> {
   }
 
   Future<void> cancelCurrentDownload() async {
-    final current = _successState;
-    final jobId = current?.currentJobId?.trim();
-    final status = current?.currentStatus?.trim().toLowerCase();
-    if (current == null ||
-        jobId == null ||
-        jobId.isEmpty ||
-        current.downloadLoading ||
-        current.fileDownloadLoading ||
-        current.fileOpenLoading ||
-        status == 'cancelling' ||
-        !_isActiveStatus(status)) {
+    if (state is MediaLoading) {
+      _metadataCancelToken?.cancel('Metadata retrieval cancelled.');
+      _metadataCancelToken = null;
+      state = const MediaState.idle();
       return;
     }
 
+    final current = _successState;
+    if (current == null) {
+      return;
+    }
+
+    final jobId = current.currentJobId?.trim();
+    final status = current.currentStatus?.trim().toLowerCase();
+
+    // 1. If job creation is still loading (in-flight network request before job ID exists)
+    if (current.downloadLoading) {
+      _createJobCancelToken?.cancel('Download cancelled during job creation.');
+      _createJobCancelToken = null;
+      _downloadGeneration++;
+      state = current.copyWith(
+        downloadLoading: false,
+        downloadSuccess: false,
+        currentStatus: 'cancelled',
+        downloadError: null,
+      );
+      return;
+    }
+
+    if (jobId == null || jobId.isEmpty) {
+      return;
+    }
+
+    if (status == 'cancelled' || !_isActiveStatus(status)) {
+      return;
+    }
+
+    // 2. Immediately close subscriptions and cancel local downloads
+    unawaited(_closeJobSubscription());
+    _cancelFileDownload();
+
+    // 3. Immediately settle state to 'cancelled' (safe offline)
     state = current.copyWith(
-      currentStatus: 'cancelling',
+      currentStatus: 'cancelled',
+      downloadLoading: false,
+      fileDownloadLoading: false,
       downloadError: null,
     );
 
+    // 4. Ensure activeDownloadsProvider is cancelled synchronously
+    unawaited(
+      ref.read(activeDownloadsProvider.notifier).cancelDownload(jobId),
+    );
+
+    // 5. Best-effort background notification to backend
     try {
-      final update =
-          await ref.read(mediaRepositoryProvider).cancelDownloadJob(jobId);
-      if (update.jobId.toLowerCase() != jobId.toLowerCase()) {
-        throw const ApiException('Invalid cancellation response from server.');
-      }
-
-      final latest = _successState;
-      if (latest != null) {
-        _handleJobUpdate(update);
-      }
-    } on ApiException catch (error) {
-      final latest = _successState;
-      if (latest == null || _isTerminalStatus(latest.currentStatus)) {
-        return;
-      }
-
-      state = latest.copyWith(
-        currentStatus: status,
-        downloadError: error.message,
-      );
+      await ref.read(mediaRepositoryProvider).cancelDownloadJob(jobId);
     } catch (_) {
-      final latest = _successState;
-      if (latest == null || _isTerminalStatus(latest.currentStatus)) {
-        return;
-      }
-
-      state = latest.copyWith(
-        currentStatus: status,
-        downloadError: 'Unable to cancel the download.',
-      );
+      // Network unreachable or offline: local state remains cancelled!
     }
   }
 
@@ -204,6 +246,10 @@ class MediaController extends Notifier<MediaState> {
     }
 
     _cancelFileDownload();
+    _createJobCancelToken?.cancel('Cancelled by new download.');
+    final createJobCancelToken = CancelToken();
+    _createJobCancelToken = createJobCancelToken;
+    final generation = ++_downloadGeneration;
 
     final selectedVideoQuality = current.selectedVideoQuality;
     if (mediaType == MediaDownloadType.video && selectedVideoQuality == null) {
@@ -253,9 +299,27 @@ class MediaController extends Notifier<MediaState> {
             mediaType: mediaType,
             videoQuality: selectedVideoQuality,
             headers: authHeaders,
+            cancelToken: createJobCancelToken,
           );
+
+      if (generation != _downloadGeneration ||
+          !identical(_createJobCancelToken, createJobCancelToken)) {
+        // Cancelled or superseded while request was in-flight
+        unawaited(
+          ref.read(mediaRepositoryProvider).cancelDownloadJob(job.jobId).catchError(
+            (_) => JobUpdate(jobId: job.jobId, status: 'cancelled', progress: 0),
+          ),
+        );
+        return;
+      }
+
       final latest = _successState;
       if (latest == null) {
+        unawaited(
+          ref.read(mediaRepositoryProvider).cancelDownloadJob(job.jobId).catchError(
+            (_) => JobUpdate(jobId: job.jobId, status: 'cancelled', progress: 0),
+          ),
+        );
         return;
       }
 
@@ -274,7 +338,22 @@ class MediaController extends Notifier<MediaState> {
             selectedVideoQuality: selectedVideoQuality,
           );
       _listenToJob(job.jobId);
+    } on DioException catch (error) {
+      if (CancelToken.isCancel(error) || generation != _downloadGeneration) {
+        return;
+      }
+      final latest = _successState;
+      if (latest == null) {
+        return;
+      }
+      state = latest.copyWith(
+        downloadLoading: false,
+        downloadError: 'Network unavailable. Check your connection.',
+      );
     } on ApiException catch (error) {
+      if (generation != _downloadGeneration) {
+        return;
+      }
       await handleSessionInvalidationForUrl(
         ref,
         current.metadata.webpageUrl,
@@ -290,6 +369,9 @@ class MediaController extends Notifier<MediaState> {
         downloadError: error.message,
       );
     } catch (_) {
+      if (generation != _downloadGeneration) {
+        return;
+      }
       final latest = _successState;
       if (latest == null) {
         return;
@@ -299,6 +381,10 @@ class MediaController extends Notifier<MediaState> {
         downloadLoading: false,
         downloadError: 'Unable to create download job.',
       );
+    } finally {
+      if (identical(_createJobCancelToken, createJobCancelToken)) {
+        _createJobCancelToken = null;
+      }
     }
   }
 
@@ -448,6 +534,10 @@ class MediaController extends Notifier<MediaState> {
       return;
     }
 
+    if (current.currentStatus == 'cancelled') {
+      return;
+    }
+
     if (_isTerminalStatus(current.currentStatus) &&
         !_isTerminalStatus(update.status)) {
       return;
@@ -489,6 +579,10 @@ class MediaController extends Notifier<MediaState> {
   void _markProgressConnectionLost(String message) {
     final current = _successState;
     if (current == null || current.currentJobId == null) {
+      return;
+    }
+
+    if (current.currentStatus == 'cancelled') {
       return;
     }
 
@@ -602,10 +696,6 @@ class MediaController extends Notifier<MediaState> {
 
   bool get _isWorkflowBusy {
     final current = state;
-    if (current is MediaLoading) {
-      return true;
-    }
-
     if (current is! MediaSuccess) {
       return false;
     }
@@ -643,7 +733,8 @@ class MediaController extends Notifier<MediaState> {
     return normalizedStatus == 'pending' ||
         normalizedStatus == 'queued' ||
         normalizedStatus == 'processing' ||
-        normalizedStatus == 'cancelling';
+        normalizedStatus == 'cancelling' ||
+        normalizedStatus == 'connection_lost';
   }
 
   bool _isTerminalStatus(String? status) {

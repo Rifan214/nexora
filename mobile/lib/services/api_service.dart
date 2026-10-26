@@ -20,11 +20,13 @@ class ApiService {
   Future<Map<String, dynamic>> getJson(
     String path, {
     Map<String, dynamic>? headers,
+    CancelToken? cancelToken,
   }) async {
     return _sendJson(
       () => _dio.get<Object?>(
         path,
         options: headers != null ? Options(headers: headers) : null,
+        cancelToken: cancelToken,
       ),
       requestLabel: 'GET $path',
     );
@@ -34,12 +36,14 @@ class ApiService {
     String path, {
     Map<String, dynamic>? data,
     Map<String, dynamic>? headers,
+    CancelToken? cancelToken,
   }) async {
     return _sendJson(
       () => _dio.post<Object?>(
         path,
         data: data,
         options: headers != null ? Options(headers: headers) : null,
+        cancelToken: cancelToken,
       ),
       requestLabel: 'POST $path',
     );
@@ -48,11 +52,13 @@ class ApiService {
   Future<Map<String, dynamic>> deleteJson(
     String path, {
     Map<String, dynamic>? headers,
+    CancelToken? cancelToken,
   }) async {
     return _sendJson(
       () => _dio.delete<Object?>(
         path,
         options: headers != null ? Options(headers: headers) : null,
+        cancelToken: cancelToken,
       ),
       requestLabel: 'DELETE $path',
     );
