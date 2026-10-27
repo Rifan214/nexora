@@ -57,7 +57,7 @@ class DownloadFileService:
                 status_code=409,
             )
 
-        file_path = find_downloaded_file(job_id)
+        file_path = find_downloaded_file(job_id, output_type=job.output_type)
         if file_path is None:
             logger.warning("File missing job_id=%s", job_id)
             raise APIError(
@@ -66,6 +66,18 @@ class DownloadFileService:
                 details="The completed download file is no longer available",
                 status_code=404,
             )
+
+        try:
+            from app.utils.media_probe import validate_download_artifact
+            validate_download_artifact(file_path, output_type=job.output_type)
+        except ValueError as exc:
+            logger.error("Downloaded file failed validation job_id=%s: %s", job_id, exc)
+            raise APIError(
+                code="DOWNLOAD_FILE_INVALID",
+                message="Downloaded file invalid",
+                details=str(exc),
+                status_code=500,
+            ) from exc
 
         download_filename = build_download_filename(title=job.title, file_path=file_path)
         media_type = guess_media_type(file_path)

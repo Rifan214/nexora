@@ -339,7 +339,9 @@ class QualitySelector:
         """Identify Instagram direct MP4 formats that carry multiplexed audio despite missing acodec metadata."""
         if cls._quality_height(format_item) is None:
             return False
-        if not cls._has_codec(format_item.get("vcodec")):
+
+        vcodec = str(format_item.get("vcodec") or "").casefold()
+        if vcodec == "none":
             return False
 
         # Require HTTP/HTTPS transport
@@ -356,7 +358,7 @@ class QualitySelector:
         # Ensure no explicit indication that stream is video-only
         audio_ext = str(format_item.get("audio_ext") or "").casefold()
         acodec = str(format_item.get("acodec") or "").casefold()
-        if audio_ext == "none" and acodec == "none":
+        if audio_ext == "none" or acodec == "none":
             return False
 
         return True
@@ -430,6 +432,8 @@ class QualitySelector:
     @classmethod
     def _has_video(cls, format_item: dict[str, Any], *, platform: str | None = None) -> bool:
         if QualitySelector._has_codec(format_item.get("vcodec")):
+            return True
+        if platform == "instagram" and cls._is_instagram_progressive_candidate(format_item):
             return True
         if platform == "facebook" and cls._is_facebook_progressive_candidate(format_item):
             return True
@@ -651,7 +655,7 @@ class QualitySelector:
         video_codec = str(format_item.get("vcodec") or "").casefold()
         audio_codec = str(format_item.get("acodec") or "").casefold()
         extension = str(format_item.get("ext") or "mp4").casefold()
-        is_h264 = "avc" in video_codec or "h264" in video_codec
+        is_h264 = "avc" in video_codec or "h264" in video_codec or video_codec == ""
         if platform == "instagram" and cls._is_instagram_progressive_candidate(format_item) and is_h264:
             return True
         if platform == "facebook" and cls._is_facebook_progressive_candidate(format_item):

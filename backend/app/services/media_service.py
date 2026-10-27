@@ -443,6 +443,22 @@ class MediaService:
             else:
                 # Deprecated request support for clients released before V1.1.
                 format_selector = request.format_id or ""
+
+            if request.media_type == "video":
+                if format_selector == _AUDIO_FORMAT_SELECTOR or (
+                    format_selector
+                    and any(
+                        str(f.get("format_id")) == str(format_selector)
+                        and self._quality_selector._is_audio_only(f, platform=platform)
+                        for f in formats
+                    )
+                ):
+                    raise APIError(
+                        code="QUALITY_NOT_AVAILABLE",
+                        message="Requested quality unavailable",
+                        details="The selected format is an audio stream, but video was requested",
+                        status_code=409,
+                    )
         except APIError as exc:
             self._log_failure(normalized_url, exc.message, exc.details)
             raise
@@ -702,9 +718,12 @@ class MediaService:
             if not downloaded_info:
                 raise FileNotFoundError("yt-dlp did not return download metadata")
 
-            downloaded_file = find_downloaded_file(job_id, temp_dir=temp_dir)
+            downloaded_file = find_downloaded_file(job_id, temp_dir=temp_dir, output_type=output_type)
             if downloaded_file is None or not downloaded_file.is_file():
                 raise FileNotFoundError("Downloaded file was not found in storage/temp")
+
+            from app.utils.media_probe import validate_download_artifact
+            validate_download_artifact(downloaded_file, output_type=output_type)
 
             self._process_manager.raise_if_cancelled(job_id)
             download_url = build_job_download_url(job_id)
@@ -714,6 +733,11 @@ class MediaService:
             if resume_state is not None:
                 logger.debug("Resume completed successfully job_id=%s", job_id)
             logger.info("Download completed job_id=%s download_url=%s", job_id, download_url)
+        except (ValueError, FileNotFoundError) as exc:
+            if not self._finalize_cancelled_if_requested(job_id, job_manager=job_manager):
+                error_message = str(exc)
+                self._mark_download_failed(job_id, error_message=error_message, job_manager=job_manager)
+                logger.warning("Download artifact validation failed job_id=%s error=%s", job_id, error_message)
         except YoutubeDLError as exc:
             if not self._finalize_cancelled_if_requested(job_id, job_manager=job_manager):
                 error_message = self._describe_download_error(exc)
@@ -1899,6 +1923,8 @@ class MediaService:
             # yt-dlp chooses its best audio stream, then FFmpeg produces a
             # playable MP3 at its highest VBR quality setting.
             options["postprocessors"] = [dict(_AUDIO_MP3_POSTPROCESSOR)]
+        elif output_type == "video":
+            options["merge_output_format"] = "mp4"
         if cookie_file is not None:
             options["cookiefile"] = str(cookie_file)
         return options

@@ -9,7 +9,7 @@ from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
-_INCOMPLETE_DOWNLOAD_SUFFIXES = {".part", ".ytdl"}
+_INCOMPLETE_DOWNLOAD_SUFFIXES = {".part", ".ytdl", ".temp"}
 _INVALID_FILENAME_CHARACTERS = re.compile(r'[\x00-\x1f<>:"/\\|?*]+')
 
 
@@ -34,13 +34,31 @@ def build_download_outtmpl(job_id: UUID, *, temp_dir: Path | None = None) -> str
     return str(destination_dir / f"{job_id}.%(ext)s")
 
 
-def find_downloaded_file(job_id: UUID, *, temp_dir: Path | None = None) -> Path | None:
+def find_downloaded_file(
+    job_id: UUID,
+    *,
+    temp_dir: Path | None = None,
+    output_type: str | None = None,
+) -> Path | None:
+    from app.utils.media_probe import AUDIO_ONLY_SUFFIXES, IMAGE_SUFFIXES, VIDEO_ONLY_SUFFIXES
+
     candidates: list[Path] = []
+    job_prefix = str(job_id).lower()
+
     for candidate in find_job_storage_files(job_id, temp_dir=temp_dir):
-        if (
-            candidate.suffix.casefold() in _INCOMPLETE_DOWNLOAD_SUFFIXES
-            or candidate.name.casefold().endswith(".info.json")
-        ):
+        suffix = candidate.suffix.casefold()
+        name = candidate.name.casefold()
+
+        if suffix in _INCOMPLETE_DOWNLOAD_SUFFIXES or name.endswith((".info.json", ".json")):
+            continue
+
+        if suffix in IMAGE_SUFFIXES:
+            continue
+
+        if output_type == "video" and suffix in AUDIO_ONLY_SUFFIXES:
+            continue
+
+        if output_type == "audio" and suffix in VIDEO_ONLY_SUFFIXES:
             continue
 
         candidates.append(candidate)
@@ -48,7 +66,9 @@ def find_downloaded_file(job_id: UUID, *, temp_dir: Path | None = None) -> Path 
     if not candidates:
         return None
 
-    return max(candidates, key=lambda path: path.stat().st_mtime)
+    final_candidates = [c for c in candidates if c.stem.lower() == job_prefix]
+    pool = final_candidates if final_candidates else candidates
+    return max(pool, key=lambda path: path.stat().st_mtime)
 
 
 def find_job_storage_files(job_id: UUID, *, temp_dir: Path | None = None) -> list[Path]:
