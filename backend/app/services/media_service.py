@@ -43,6 +43,23 @@ from app.models.x_auth import XAuthSource
 from app.services.instagram_auth_manager import InstagramAuthManager
 from app.services.tiktok_auth_manager import TikTokAuthManager
 from app.services.x_auth_manager import XAuthManager
+from app.platforms.danbooru import (
+    DANBOORU_USER_AGENT,
+    DanbooruAccessDeniedError,
+    DanbooruError,
+    DanbooruExtractor,
+    DanbooruMalformedResponseError,
+    DanbooruNetworkError,
+    DanbooruPostNotFoundError,
+    DanbooruRateLimitedError,
+    DanbooruSecurityError,
+    DanbooruServerError,
+    DanbooruTimeoutError,
+    DanbooruTlsError,
+    DanbooruUnsupportedMediaError,
+    DanbooruUrlError,
+    is_danbooru_targeted_url,
+)
 from app.platforms.hanime import (
     HanimeExtractionError,
     HanimeExtractor,
@@ -59,8 +76,10 @@ from app.platforms.hanime import (
 )
 from app.platforms.hanime.signature_provider import HanimeSignatureProvider
 from app.utils.platforms import (
+    _DANBOORU_HOSTNAMES,
     _HANIME_HOSTNAMES,
     detect_platform_from_url,
+    is_danbooru_media_url,
     is_facebook_media_url,
     is_hanime_media_url,
     is_instagram_media_url,
@@ -83,7 +102,7 @@ _AUDIO_MP3_POSTPROCESSOR = {
     "preferredquality": "0",
 }
 _YTDLP_REMOTE_COMPONENTS = ["ejs:github"]
-_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter", "instagram", "facebook", "reddit", "hanime"})
+_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter", "instagram", "facebook", "reddit", "hanime", "danbooru"})
 _PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter", "instagram", "facebook", "reddit", "hanime"})
 _X_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
     {
@@ -275,6 +294,7 @@ class MediaService:
         instagram_auth_manager: InstagramAuthManager | None = None,
         hanime_extractor: HanimeExtractor | None = None,
         hanime_signature_provider: HanimeSignatureProvider | None = None,
+        danbooru_extractor: DanbooruExtractor | None = None,
     ) -> None:
         self._settings = get_settings()
         self._x_auth_manager = x_auth_manager or XAuthManager(
@@ -288,6 +308,7 @@ class MediaService:
         )
         self._hanime_signature_provider = hanime_signature_provider or get_hanime_signature_provider()
         self._hanime_extractor = hanime_extractor
+        self._danbooru_extractor = danbooru_extractor
         self._quality_selector = QualitySelector()
         self._process_manager = process_manager or get_download_process_manager()
         self._job_manager = job_manager
@@ -643,6 +664,8 @@ class MediaService:
                 http_headers = extracted_info.get("http_headers")
                 if not http_headers and extracted_info.get("formats"):
                     http_headers = extracted_info["formats"][0].get("http_headers")
+                if not http_headers and (detected_platform == "danbooru" or is_danbooru_targeted_url(url)):
+                    http_headers = {"User-Agent": DANBOORU_USER_AGENT}
 
             ydl_options = self._build_download_options(
                 job_id=job_id,
@@ -668,7 +691,7 @@ class MediaService:
                             url=url,
                             output_type=output_type,
                             format_selector=format_selector,
-                            download_info=(download_info if detected_platform != "hanime" else (download_info or extracted_info)),
+                            download_info=(download_info if detected_platform not in ("hanime", "danbooru") else (download_info or extracted_info)),
                             detected_platform=detected_platform,
                         )
                     except YoutubeDLError:
@@ -705,7 +728,7 @@ class MediaService:
                                     url=url,
                                     output_type=output_type,
                                     format_selector=format_selector,
-                                    download_info=(download_info if detected_platform != "hanime" else (download_info or extracted_info)),
+                                    download_info=(download_info if detected_platform not in ("hanime", "danbooru") else (download_info or extracted_info)),
                                     detected_platform=detected_platform,
                                 )
                             finally:
@@ -2050,6 +2073,88 @@ class MediaService:
                 status_code=500,
             ) from exc
 
+    def _get_danbooru_extractor(self) -> DanbooruExtractor:
+        if self._danbooru_extractor is None:
+            self._danbooru_extractor = DanbooruExtractor()
+        return self._danbooru_extractor
+
+    def _extract_danbooru_info(self, url: str) -> dict[str, Any]:
+        extractor = self._get_danbooru_extractor()
+        try:
+            return self._run_coroutine_sync(extractor.extract(url))
+        except DanbooruUrlError as exc:
+            raise APIError(
+                code="INVALID_DANBOORU_URL",
+                message="Invalid Danbooru URL",
+                details="Use a public Danbooru post URL in the form https://danbooru.donmai.us/posts/<id>.",
+                status_code=422,
+            ) from exc
+        except DanbooruPostNotFoundError as exc:
+            raise APIError(
+                code="DANBOORU_POST_NOT_FOUND",
+                message="Danbooru post not found",
+                details="The requested Danbooru post does not exist or has been removed.",
+                status_code=404,
+            ) from exc
+        except DanbooruAccessDeniedError as exc:
+            raise APIError(
+                code="DANBOORU_ACCESS_DENIED",
+                message="Danbooru access denied",
+                details="Access to this Danbooru post was rejected by upstream servers.",
+                status_code=403,
+            ) from exc
+        except DanbooruRateLimitedError as exc:
+            raise APIError(
+                code="DANBOORU_RATE_LIMITED",
+                message="Danbooru rate limit reached",
+                details="Danbooru rate limit reached. Please wait before retrying.",
+                status_code=429,
+            ) from exc
+        except DanbooruServerError as exc:
+            raise APIError(
+                code="DANBOORU_SERVER_ERROR",
+                message="Danbooru service error",
+                details="Danbooru upstream servers returned an error. Please try again later.",
+                status_code=502,
+            ) from exc
+        except DanbooruUnsupportedMediaError as exc:
+            raise APIError(
+                code="DANBOORU_UNSUPPORTED_MEDIA",
+                message="Unsupported Danbooru media",
+                details=str(exc) or "This Danbooru post does not contain downloadable video or audio media.",
+                status_code=422,
+            ) from exc
+        except DanbooruSecurityError as exc:
+            raise APIError(
+                code="DANBOORU_SECURITY_ERROR",
+                message="Invalid media source",
+                details="Danbooru media source failed security validation.",
+                status_code=422,
+            ) from exc
+        except (DanbooruNetworkError, DanbooruTimeoutError, DanbooruTlsError) as exc:
+            raise APIError(
+                code="NETWORK_FAILURE",
+                message="Network failure",
+                details="Unable to reach Danbooru servers.",
+                status_code=502,
+            ) from exc
+        except DanbooruMalformedResponseError as exc:
+            raise APIError(
+                code="METADATA_EXTRACTION_ERROR",
+                message="Failed to extract media metadata",
+                details="Danbooru returned an invalid or unparseable response.",
+                status_code=502,
+            ) from exc
+        except APIError:
+            raise
+        except Exception as exc:
+            raise APIError(
+                code="METADATA_EXTRACTION_ERROR",
+                message="Failed to extract media metadata",
+                details="An unexpected error occurred while extracting Danbooru metadata.",
+                status_code=500,
+            ) from exc
+
     def _extract_info(
         self,
         url: str,
@@ -2058,6 +2163,8 @@ class MediaService:
     ) -> dict[str, Any]:
         if is_hanime_media_url(url) or detect_platform_from_url(url) == "hanime":
             return self._extract_hanime_info(url)
+        if is_danbooru_media_url(url) or detect_platform_from_url(url) == "danbooru":
+            return self._extract_danbooru_info(url)
 
         ydl_options = {
             "quiet": True,
@@ -2067,6 +2174,8 @@ class MediaService:
             "cachedir": False,
             "remote_components": list(_YTDLP_REMOTE_COMPONENTS),
         }
+        if is_danbooru_targeted_url(url):
+            ydl_options["http_headers"] = {"User-Agent": DANBOORU_USER_AGENT}
         if cookie_file is not None:
             ydl_options["cookiefile"] = str(cookie_file)
 
@@ -2261,6 +2370,16 @@ class MediaService:
             return normalize_media_url(normalized_url)
 
         hostname = (urlsplit(normalized_url).hostname or "").casefold()
+        if platform == "danbooru" or hostname in _DANBOORU_HOSTNAMES:
+            if not is_danbooru_media_url(normalized_url):
+                raise APIError(
+                    code="INVALID_DANBOORU_URL",
+                    message="Invalid Danbooru URL",
+                    details="Use a public Danbooru post URL in the form https://danbooru.donmai.us/posts/<id>.",
+                    status_code=422,
+                )
+            return normalize_media_url(normalized_url)
+
         if platform == "hanime" or hostname in _HANIME_HOSTNAMES:
             if not is_hanime_media_url(normalized_url):
                 raise APIError(
@@ -2293,6 +2412,8 @@ class MediaService:
             return "reddit"
         if "hanime" in haystack:
             return "hanime"
+        if "danbooru" in haystack:
+            return "danbooru"
         if "vimeo" in haystack:
             return "vimeo"
         return "unknown"
@@ -2370,6 +2491,21 @@ class MediaService:
                 status_code=422,
             )
 
+        if platform == "danbooru":
+            formats = info.get("formats") or []
+            if self._quality_selector.build_qualities(
+                formats,
+                platform=platform,
+            ) or self._has_audio_available(formats, platform=platform):
+                return
+
+            raise APIError(
+                code="DANBOORU_NO_PLAYABLE_FORMATS",
+                message="No playable formats available",
+                details="No downloadable media streams were found for this Danbooru post.",
+                status_code=422,
+            )
+
     def _build_metadata(self, *, info: dict[str, Any], platform: str, url: str) -> MediaMetadata:
         formats = info.get("formats") or []
         video_qualities = self._quality_selector.build_qualities(formats, platform=platform)
@@ -2421,7 +2557,7 @@ class MediaService:
     def _download_source_url(*, info: dict[str, Any], platform: str, url: str) -> str:
         # TikTok, Twitter, Instagram, Facebook, Reddit, and Hanime URLs can succeed where a later extraction
         # of the canonical URL returned by yt-dlp fails or misses query state.
-        if platform in {"tiktok", "twitter", "instagram", "facebook", "reddit", "hanime"}:
+        if platform in {"tiktok", "twitter", "instagram", "facebook", "reddit", "hanime", "danbooru"}:
             return url
         return str(info.get("webpage_url") or url)
 
