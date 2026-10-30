@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_exception.dart';
+import '../core/network/platform_auth_headers.dart';
 import '../models/batch_import.dart';
 import '../models/media_download_type.dart';
 import '../models/media_metadata.dart';
@@ -59,7 +60,11 @@ class BatchImportController extends Notifier<BatchImportState> {
       state = state.copyWith(currentUrl: url, currentTitle: null);
 
       try {
-        final metadata = await ref.read(mediaRepositoryProvider).getMediaInfo(url);
+        final authHeaders = buildAuthHeadersForUrl(ref, url);
+        final metadata = await ref.read(mediaRepositoryProvider).getMediaInfo(
+              url,
+              headers: authHeaders,
+            );
         _updateItem(
           url,
           (item) => item.copyWith(
@@ -70,6 +75,11 @@ class BatchImportController extends Notifier<BatchImportState> {
         );
         state = state.copyWith(currentTitle: metadata.title);
       } on ApiException catch (error) {
+        await handleSessionInvalidationForUrl(
+          ref,
+          url,
+          message: error.message,
+        );
         _updateItem(
           url,
           (item) => item.copyWith(
@@ -187,10 +197,12 @@ class BatchImportController extends Notifier<BatchImportState> {
       );
 
       try {
+        final authHeaders = buildAuthHeadersForUrl(ref, metadata.webpageUrl);
         final job = await repository.createDownloadJob(
           mediaUrl: metadata.webpageUrl,
           mediaType: mediaType,
           videoQuality: item.selectedVideoQuality,
+          headers: authHeaders,
         );
         activeDownloads.trackDownload(
           jobId: job.jobId,
@@ -206,6 +218,11 @@ class BatchImportController extends Notifier<BatchImportState> {
           ),
         );
       } on ApiException catch (error) {
+        await handleSessionInvalidationForUrl(
+          ref,
+          item.url,
+          message: error.message,
+        );
         _updateItem(
           item.url,
           (current) => current.copyWith(
@@ -241,7 +258,8 @@ class BatchImportController extends Notifier<BatchImportState> {
   ) {
     state = state.copyWith(
       items: [
-        for (final item in state.items) if (item.url == url) update(item) else item,
+        for (final item in state.items)
+          if (item.url == url) update(item) else item,
       ],
     );
   }
