@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -114,8 +112,9 @@ class FakeInstagramAuthController extends InstagramAuthController {
 
   @override
   InstagramAuthState build() {
-    if (_session != null) {
-      return InstagramAuthState.authenticated(_session!);
+    final session = _session;
+    if (session != null) {
+      return InstagramAuthState.authenticated(session);
     }
     return const InstagramAuthState.unauthenticated();
   }
@@ -146,8 +145,9 @@ class FakeTikTokAuthController extends TikTokAuthController {
 
   @override
   TikTokAuthState build() {
-    if (_session != null) {
-      return TikTokAuthState.authenticated(_session!);
+    final session = _session;
+    if (session != null) {
+      return TikTokAuthState.authenticated(session);
     }
     return const TikTokAuthState.unauthenticated();
   }
@@ -178,8 +178,9 @@ class FakeXAuthController extends XAuthController {
 
   @override
   XAuthState build() {
-    if (_session != null) {
-      return XAuthState.authenticated(_session!);
+    final session = _session;
+    if (session != null) {
+      return XAuthState.authenticated(session);
     }
     return const XAuthState.unauthenticated();
   }
