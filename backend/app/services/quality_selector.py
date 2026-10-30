@@ -430,6 +430,28 @@ class QualitySelector:
         return True
 
     @classmethod
+    def _is_rule34video_progressive_candidate(cls, format_item: dict[str, Any]) -> bool:
+        """Identify Rule34Video direct progressive MP4 formats carrying multiplexed video+audio."""
+        if cls._quality_height(format_item) is None:
+            return False
+
+        vcodec = str(format_item.get("vcodec") or "").casefold()
+        acodec = str(format_item.get("acodec") or "").casefold()
+        if vcodec == "none" or acodec == "none":
+            return False
+
+        ext = str(format_item.get("ext") or "").casefold()
+        video_ext = str(format_item.get("video_ext") or "").casefold()
+        if ext not in {"mp4", "webm", "mkv"} and video_ext not in {"mp4", "webm", "mkv"}:
+            return False
+
+        protocol = str(format_item.get("protocol") or "").casefold()
+        if protocol not in {"", "http", "https"}:
+            return False
+
+        return True
+
+    @classmethod
     def _is_x_video_only_candidate(cls, format_item: dict[str, Any]) -> bool:
         if cls._has_audio(format_item) or cls._quality_height(format_item) is None:
             return False
@@ -463,6 +485,8 @@ class QualitySelector:
             return True
         if platform == "danbooru" and cls._is_danbooru_progressive_candidate(format_item):
             return True
+        if platform == "rule34video" and cls._is_rule34video_progressive_candidate(format_item):
+            return True
         return False
 
     @classmethod
@@ -480,6 +504,9 @@ class QualitySelector:
             return True
 
         if platform == "danbooru" and cls._is_danbooru_progressive_candidate(format_item):
+            return True
+
+        if platform == "rule34video" and cls._is_rule34video_progressive_candidate(format_item):
             return True
 
         # X's HLS master playlists expose audio renditions with an explicit
@@ -690,6 +717,8 @@ class QualitySelector:
         if platform == "hanime" and cls._is_hanime_multiplexed_candidate(format_item):
             return True
         if platform == "danbooru" and cls._is_danbooru_progressive_candidate(format_item):
+            return True
+        if platform == "rule34video" and cls._is_rule34video_progressive_candidate(format_item):
             return True
         return extension == "mp4" and is_h264 and (
             "mp4a" in audio_codec or "aac" in audio_codec

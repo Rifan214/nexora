@@ -60,6 +60,25 @@ from app.platforms.danbooru import (
     DanbooruUrlError,
     is_danbooru_targeted_url,
 )
+from app.platforms.rule34video import (
+    RULE34VIDEO_REFERER,
+    RULE34VIDEO_USER_AGENT,
+    Rule34VideoAccessDeniedError,
+    Rule34VideoError,
+    Rule34VideoExtractor,
+    Rule34VideoMalformedResponseError,
+    Rule34VideoNetworkError,
+    Rule34VideoNotFoundError,
+    Rule34VideoRateLimitedError,
+    Rule34VideoSecurityError,
+    Rule34VideoServerError,
+    Rule34VideoTimeoutError,
+    Rule34VideoTlsError,
+    Rule34VideoUnsupportedMediaError,
+    Rule34VideoUrlError,
+    configure_rule34video_network_guards,
+    is_rule34video_targeted_url,
+)
 from app.platforms.hanime import (
     HanimeExtractionError,
     HanimeExtractor,
@@ -78,8 +97,10 @@ from app.platforms.hanime.signature_provider import HanimeSignatureProvider
 from app.utils.platforms import (
     _DANBOORU_HOSTNAMES,
     _HANIME_HOSTNAMES,
+    _RULE34VIDEO_HOSTNAMES,
     detect_platform_from_url,
     is_danbooru_media_url,
+    is_rule34video_media_url,
     is_facebook_media_url,
     is_hanime_media_url,
     is_instagram_media_url,
@@ -102,7 +123,7 @@ _AUDIO_MP3_POSTPROCESSOR = {
     "preferredquality": "0",
 }
 _YTDLP_REMOTE_COMPONENTS = ["ejs:github"]
-_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter", "instagram", "facebook", "reddit", "hanime", "danbooru"})
+_SUPPORTED_MEDIA_PLATFORMS = frozenset({"youtube", "tiktok", "twitter", "instagram", "facebook", "reddit", "hanime", "danbooru", "rule34video"})
 _PLATFORMS_REQUIRING_TRANSPORT_REFRESH = frozenset({"youtube", "twitter", "instagram", "facebook", "reddit", "hanime"})
 _X_AUTHENTICATED_RETRY_ERROR_CODES = frozenset(
     {
@@ -295,6 +316,7 @@ class MediaService:
         hanime_extractor: HanimeExtractor | None = None,
         hanime_signature_provider: HanimeSignatureProvider | None = None,
         danbooru_extractor: DanbooruExtractor | None = None,
+        rule34video_extractor: Rule34VideoExtractor | None = None,
     ) -> None:
         self._settings = get_settings()
         self._x_auth_manager = x_auth_manager or XAuthManager(
@@ -309,6 +331,7 @@ class MediaService:
         self._hanime_signature_provider = hanime_signature_provider or get_hanime_signature_provider()
         self._hanime_extractor = hanime_extractor
         self._danbooru_extractor = danbooru_extractor
+        self._rule34video_extractor = rule34video_extractor
         self._quality_selector = QualitySelector()
         self._process_manager = process_manager or get_download_process_manager()
         self._job_manager = job_manager
@@ -666,6 +689,8 @@ class MediaService:
                     http_headers = extracted_info["formats"][0].get("http_headers")
                 if not http_headers and (detected_platform == "danbooru" or is_danbooru_targeted_url(url)):
                     http_headers = {"User-Agent": DANBOORU_USER_AGENT}
+                if not http_headers and (detected_platform == "rule34video" or is_rule34video_targeted_url(url)):
+                    http_headers = {"User-Agent": RULE34VIDEO_USER_AGENT, "Referer": RULE34VIDEO_REFERER}
 
             ydl_options = self._build_download_options(
                 job_id=job_id,
@@ -683,6 +708,8 @@ class MediaService:
 
             with self._process_manager.worker_context(job_id):
                 with YoutubeDL(ydl_options) as youtube_dl:
+                    if detected_platform == "rule34video":
+                        configure_rule34video_network_guards(youtube_dl)
                     self._process_manager.attach_downloader(job_id, youtube_dl)
                     try:
                         downloaded_info = self._process_download_with_youtube_dl(
@@ -691,7 +718,7 @@ class MediaService:
                             url=url,
                             output_type=output_type,
                             format_selector=format_selector,
-                            download_info=(download_info if detected_platform not in ("hanime", "danbooru") else (download_info or extracted_info)),
+                            download_info=(download_info if detected_platform not in ("hanime", "danbooru", "rule34video") else (download_info or extracted_info)),
                             detected_platform=detected_platform,
                         )
                     except YoutubeDLError:
@@ -720,6 +747,8 @@ class MediaService:
                             http_headers=http_headers,
                         )
                         with YoutubeDL(fallback_options) as fallback_youtube_dl:
+                            if detected_platform == "rule34video":
+                                configure_rule34video_network_guards(fallback_youtube_dl)
                             self._process_manager.attach_downloader(job_id, fallback_youtube_dl)
                             try:
                                 downloaded_info = self._process_download_with_youtube_dl(
@@ -728,7 +757,7 @@ class MediaService:
                                     url=url,
                                     output_type=output_type,
                                     format_selector=format_selector,
-                                    download_info=(download_info if detected_platform not in ("hanime", "danbooru") else (download_info or extracted_info)),
+                                    download_info=(download_info if detected_platform not in ("hanime", "danbooru", "rule34video") else (download_info or extracted_info)),
                                     detected_platform=detected_platform,
                                 )
                             finally:
@@ -938,6 +967,14 @@ class MediaService:
             return youtube_dl.extract_info(url, download=True)
 
         resolved_download_info = download_info
+        if detected_platform == "rule34video" and resolved_download_info:
+            self._process_manager.raise_if_cancelled(job_id)
+            resolved_download_info = self._prepare_rule34video_download_info(
+                resolved_download_info,
+                format_selector=format_selector,
+                job_id=job_id,
+            )
+            self._process_manager.raise_if_cancelled(job_id)
         if detected_platform in _PLATFORMS_REQUIRING_TRANSPORT_REFRESH:
             self._process_manager.raise_if_cancelled(job_id)
             resolved_download_info, legacy_download_info = self._refresh_download_transport_info(
@@ -1782,6 +1819,47 @@ class MediaService:
             manifest_file.write_text(m3u8_text, encoding="utf-8")
             fmt["url"] = unquote(manifest_file.as_uri())
 
+    def _prepare_rule34video_download_info(
+        self,
+        download_info: dict[str, Any],
+        *,
+        format_selector: str,
+        job_id: UUID,
+    ) -> dict[str, Any]:
+        """Pre-resolve Rule34Video media URL to its validated final CDN destination and exact filesize."""
+        self._process_manager.raise_if_cancelled(job_id)
+        extractor = self._get_rule34video_extractor()
+        try:
+            resolved_info = self._run_coroutine_sync(
+                extractor.resolve_media_formats_for_selector(download_info, format_selector)
+            )
+            self._process_manager.raise_if_cancelled(job_id)
+            return resolved_info
+        except Rule34VideoSecurityError as exc:
+            raise APIError(
+                code="RULE34VIDEO_SECURITY_ERROR",
+                message="Rule34Video security validation failed",
+                details="Rule34Video media destination failed security validation.",
+                status_code=422,
+            ) from exc
+        except (Rule34VideoNetworkError, Rule34VideoTimeoutError, Rule34VideoTlsError) as exc:
+            raise APIError(
+                code="RULE34VIDEO_EXTRACTION_UNAVAILABLE",
+                message="Rule34Video download preparation failed",
+                details="Unable to reach Rule34Video media server.",
+                status_code=502,
+            ) from exc
+        except APIError:
+            raise
+        except Exception as exc:
+            logger.exception("Failed to prepare Rule34Video download info job_id=%s: %s", job_id, exc)
+            raise APIError(
+                code="RULE34VIDEO_EXTRACTION_UNAVAILABLE",
+                message="Rule34Video download preparation failed",
+                details="Failed to resolve Rule34Video media URL.",
+                status_code=502,
+            ) from exc
+
     @staticmethod
     def _sanitize_processed_download_fields(info: dict[str, Any]) -> dict[str, Any]:
         """Discard cached yt-dlp runtime state before processing fresh streams."""
@@ -2078,6 +2156,11 @@ class MediaService:
             self._danbooru_extractor = DanbooruExtractor()
         return self._danbooru_extractor
 
+    def _get_rule34video_extractor(self) -> Rule34VideoExtractor:
+        if self._rule34video_extractor is None:
+            self._rule34video_extractor = Rule34VideoExtractor()
+        return self._rule34video_extractor
+
     def _extract_danbooru_info(self, url: str) -> dict[str, Any]:
         extractor = self._get_danbooru_extractor()
         try:
@@ -2155,6 +2238,84 @@ class MediaService:
                 status_code=500,
             ) from exc
 
+    def _extract_rule34video_info(self, url: str) -> dict[str, Any]:
+        extractor = self._get_rule34video_extractor()
+        try:
+            return self._run_coroutine_sync(extractor.extract(url))
+        except Rule34VideoUrlError as exc:
+            raise APIError(
+                code="INVALID_RULE34VIDEO_URL",
+                message="Invalid Rule34Video URL",
+                details="Use a public Rule34Video post URL in the form https://rule34video.com/video/<id>/<slug>/.",
+                status_code=422,
+            ) from exc
+        except Rule34VideoNotFoundError as exc:
+            raise APIError(
+                code="RULE34VIDEO_MEDIA_NOT_AVAILABLE",
+                message="Rule34Video post not found",
+                details="The requested Rule34Video post does not exist or has been removed.",
+                status_code=404,
+            ) from exc
+        except Rule34VideoAccessDeniedError as exc:
+            raise APIError(
+                code="RULE34VIDEO_ACCESS_DENIED",
+                message="Rule34Video access denied",
+                details="Access to this Rule34Video post was rejected by upstream servers.",
+                status_code=403,
+            ) from exc
+        except Rule34VideoRateLimitedError as exc:
+            raise APIError(
+                code="RULE34VIDEO_RATE_LIMITED",
+                message="Rule34Video rate limit reached",
+                details="Rule34Video rate limit reached. Please wait before retrying.",
+                status_code=429,
+            ) from exc
+        except Rule34VideoServerError as exc:
+            raise APIError(
+                code="RULE34VIDEO_EXTRACTION_UNAVAILABLE",
+                message="Rule34Video service error",
+                details="Rule34Video upstream servers returned an error. Please try again later.",
+                status_code=502,
+            ) from exc
+        except Rule34VideoUnsupportedMediaError as exc:
+            raise APIError(
+                code="RULE34VIDEO_UNSUPPORTED_MEDIA",
+                message="Unsupported Rule34Video media",
+                details=str(exc) or "This Rule34Video post does not contain downloadable video media.",
+                status_code=422,
+            ) from exc
+        except Rule34VideoSecurityError as exc:
+            raise APIError(
+                code="RULE34VIDEO_SECURITY_ERROR",
+                message="Invalid media source",
+                details="Rule34Video media source failed security validation.",
+                status_code=422,
+            ) from exc
+        except (Rule34VideoNetworkError, Rule34VideoTimeoutError, Rule34VideoTlsError) as exc:
+            raise APIError(
+                code="RULE34VIDEO_EXTRACTION_UNAVAILABLE",
+                message="Network failure",
+                details="Unable to reach Rule34Video servers.",
+                status_code=502,
+            ) from exc
+        except Rule34VideoMalformedResponseError as exc:
+            raise APIError(
+                code="RULE34VIDEO_EXTRACTION_UNAVAILABLE",
+                message="Failed to extract media metadata",
+                details="Rule34Video returned an invalid or unparseable response.",
+                status_code=502,
+            ) from exc
+        except APIError:
+            raise
+        except Exception as exc:
+            raise APIError(
+                code="RULE34VIDEO_EXTRACTION_UNAVAILABLE",
+                message="Failed to extract media metadata",
+                details="An unexpected error occurred while extracting Rule34Video metadata.",
+                status_code=502,
+            ) from exc
+
+
     def _extract_info(
         self,
         url: str,
@@ -2165,6 +2326,8 @@ class MediaService:
             return self._extract_hanime_info(url)
         if is_danbooru_media_url(url) or detect_platform_from_url(url) == "danbooru":
             return self._extract_danbooru_info(url)
+        if is_rule34video_media_url(url) or detect_platform_from_url(url) == "rule34video":
+            return self._extract_rule34video_info(url)
 
         ydl_options = {
             "quiet": True,
@@ -2378,6 +2541,15 @@ class MediaService:
                     details="Use a public Danbooru post URL in the form https://danbooru.donmai.us/posts/<id>.",
                     status_code=422,
                 )
+
+        if platform == "rule34video" or hostname in _RULE34VIDEO_HOSTNAMES:
+            if not is_rule34video_media_url(normalized_url):
+                raise APIError(
+                    code="INVALID_RULE34VIDEO_URL",
+                    message="Invalid Rule34Video URL",
+                    details="Use a public Rule34Video post URL in the form https://rule34video.com/video/<id>/<slug>/.",
+                    status_code=422,
+                )
             return normalize_media_url(normalized_url)
 
         if platform == "hanime" or hostname in _HANIME_HOSTNAMES:
@@ -2414,6 +2586,8 @@ class MediaService:
             return "hanime"
         if "danbooru" in haystack:
             return "danbooru"
+        if "rule34video" in haystack:
+            return "rule34video"
         if "vimeo" in haystack:
             return "vimeo"
         return "unknown"
@@ -2506,6 +2680,21 @@ class MediaService:
                 status_code=422,
             )
 
+        if platform == "rule34video":
+            formats = info.get("formats") or []
+            if self._quality_selector.build_qualities(
+                formats,
+                platform=platform,
+            ) or self._has_audio_available(formats, platform=platform):
+                return
+
+            raise APIError(
+                code="RULE34VIDEO_NO_PLAYABLE_FORMATS",
+                message="No playable formats available",
+                details="No downloadable media streams were found for this Rule34Video post.",
+                status_code=422,
+            )
+
     def _build_metadata(self, *, info: dict[str, Any], platform: str, url: str) -> MediaMetadata:
         formats = info.get("formats") or []
         video_qualities = self._quality_selector.build_qualities(formats, platform=platform)
@@ -2557,7 +2746,7 @@ class MediaService:
     def _download_source_url(*, info: dict[str, Any], platform: str, url: str) -> str:
         # TikTok, Twitter, Instagram, Facebook, Reddit, and Hanime URLs can succeed where a later extraction
         # of the canonical URL returned by yt-dlp fails or misses query state.
-        if platform in {"tiktok", "twitter", "instagram", "facebook", "reddit", "hanime", "danbooru"}:
+        if platform in {"tiktok", "twitter", "instagram", "facebook", "reddit", "hanime", "danbooru", "rule34video"}:
             return url
         return str(info.get("webpage_url") or url)
 
@@ -2640,6 +2829,7 @@ class MediaService:
         is_instagram = url is not None and detect_platform_from_url(url) == "instagram"
         is_facebook = url is not None and detect_platform_from_url(url) == "facebook"
         is_reddit = url is not None and detect_platform_from_url(url) == "reddit"
+        is_rule34video = url is not None and detect_platform_from_url(url) == "rule34video" 
 
         if is_youtube and any(marker in lowered for marker in _YOUTUBE_MIX_FAILURE_MARKERS):
             return MediaService._youtube_mix_unavailable_error()
@@ -2779,6 +2969,13 @@ class MediaService:
                     details=_REDDIT_MEDIA_NOT_AVAILABLE_MESSAGE,
                     status_code=404,
                 )
+            if is_rule34video:
+                return APIError(
+                    code="RULE34VIDEO_MEDIA_NOT_AVAILABLE",
+                    message="Rule34Video media not available",
+                    details="The requested Rule34Video media is unavailable or removed.",
+                    status_code=404,
+                )
             return APIError(
                 code="VIDEO_UNAVAILABLE",
                 message="Video unavailable",
@@ -2825,6 +3022,38 @@ class MediaService:
                 details=_REDDIT_MEDIA_NOT_AVAILABLE_MESSAGE,
                 status_code=502,
             )
+
+        if is_rule34video:
+            if isinstance(exc, Rule34VideoSecurityError) or any(
+                token in lowered for token in ("untrusted host", "private/loopback", "ssrf", "forbidden ip", "security")
+            ):
+                return APIError(
+                    code="RULE34VIDEO_SECURITY_ERROR",
+                    message="Rule34Video security error",
+                    details="Rule34Video media source failed security validation.",
+                    status_code=422,
+                )
+            if any(token in lowered for token in ("no video formats found", "unsupported", "cannot parse", "no media found")):
+                return APIError(
+                    code="RULE34VIDEO_UNSUPPORTED_MEDIA",
+                    message="Unsupported Rule34Video media",
+                    details="yt-dlp could not locate playable video streams for this Rule34Video post.",
+                    status_code=422,
+                )
+            if any(token in lowered for token in ("not found", "404", "unavailable", "removed")):
+                return APIError(
+                    code="RULE34VIDEO_MEDIA_NOT_AVAILABLE",
+                    message="Rule34Video media not available",
+                    details="The requested Rule34Video media is unavailable or removed.",
+                    status_code=404,
+                )
+            if any(token in lowered for token in ("timeout", "network", "connection", "http error", "502", "503")):
+                return APIError(
+                    code="RULE34VIDEO_EXTRACTION_UNAVAILABLE",
+                    message="Rule34Video temporarily unavailable",
+                    details="Rule34Video could not be accessed right now. Try again later.",
+                    status_code=502,
+                )
 
         return APIError(
             code="YTDLP_EXTRACTION_ERROR",
