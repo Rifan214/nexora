@@ -103,6 +103,9 @@ _HANIME_TRACKING_PREFIXES = (
 _DANBOORU_HOSTNAMES = frozenset({"danbooru.donmai.us"})
 _DANBOORU_MEDIA_PATH = re.compile(r"^/posts/(?P<post_id>[1-9][0-9]*)/?$")
 
+_RULE34VIDEO_HOSTNAMES = frozenset({"rule34video.com", "www.rule34video.com"})
+_RULE34VIDEO_MEDIA_PATH = re.compile(r"^/videos?/(?P<video_id>[1-9][0-9]*)(?:/[^/?#&]+)?/?$")
+
 
 def _is_hanime_tracking_param(key: str) -> bool:
     k = key.casefold()
@@ -131,6 +134,8 @@ def detect_platform_from_url(url: str) -> str:
         return "hanime"
     if is_danbooru_media_url(url):
         return "danbooru"
+    if is_rule34video_media_url(url):
+        return "rule34video"
     if hostname.endswith("vimeo.com"):
         return "vimeo"
 
@@ -222,6 +227,20 @@ def is_danbooru_media_url(url: str) -> bool:
     return _DANBOORU_MEDIA_PATH.fullmatch(parsed.path) is not None
 
 
+def is_rule34video_media_url(url: str) -> bool:
+    """Return whether a URL addresses a supported Rule34Video post item."""
+    try:
+        parsed = urlsplit(url)
+    except Exception:
+        return False
+    if parsed.scheme.casefold() not in {"http", "https"}:
+        return False
+    hostname = (parsed.hostname or "").casefold()
+    if hostname not in _RULE34VIDEO_HOSTNAMES:
+        return False
+    return _RULE34VIDEO_MEDIA_PATH.fullmatch(parsed.path) is not None
+
+
 
 def normalize_media_url(url: str) -> str:
     """Normalize equivalent supported media URLs into stable cache keys."""
@@ -309,6 +328,13 @@ def normalize_media_url(url: str) -> str:
         if match is not None:
             post_id = match.group("post_id")
             return urlunsplit(("https", "danbooru.donmai.us", f"/posts/{post_id}", "", ""))
+        return url
+
+    if hostname in _RULE34VIDEO_HOSTNAMES:
+        match = _RULE34VIDEO_MEDIA_PATH.fullmatch(parsed.path)
+        if match is not None:
+            canonical_path = parsed.path.rstrip("/")
+            return urlunsplit(("https", "rule34video.com", f"{canonical_path}/", "", ""))
         return url
 
     return url
